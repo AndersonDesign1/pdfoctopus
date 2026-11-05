@@ -241,7 +241,9 @@ tasks needed to finish it and the **exit criteria** that must be true before we 
 - [ ] Oracle Cloud ARM VM provisioned
 - [ ] Docker Compose stack: Gotenberg + small native MuPDF DOCX service
 - [ ] Cloudflare Tunnel in front of the server
-- [ ] Cloudflare Access in front of the tunnel (only the PDFoctopus web app can call it)
+- [ ] Cloudflare Access in front of the tunnel. The Access service token never ships in the
+  browser or desktop app: both call a small PDFoctopus Worker (on Cloudflare Workers),
+  which holds the token and forwards the request to the tunnel
 - [ ] Disable Gotenberg routes the app doesn't use (e.g. Chromium URL fetching)
 - [ ] Files deleted immediately after conversion; no request logging of file contents
 - [ ] Size limits, timeouts and rate limiting
