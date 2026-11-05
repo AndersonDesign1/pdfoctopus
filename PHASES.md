@@ -339,7 +339,8 @@ tasks needed to finish it and the **exit criteria** that must be true before we 
 
 ### Web release
 
-- [ ] Deploy the web app to Cloudflare Workers (`bun run deploy` in `apps/web`)
+- [x] GitHub repo connected to Cloudflare Workers Builds (auto-deploys `main`)
+- [ ] First successful deploy of the web app from `main`
 - [ ] Live at `pdfoctopus.josanderson25.workers.dev` (temporary address)
 - [ ] Point the chosen domain at it once registered
 - [ ] Offline support (service worker)

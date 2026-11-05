@@ -1,14 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// Cloudflare Workers config. Serves the built web app (dist/) as static assets at
+// Cloudflare Workers config. Serves the built web app (apps/web/dist) as static assets at
 // https://pdfoctopus.josanderson25.workers.dev until a custom domain is chosen.
 // A Worker script ("main") can be added later for server-side features.
+//
+// Deployed automatically by Cloudflare Workers Builds on every push to main
+// (build command: bun run build, deploy command: npx wrangler deploy).
 {
-  "$schema": "./node_modules/wrangler/config-schema.json",
+  "$schema": "node_modules/wrangler/config-schema.json",
   "name": "pdfoctopus",
   "compatibility_date": "2026-11-01",
   "assets": {
-    "directory": "./dist",
+    "directory": "./apps/web/dist",
     "not_found_handling": "single-page-application"
   }
 }
