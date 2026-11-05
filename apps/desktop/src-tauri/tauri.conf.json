@@ -2,7 +2,7 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "PDFoctopus",
   "version": "0.0.0",
-  "identifier": "fyi.pdfoctopus.app",
+  "identifier": "io.github.andersondesign1.pdfoctopus",
   "build": {
     "beforeDevCommand": "bun run --cwd ../web dev",
     "devUrl": "http://localhost:5173",

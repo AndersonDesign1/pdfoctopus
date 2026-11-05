@@ -35,8 +35,8 @@ tasks needed to finish it and the **exit criteria** that must be true before we 
 
 ### Accounts & admin
 
-- [ ] Register `pdfoctopus.fyi` on Cloudflare
-- [ ] (Optional) Register `pdfoctopus.com`
+- [ ] Choose and register the domain (`pdfoctopus.com` or `pdfoctopus.fyi`) on Cloudflare.
+      Until then, the web app uses the free temporary address `pdfoctopus.pages.dev`
 - [ ] Apply to SignPath's free code-signing program for open source
 - [ ] Create an Oracle Cloud account and try to claim an Always Free ARM VM
 - [ ] Quick trademark check on the name before any commercial use
@@ -340,12 +340,13 @@ tasks needed to finish it and the **exit criteria** that must be true before we 
 ### Web release
 
 - [ ] Deploy the web app to Cloudflare Pages
-- [ ] Point `pdfoctopus.fyi` at it
+- [ ] Publish at `pdfoctopus.pages.dev` (temporary address)
+- [ ] Point the chosen domain at it once registered
 - [ ] Offline support (service worker)
 
 ### Docs & site
 
-- [ ] Landing page on `pdfoctopus.fyi`
+- [ ] Landing page on the chosen domain
 - [ ] User guide / FAQ
 - [ ] Privacy statement (what stays local, what is uploaded and when)
 - [ ] Screenshots and a short demo video
@@ -359,7 +360,7 @@ tasks needed to finish it and the **exit criteria** that must be true before we 
 ### Exit criteria
 
 - [ ] Signed Windows installer installs without a SmartScreen warning
-- [ ] Web app live on `pdfoctopus.fyi`
+- [ ] Web app live on the chosen domain
 - [ ] v1.0.0 tagged and released
 
 ---
