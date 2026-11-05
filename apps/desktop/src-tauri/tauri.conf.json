@@ -11,9 +11,18 @@
   },
   "app": {
     "windows": [
-      { "title": "PDFoctopus", "width": 1200, "height": 800, "minWidth": 640, "minHeight": 480 }
+      {
+        "title": "PDFoctopus",
+        "width": 1200,
+        "height": 800,
+        "minWidth": 640,
+        "minHeight": 480
+      }
     ],
-    "security": { "csp": null }
+    "security": {
+      "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; img-src 'self' blob: data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost",
+      "devCsp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; img-src 'self' blob: data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost ws://localhost:5173"
+    }
   },
   "bundle": {
     "active": true,

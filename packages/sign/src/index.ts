@@ -2,7 +2,8 @@
 //
 // PAdES certificate signing (Phase 5). MuPDF reserves the signature field and saves
 // incrementally; this package builds the CMS / PKCS#7 signature with PKI.js.
-// Not implemented yet: see PHASES.md, Phase 5.
+// Not implemented yet: see PHASES.md, Phase 5. PKI.js and asn1js get added as
+// dependencies when the signing code lands.
 
 export type SignatureLevel = "B-B" | "B-T";
 

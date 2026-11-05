@@ -12,6 +12,13 @@ export interface RenderedPage {
   png: Uint8Array;
 }
 
+export class IncrementalSaveError extends Error {
+  constructor() {
+    super("This PDF can't be saved incrementally; a full rewrite is required");
+    this.name = "IncrementalSaveError";
+  }
+}
+
 export class PdfEngine {
   private doc: mupdf.Document | null = null;
 
@@ -47,13 +54,19 @@ export class PdfEngine {
 
   /**
    * Save the document. Incremental by default: the original bytes are kept as-is and
-   * any changes are appended to the end of the file.
+   * any changes are appended to the end of the file, so existing signatures stay valid.
+   *
+   * If the file can't be saved incrementally (for example, it was damaged and had to be
+   * repaired), this throws. Callers must then ask the user and pass `incremental: false`
+   * to rewrite the whole file; it is never done silently.
    */
   save({ incremental = true }: { incremental?: boolean } = {}): Uint8Array {
     const pdf = this.requireDoc().asPDF();
     if (!pdf) throw new Error("Not a PDF document");
-    const opts = incremental && pdf.canBeSavedIncrementally() ? "incremental" : "garbage";
-    const buffer = pdf.saveToBuffer(opts);
+    if (incremental && !pdf.canBeSavedIncrementally()) {
+      throw new IncrementalSaveError();
+    }
+    const buffer = pdf.saveToBuffer(incremental ? "incremental" : "garbage");
     try {
       return buffer.asUint8Array().slice();
     } finally {

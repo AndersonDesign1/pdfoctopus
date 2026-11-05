@@ -11,14 +11,16 @@ export interface PageImageProps {
 
 /** Shows one rendered PDF page. */
 export function PageImage({ png, width, height, alt }: PageImageProps) {
-  const [url, setUrl] = useState<string>();
+  // Keep each object URL paired with the PNG it was made from, so a URL that has
+  // already been revoked is never rendered.
+  const [image, setImage] = useState<{ png: Uint8Array; url: string }>();
 
   useEffect(() => {
-    const objectUrl = URL.createObjectURL(new Blob([png as BlobPart], { type: "image/png" }));
-    setUrl(objectUrl);
-    return () => URL.revokeObjectURL(objectUrl);
+    const url = URL.createObjectURL(new Blob([png as BlobPart], { type: "image/png" }));
+    setImage({ png, url });
+    return () => URL.revokeObjectURL(url);
   }, [png]);
 
-  if (!url) return null;
-  return <img className="pdfo-page" src={url} width={width} height={height} alt={alt} />;
+  if (!image || image.png !== png) return null;
+  return <img className="pdfo-page" src={image.url} width={width} height={height} alt={alt} />;
 }

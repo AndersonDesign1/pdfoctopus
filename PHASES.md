@@ -36,7 +36,7 @@ tasks needed to finish it and the **exit criteria** that must be true before we 
 ### Accounts & admin
 
 - [ ] Choose and register the domain (`pdfoctopus.com` or `pdfoctopus.fyi`) on Cloudflare.
-  Until then, the web app runs at `pdfoctopus.josanderson25.workers.dev` (Cloudflare Workers)
+  Until then, the web app will be served from `pdfoctopus.josanderson25.workers.dev` (Cloudflare Workers)
 - [ ] Apply to SignPath's free code-signing program for open source
 - [ ] Create an Oracle Cloud account and try to claim an Always Free ARM VM
 - [ ] Quick trademark check on the name before any commercial use
@@ -120,7 +120,8 @@ tasks needed to finish it and the **exit criteria** that must be true before we 
 ### Saving
 
 - [ ] Incremental save by default (edits appended, original bytes untouched)
-- [ ] Automated test: the original bytes stay identical after an incremental save
+- [ ] When a file can't be saved incrementally, ask the user before rewriting it
+- [x] Automated test: the original bytes stay identical after an incremental save
 - [ ] "Save as" a new file
 
 ### Exit criteria
@@ -240,6 +241,8 @@ tasks needed to finish it and the **exit criteria** that must be true before we 
 - [ ] Oracle Cloud ARM VM provisioned
 - [ ] Docker Compose stack: Gotenberg + small native MuPDF DOCX service
 - [ ] Cloudflare Tunnel in front of the server
+- [ ] Authentication in front of the tunnel (Cloudflare Access or a token check)
+- [ ] Disable Gotenberg routes the app doesn't use (e.g. Chromium URL fetching)
 - [ ] Files deleted immediately after conversion; no request logging of file contents
 - [ ] Size limits, timeouts and rate limiting
 - [ ] Rebuild-from-scratch instructions (server is stateless)

@@ -10,6 +10,8 @@ export type WorkerRequest =
   | { id: number; type: "save"; incremental?: boolean }
   | { id: number; type: "close" };
 
+export type RequestType = WorkerRequest["type"];
+
 export interface WorkerResults {
   open: { pageCount: number };
   render: RenderedPage;
@@ -17,6 +19,9 @@ export interface WorkerResults {
   close: null;
 }
 
-export type WorkerResponse =
-  | { id: number; ok: true; result: unknown }
-  | { id: number; ok: false; error: string };
+/** Successful response, typed by the request it answers. */
+export type WorkerSuccess<K extends RequestType = RequestType> = K extends RequestType
+  ? { id: number; ok: true; type: K; result: WorkerResults[K] }
+  : never;
+
+export type WorkerResponse = WorkerSuccess | { id: number; ok: false; error: string };

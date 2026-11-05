@@ -23,8 +23,8 @@ subscriptions. PDFoctopus aims to fix that.
 
 ## What it promises
 
-1. **Your layout stays intact.** Changes are added on top of the original file instead of
-   rebuilding it.
+1. **Your layout stays intact.** Wherever possible, changes are added on top of the original
+   file instead of rebuilding it, and you're asked before a file is ever rebuilt.
 2. **Your files stay with you.** Work happens on your own computer or in your own browser.
 3. **Everything in one place.** No more jumping between five different websites.
 4. **Free and open source.** Forever.

@@ -7,43 +7,71 @@
 // import would delay the handler and messages sent in the meantime could be lost.
 
 import type { PdfEngine } from "./engine";
-import type { WorkerRequest, WorkerResponse } from "./protocol";
+import type { RequestType, WorkerRequest, WorkerResponse, WorkerSuccess } from "./protocol";
 
-const scope = self as unknown as DedicatedWorkerGlobalScope;
+// The minimal worker-scope API we use. Typed here so the shared TypeScript config
+// doesn't need to mix the DOM and WebWorker libraries.
+interface WorkerScope {
+  onmessage: ((event: MessageEvent<WorkerRequest>) => void) | null;
+  postMessage(message: WorkerResponse, transfer: Transferable[]): void;
+}
+const scope = self as unknown as WorkerScope;
 
 let enginePromise: Promise<PdfEngine> | undefined;
 function getEngine(): Promise<PdfEngine> {
-  enginePromise ??= import("./engine").then((m) => new m.PdfEngine());
+  enginePromise ??= import("./engine").then(
+    (m) => new m.PdfEngine(),
+    (err) => {
+      // Don't cache a failed load: let the next request try again.
+      enginePromise = undefined;
+      throw err;
+    },
+  );
   return enginePromise;
 }
 
-async function handle(req: WorkerRequest): Promise<unknown> {
+function success<K extends RequestType>(
+  id: number,
+  type: K,
+  result: WorkerSuccess<K>["result"],
+): WorkerSuccess<K> {
+  return { id, ok: true, type, result } as WorkerSuccess<K>;
+}
+
+async function handle(req: WorkerRequest): Promise<WorkerSuccess> {
   const engine = await getEngine();
   switch (req.type) {
     case "open":
-      return engine.open(req.bytes);
+      return success(req.id, "open", engine.open(req.bytes));
     case "render":
-      return engine.renderPage(req.index, req.scale);
+      return success(req.id, "render", engine.renderPage(req.index, req.scale));
     case "save":
-      return engine.save({ incremental: req.incremental });
+      return success(req.id, "save", engine.save({ incremental: req.incremental }));
     case "close":
       engine.close();
-      return null;
+      return success(req.id, "close", null);
   }
+}
+
+/** Large binary results are transferred, not copied, back to the UI thread. */
+function transferables(res: WorkerSuccess): Transferable[] {
+  if (res.type === "render") return [res.result.png.buffer as ArrayBuffer];
+  if (res.type === "save") return [res.result.buffer as ArrayBuffer];
+  return [];
 }
 
 // Requests are processed one at a time, in order.
 let queue: Promise<void> = Promise.resolve();
 
-scope.onmessage = (event: MessageEvent<WorkerRequest>) => {
+scope.onmessage = (event) => {
   const req = event.data;
   queue = queue.then(async () => {
-    let response: WorkerResponse;
     try {
-      response = { id: req.id, ok: true, result: await handle(req) };
+      const res = await handle(req);
+      scope.postMessage(res, transferables(res));
     } catch (err) {
-      response = { id: req.id, ok: false, error: err instanceof Error ? err.message : String(err) };
+      const error = err instanceof Error ? err.message : String(err);
+      scope.postMessage({ id: req.id, ok: false, error }, []);
     }
-    scope.postMessage(response);
   });
 };

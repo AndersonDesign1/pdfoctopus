@@ -31,3 +31,13 @@ describe("PdfEngine", () => {
     engine.close();
   });
 });
+
+describe("PdfEngine.save", () => {
+  it("rewrites the whole file only when asked", () => {
+    const engine = new PdfEngine();
+    engine.open(createBlankPdf(1));
+    const rewritten = engine.save({ incremental: false });
+    expect(new TextDecoder().decode(rewritten.slice(0, 5))).toBe("%PDF-");
+    engine.close();
+  });
+});

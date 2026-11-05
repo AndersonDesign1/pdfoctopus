@@ -11,10 +11,6 @@
     "typecheck": "tsc -p .",
     "test": "vitest run --passWithNoTests"
   },
-  "dependencies": {
-    "asn1js": "^4.0.0",
-    "pkijs": "^4.0.1"
-  },
   "devDependencies": {
     "vitest": "^5.1.0"
   }
