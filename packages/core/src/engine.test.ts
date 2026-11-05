@@ -41,3 +41,13 @@ describe("PdfEngine.save", () => {
     engine.close();
   });
 });
+
+describe("errors", () => {
+  it("round-trips IncrementalSaveError across the worker boundary", async () => {
+    const { IncrementalSaveError, errorCode, errorFromCode } = await import("./errors");
+    const original = new IncrementalSaveError();
+    const rebuilt = errorFromCode(errorCode(original), original.message);
+    expect(rebuilt).toBeInstanceOf(IncrementalSaveError);
+    expect(errorFromCode(errorCode(new Error("x")), "x")).not.toBeInstanceOf(IncrementalSaveError);
+  });
+});

@@ -7,6 +7,7 @@
 // import would delay the handler and messages sent in the meantime could be lost.
 
 import type { PdfEngine } from "./engine";
+import { errorCode } from "./errors";
 import type { RequestType, WorkerRequest, WorkerResponse, WorkerSuccess } from "./protocol";
 
 // The minimal worker-scope API we use. Typed here so the shared TypeScript config
@@ -71,7 +72,7 @@ scope.onmessage = (event) => {
       scope.postMessage(res, transferables(res));
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
-      scope.postMessage({ id: req.id, ok: false, error }, []);
+      scope.postMessage({ id: req.id, ok: false, code: errorCode(err), error }, []);
     }
   });
 };

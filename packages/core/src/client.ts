@@ -2,6 +2,7 @@
 //
 // Promise-based client for the PDF worker. Use this from the UI thread.
 
+import { errorFromCode } from "./errors";
 import type { RequestType, WorkerRequest, WorkerResponse, WorkerResults } from "./protocol";
 
 type Pending = { resolve: (value: unknown) => void; reject: (reason: Error) => void };
@@ -22,14 +23,22 @@ export class PdfWorkerClient {
       if (!p) return;
       this.pending.delete(res.id);
       if (res.ok) p.resolve(res.result);
-      else p.reject(new Error(res.error));
+      else p.reject(errorFromCode(res.code, res.error));
     };
     this.worker.onerror = (event) => {
-      this.fail(new Error(event.message || "PDF worker crashed"));
+      // A crashed worker can't be trusted again: release it now. Callers should
+      // check `crashed` and create a new client.
+      this.terminateWith(new Error(event.message || "PDF worker crashed"));
     };
   }
 
-  private fail(error: Error) {
+  /** True once the worker has crashed or been terminated. Create a new client then. */
+  get crashed(): boolean {
+    return this.fatal !== null;
+  }
+
+  private terminateWith(error: Error) {
+    this.worker.terminate();
     this.fatal ??= error;
     for (const p of this.pending.values()) p.reject(error);
     this.pending.clear();
@@ -42,8 +51,15 @@ export class PdfWorkerClient {
     if (this.fatal) return Promise.reject(this.fatal);
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
+      try {
+        // Responses always arrive asynchronously, so posting before registering is safe,
+        // and nothing is left pending if postMessage throws (e.g. a non-transferable buffer).
+        this.worker.postMessage({ ...req, id }, transfer);
+      } catch (err) {
+        reject(err instanceof Error ? err : new Error(String(err)));
+        return;
+      }
       this.pending.set(id, { resolve: resolve as (v: unknown) => void, reject });
-      this.worker.postMessage({ ...req, id }, transfer);
     });
   }
 
@@ -69,7 +85,6 @@ export class PdfWorkerClient {
 
   /** Stop the worker. Any calls still in flight are rejected. */
   terminate() {
-    this.worker.terminate();
-    this.fail(new Error("PDF worker was terminated"));
+    this.terminateWith(new Error("PDF worker was terminated"));
   }
 }

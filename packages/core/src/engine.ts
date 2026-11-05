@@ -4,19 +4,13 @@
 // (see worker.ts) in the browser, and directly in Node for tests.
 
 import * as mupdf from "mupdf";
+import { IncrementalSaveError } from "./errors";
 
 export interface RenderedPage {
   width: number;
   height: number;
   /** PNG-encoded image bytes. */
   png: Uint8Array;
-}
-
-export class IncrementalSaveError extends Error {
-  constructor() {
-    super("This PDF can't be saved incrementally; a full rewrite is required");
-    this.name = "IncrementalSaveError";
-  }
 }
 
 export class PdfEngine {

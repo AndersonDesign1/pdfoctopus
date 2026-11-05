@@ -3,6 +3,7 @@
 // Messages exchanged between the UI thread and the PDF worker.
 
 import type { RenderedPage } from "./engine";
+import type { PdfErrorCode } from "./errors";
 
 export type WorkerRequest =
   | { id: number; type: "open"; bytes: Uint8Array }
@@ -24,4 +25,6 @@ export type WorkerSuccess<K extends RequestType = RequestType> = K extends Reque
   ? { id: number; ok: true; type: K; result: WorkerResults[K] }
   : never;
 
-export type WorkerResponse = WorkerSuccess | { id: number; ok: false; error: string };
+export type WorkerResponse =
+  | WorkerSuccess
+  | { id: number; ok: false; code: PdfErrorCode; error: string };

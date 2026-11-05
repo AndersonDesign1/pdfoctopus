@@ -22,8 +22,10 @@ export function App() {
   }, []);
 
   async function onFile(file: File) {
+    if (!client.current || loading) return;
+    // If a previous file crashed the worker, start a fresh one so the app recovers.
+    if (client.current.crashed) client.current = new PdfWorkerClient();
     const pdf = client.current;
-    if (!pdf || loading) return;
     setLoading(true);
     setStatus("Loading…");
     try {
