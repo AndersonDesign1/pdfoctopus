@@ -4,7 +4,7 @@
 # Stateless: files are deleted right after conversion. See services/convert/README.md.
 #
 # Placeholder: not deployed yet. Before it goes live, the tunnel MUST be protected by
-# Cloudflare Access (or a token check) and unused Gotenberg routes (e.g. Chromium URL
+# Cloudflare Access, and unused Gotenberg routes (e.g. Chromium URL
 # fetching) disabled. Tracked in PHASES.md, Phase 4.
 
 services:
