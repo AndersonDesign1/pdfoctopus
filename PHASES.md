@@ -36,7 +36,7 @@ tasks needed to finish it and the **exit criteria** that must be true before we 
 ### Accounts & admin
 
 - [ ] Choose and register the domain (`pdfoctopus.com` or `pdfoctopus.fyi`) on Cloudflare.
-  Until then, the web app uses the free temporary address `pdfoctopus.pages.dev`
+  Until then, the web app runs at `pdfoctopus.josanderson25.workers.dev` (Cloudflare Workers)
 - [ ] Apply to SignPath's free code-signing program for open source
 - [ ] Create an Oracle Cloud account and try to claim an Always Free ARM VM
 - [ ] Quick trademark check on the name before any commercial use
@@ -339,8 +339,8 @@ tasks needed to finish it and the **exit criteria** that must be true before we 
 
 ### Web release
 
-- [ ] Deploy the web app to Cloudflare Pages
-- [ ] Publish at `pdfoctopus.pages.dev` (temporary address)
+- [ ] Deploy the web app to Cloudflare Workers (`bun run deploy` in `apps/web`)
+- [ ] Live at `pdfoctopus.josanderson25.workers.dev` (temporary address)
 - [ ] Point the chosen domain at it once registered
 - [ ] Offline support (service worker)
 
