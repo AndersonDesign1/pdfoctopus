@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+[package]
+name = "pdfoctopus"
+version = "0.0.0"
+description = "PDFoctopus: eight arms, every PDF job."
+authors = ["PDFoctopus contributors"]
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/AndersonDesign1/pdfoctopus"
+edition = "2021"
+
+[lib]
+name = "pdfoctopus_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

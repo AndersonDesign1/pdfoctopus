@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Conversion server (Phase 4). Runs on an Oracle Cloud free ARM VM behind a Cloudflare Tunnel.
+# Stateless: files are deleted right after conversion. See services/convert/README.md.
+
+services:
+  gotenberg:
+    image: gotenberg/gotenberg:8
+    restart: unless-stopped
+    command: ["gotenberg", "--api-timeout=60s", "--log-level=warn"]
+    expose: ["3000"]
+
+  # mupdf-docx: small native MuPDF service for PDF -> DOCX/ODT. To be added in Phase 4.
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on: [gotenberg]

@@ -1,0 +1,21 @@
+{
+  "name": "@pdfoctopus/core",
+  "version": "0.0.0",
+  "private": true,
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./engine": "./src/engine.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "mupdf": "1.28.1"
+  },
+  "devDependencies": {
+    "vitest": "^5.1.0"
+  }
+}
