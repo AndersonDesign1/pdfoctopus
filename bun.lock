@@ -49,6 +49,7 @@
         "mupdf": "1.28.1",
       },
       "devDependencies": {
+        "@types/node": "^22",
         "vitest": "^5.1.0",
       },
     },

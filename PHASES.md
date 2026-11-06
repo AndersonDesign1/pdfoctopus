@@ -50,7 +50,7 @@ tasks needed to finish it and the **exit criteria** that must be true before we 
 - [x] `PHASES.md` (this file)
 - [ ] Enable a DCO check on pull requests (e.g. the DCO GitHub App)
 - [ ] Branch protection on `main` (require CI + review)
-- [ ] Issue and PR templates
+- [x] Issue and PR templates
 
 ### Monorepo & tooling
 
@@ -79,9 +79,9 @@ tasks needed to finish it and the **exit criteria** that must be true before we 
 
 ### Test files
 
-- [ ] Collect 30+ real-world PDFs in `fixtures/` (invoices, contracts, forms, scans, CJK,
+- [x] Collect 30+ real-world PDFs in `fixtures/` (invoices, contracts, forms, scans, CJK,
   encrypted, signed, very large, malformed)
-- [ ] Document the source and licence of each fixture
+- [x] Document the source and licence of each fixture
 
 ### Exit criteria
 
