@@ -72,10 +72,10 @@ tasks needed to finish it and the **exit criteria** that must be true before we 
 - [x] `mupdf` (WebAssembly) installed in `packages/core`
 - [x] MuPDF runs inside a Web Worker
 - [x] Open a PDF and render page 1 in the web app
-- [ ] Save a PDF back to disk (download in web, native save in desktop)
-- [ ] Lazy-load the WebAssembly with a loading/progress indicator
-- [ ] Cache the WebAssembly with a service worker
-- [ ] Recover gracefully if the worker crashes on a bad file
+- [x] Save a PDF back to disk (download in web, native save in desktop)
+- [x] Lazy-load the WebAssembly with a loading/progress indicator
+- [x] Cache the WebAssembly with a service worker
+- [x] Recover gracefully if the worker crashes on a bad file
 
 ### Test files
 
@@ -345,8 +345,8 @@ tasks needed to finish it and the **exit criteria** that must be true before we 
 ### Web release
 
 - [x] GitHub repo connected to Cloudflare Workers Builds (auto-deploys `main`)
-- [ ] First successful deploy of the web app from `main`
-- [ ] Live at `pdfoctopus.josanderson25.workers.dev` (temporary address)
+- [x] First successful deploy of the web app from `main`
+- [x] Live at `pdfoctopus.josanderson25.workers.dev` (temporary address)
 - [ ] Point the chosen domain at it once registered
 - [ ] Offline support (service worker)
 

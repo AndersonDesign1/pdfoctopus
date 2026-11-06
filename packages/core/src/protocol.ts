@@ -6,6 +6,7 @@ import type { RenderedPage } from "./engine";
 import type { PdfErrorCode } from "./errors";
 
 export type WorkerRequest =
+  | { id: number; type: "init" }
   | { id: number; type: "open"; bytes: Uint8Array }
   | { id: number; type: "render"; index: number; scale?: number }
   | { id: number; type: "save"; incremental?: boolean }
@@ -14,6 +15,7 @@ export type WorkerRequest =
 export type RequestType = WorkerRequest["type"];
 
 export interface WorkerResults {
+  init: null;
   open: { pageCount: number };
   render: RenderedPage;
   save: Uint8Array;
@@ -28,3 +30,16 @@ export type WorkerSuccess<K extends RequestType = RequestType> = K extends Reque
 export type WorkerResponse =
   | WorkerSuccess
   | { id: number; ok: false; code: PdfErrorCode; error: string };
+
+/** Progress of the one-off MuPDF WebAssembly download. */
+export interface LoadProgress {
+  /** Bytes received so far (uncompressed). */
+  loaded: number;
+  /** Expected total in bytes, or null when unknown. */
+  total: number | null;
+}
+
+/** Unsolicited messages from the worker (not answers to a request). */
+export type WorkerEvent = { event: "load-progress"; progress: LoadProgress };
+
+export type WorkerMessage = WorkerResponse | WorkerEvent;
