@@ -258,5 +258,16 @@ console.log("MuPDF:");
 console.log("pyhanko:");
 execFileSync("python3", [join(here, "sign.py"), out], { stdio: "inherit" });
 
+// A sticky note added after signing, saved incrementally by MuPDF the way PDFoctopus will.
+{
+  const doc = openPdf(read("signed.pdf"));
+  const note = doc.loadPage(0).createAnnotation("Text");
+  note.setRect([500, 780, 520, 800]);
+  note.setContents("Added after signing");
+  note.update();
+  write("signed-then-annotated.pdf", saveDoc(doc, "incremental"));
+  doc.destroy();
+}
+
 rmSync(tmp, { recursive: true, force: true });
 console.log("Done.");

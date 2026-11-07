@@ -32,3 +32,15 @@ jobs:
           workspaces: apps/desktop/src-tauri
       - run: bun install --frozen-lockfile
       - run: cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml
+
+  # Independent check that the signed test files still validate as documented in
+  # fixtures/README.md (pyhanko is a separate, well-tested PDF signature validator).
+  signatures:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install "pyhanko==0.38.1"
+      - run: python3 fixtures/scripts/check-signatures.py
