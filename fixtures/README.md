@@ -1,6 +1,6 @@
 # Test fixtures
 
-PDFs used for regression and crash testing. Every file in this folder is opened by
+PDFs used for regression and crash testing. Every PDF in this folder is opened by
 `packages/core/src/fixtures.test.ts`, which checks the engine never crashes on any of them.
 
 | Folder           | What                                                               | Licence                                                       |
@@ -36,6 +36,16 @@ PDFs used for regression and crash testing. Every file in this folder is opened 
 
 Made by [`scripts/generate.mjs`](./scripts/generate.mjs) from the HTML in
 [`scripts/sources/`](./scripts/sources). All names, companies and numbers are made up.
+
+CC0 covers the content we wrote. Some files embed subsets of free fonts, which keep their own
+licences; all of them allow embedding in documents:
+
+| Font              | Embedded in                                            | Licence                                                                              |
+| ----------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------ |
+| DejaVu Sans       | invoice, report and the files derived from the invoice | [DejaVu Fonts licence](https://dejavu-fonts.github.io/License.html) (Bitstream Vera) |
+| Liberation Serif  | both contracts and the annotated contract              | [SIL OFL 1.1](https://openfontlicense.org)                                           |
+| Inter             | `contract-libreoffice.pdf` (headings)                  | [SIL OFL 1.1](https://openfontlicense.org)                                           |
+| WenQuanYi Zen Hei | `cjk-text.pdf`                                         | GPL-2.0 with a font embedding exception                                              |
 
 | File                               | Category    | Notes                                                                                       |
 | ---------------------------------- | ----------- | ------------------------------------------------------------------------------------------- |

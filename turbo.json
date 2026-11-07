@@ -4,7 +4,7 @@
   "tasks": {
     "build": { "dependsOn": ["^build"], "outputs": ["dist/**"] },
     "typecheck": { "dependsOn": ["^typecheck"] },
-    "test": { "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/fixtures/**"] },
+    "test": {},
     "dev": { "cache": false, "persistent": true }
   }
 }

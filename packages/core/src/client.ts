@@ -17,6 +17,11 @@ type DistributiveOmit<T, K extends keyof T> = T extends unknown ? Omit<T, K> : n
 export interface PdfWorkerClientOptions {
   /** Called while MuPDF's WebAssembly downloads (only on the first load). */
   onLoadProgress?: (progress: LoadProgress) => void;
+  /**
+   * Called once if the engine crashes or fails to load, including while no call is in
+   * flight. Any open document is gone at that point. Not called for `terminate()`.
+   */
+  onFatalError?: (error: Error) => void;
 }
 
 export class PdfWorkerClient {
@@ -26,7 +31,10 @@ export class PdfWorkerClient {
   /** Set once the worker has crashed or been terminated; later calls fail fast. */
   private fatal: Error | null = null;
 
+  private readonly onFatalError?: (error: Error) => void;
+
   constructor(options: PdfWorkerClientOptions = {}) {
+    this.onFatalError = options.onFatalError;
     this.worker = new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });
     this.worker.onmessage = (event: MessageEvent<WorkerMessage>) => {
       const msg = event.data;
@@ -45,7 +53,7 @@ export class PdfWorkerClient {
       if (isFatalEngineError(error)) {
         // The engine's memory may be corrupt (or it never loaded): discard this worker so
         // the next attempt starts clean. Other calls in flight fail with the same error.
-        this.terminateWith(error);
+        this.fail(error);
       }
       p.reject(error);
     };
@@ -53,16 +61,23 @@ export class PdfWorkerClient {
       // An uncaught error or a worker that failed to start. Either way it can't be
       // trusted again: release it now. Callers should check `crashed` and create a new client.
       event.preventDefault();
-      this.terminateWith(new EngineCrashedError(event.message || "The PDF engine crashed"));
+      this.fail(new EngineCrashedError(event.message || "The PDF engine crashed"));
     };
     this.worker.onmessageerror = () => {
-      this.terminateWith(new EngineCrashedError("The PDF engine sent an unreadable message"));
+      this.fail(new EngineCrashedError("The PDF engine sent an unreadable message"));
     };
   }
 
   /** True once the worker has crashed or been terminated. Create a new client then. */
   get crashed(): boolean {
     return this.fatal !== null;
+  }
+
+  /** Discard the worker after a crash or failed load, and tell the owner once. */
+  private fail(error: Error) {
+    const first = this.fatal === null;
+    this.terminateWith(error);
+    if (first) this.onFatalError?.(error);
   }
 
   private terminateWith(error: Error) {

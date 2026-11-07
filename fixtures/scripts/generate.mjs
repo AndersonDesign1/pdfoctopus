@@ -3,12 +3,18 @@
 // Regenerates the files in fixtures/generated/. The output is committed, so you only need
 // to run this when changing a generated fixture.
 //
-// Requirements: Node 22+, `bun install` done (for MuPDF), Playwright with Chromium,
-// LibreOffice (`soffice`), and Python 3 with pyhanko (`pip install pyhanko`).
+// Requirements:
+// - Node 22+ and `bun install` (MuPDF and Playwright come from the workspace)
+// - Chromium for Playwright: `bunx playwright install chromium`
+// - LibreOffice (`soffice` on the PATH)
+// - The fonts the sources use (checked below). On Debian/Ubuntu:
+//   `apt install fonts-dejavu-core fonts-liberation fonts-wqy-zenhei`
+// - Python 3 with pyhanko: `pip install -r fixtures/scripts/requirements.txt`
 //
 //   node fixtures/scripts/generate.mjs
 //
-// Everything generated here is fictional and released under CC0-1.0.
+// Everything generated here is fictional and released under CC0-1.0. Fonts embedded in the
+// output keep their own licences (listed in fixtures/README.md).
 
 import { execFileSync } from "node:child_process";
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -24,9 +30,19 @@ const out = join(here, "..", "generated");
 mkdirSync(out, { recursive: true });
 const tmp = mkdtempSync(join(tmpdir(), "pdfo-fixtures-"));
 
+// Without these fonts, Chromium silently substitutes others (or draws empty boxes for CJK),
+// and the regenerated fixtures would differ from the committed ones.
+const REQUIRED_FONTS = ["DejaVu Sans", "Liberation Serif", "WenQuanYi Zen Hei"];
+const installedFonts = execFileSync("fc-list", [":", "family"], { encoding: "utf8" });
+const missingFonts = REQUIRED_FONTS.filter((font) => !installedFonts.includes(font));
+if (missingFonts.length > 0) {
+  console.error(`Missing fonts: ${missingFonts.join(", ")}. See the requirements at the top.`);
+  process.exit(1);
+}
+
 const requireFromCore = createRequire(join(root, "packages", "core", "package.json"));
 const mupdf = await import(pathToFileURL(requireFromCore.resolve("mupdf")).href);
-const { chromium } = createRequire(import.meta.url)("playwright");
+const { chromium } = createRequire(join(root, "package.json"))("playwright");
 
 const write = (name, bytes) => {
   writeFileSync(join(out, name), bytes);

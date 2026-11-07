@@ -50,6 +50,16 @@ export function App() {
       onLoadProgress: (progress) => {
         if (client.current === pdf) setEngine({ status: "loading", progress });
       },
+      // The document lived in this worker. If it crashes, even between actions, stop
+      // showing the document so Save can't run against an engine that no longer has it.
+      // (A crash during an action is then also reported by that action, more specifically.)
+      onFatalError: (err) => {
+        if (client.current !== pdf) return;
+        setDoc(undefined);
+        if (err instanceof EngineCrashedError) {
+          setStatus("The PDF engine stopped unexpectedly. Please open the file again.");
+        }
+      },
     });
     client.current = pdf;
     setEngine({ status: "loading", progress: null });

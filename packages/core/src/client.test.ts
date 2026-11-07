@@ -65,6 +65,20 @@ describe("PdfWorkerClient", () => {
     await expect(client.renderPage(0)).rejects.toBeInstanceOf(EngineCrashedError);
   });
 
+  it("reports a crash while idle once, but not a deliberate terminate", () => {
+    const onFatalError = vi.fn();
+    const client = new PdfWorkerClient({ onFatalError });
+    FakeWorker.last.onerror?.({ message: "boom", preventDefault() {} });
+    FakeWorker.last.onmessageerror?.();
+    expect(onFatalError).toHaveBeenCalledTimes(1);
+    expect(onFatalError.mock.calls[0]?.[0]).toBeInstanceOf(EngineCrashedError);
+    expect(client.crashed).toBe(true);
+
+    const other = vi.fn();
+    new PdfWorkerClient({ onFatalError: other }).terminate();
+    expect(other).not.toHaveBeenCalled();
+  });
+
   it("treats an uncaught worker error as a crash", async () => {
     const client = new PdfWorkerClient();
     const opening = client.init();

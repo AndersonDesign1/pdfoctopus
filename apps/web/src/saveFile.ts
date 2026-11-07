@@ -57,19 +57,23 @@ export async function saveFile(bytes: Uint8Array, suggestedName: string): Promis
   if (isTauri()) return saveWithTauri(bytes, suggestedName);
 
   const blob = new Blob([bytes as BlobPart], { type: "application/pdf" });
-  const picker = (window as SaveFilePickerWindow).showSaveFilePicker;
-  if (picker) {
-    try {
-      const handle = await picker({ suggestedName, types: [PDF_TYPE] });
-      const writable = await handle.createWritable();
-      await writable.write(blob);
-      await writable.close();
-      return "saved";
-    } catch (err) {
-      if (isAbort(err)) return "cancelled";
-      // E.g. the browser refused because too much time passed since the click.
-      // Fall back to a plain download rather than failing.
-    }
+  const pickerWindow = window as SaveFilePickerWindow;
+  if (!pickerWindow.showSaveFilePicker) return download(blob, suggestedName);
+
+  let handle: Awaited<ReturnType<NonNullable<SaveFilePickerWindow["showSaveFilePicker"]>>>;
+  try {
+    // Called as a method: the browser rejects it when detached from `window`.
+    handle = await pickerWindow.showSaveFilePicker({ suggestedName, types: [PDF_TYPE] });
+  } catch (err) {
+    if (isAbort(err)) return "cancelled";
+    // E.g. the browser refused because too much time passed since the click.
+    // Fall back to a plain download rather than failing.
+    return download(blob, suggestedName);
   }
-  return download(blob, suggestedName);
+  // Errors writing the chosen file (disk full, no permission) are real failures and are
+  // reported to the user, not hidden behind a second download.
+  const writable = await handle.createWritable();
+  await writable.write(blob);
+  await writable.close();
+  return "saved";
 }

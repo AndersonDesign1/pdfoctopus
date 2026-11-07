@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Direct requirement for check-signatures.py. Regenerate requirements.txt with:
+#   pip-compile --generate-hashes --allow-unsafe --strip-extras --no-header requirements.in
+pyhanko==0.38.1

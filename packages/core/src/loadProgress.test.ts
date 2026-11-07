@@ -22,7 +22,7 @@ describe("withWasmProgress", () => {
   it("reports progress for .wasm downloads and keeps the body and headers", async () => {
     const events: LoadProgress[] = [];
     const wrapped = withWasmProgress(
-      fakeFetch([new Uint8Array(3), new Uint8Array(5)], {
+      fakeFetch([new Uint8Array([1, 2, 3]), new Uint8Array([4, 5, 6, 7, 8])], {
         "content-type": "application/wasm",
         "content-length": "8",
       }),
@@ -30,7 +30,7 @@ describe("withWasmProgress", () => {
     );
     const res = await wrapped("https://example.com/assets/mupdf-wasm-abc.wasm");
     expect(res.headers.get("content-type")).toBe("application/wasm");
-    expect((await res.arrayBuffer()).byteLength).toBe(8);
+    expect(Array.from(new Uint8Array(await res.arrayBuffer()))).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
     expect(events).toEqual([
       { loaded: 0, total: 8 },
       { loaded: 3, total: 8 },

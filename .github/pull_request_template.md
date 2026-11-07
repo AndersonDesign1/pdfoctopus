@@ -16,4 +16,4 @@
 - [ ] Saving still appends changes (incremental) unless the user agreed to a rewrite
 - [ ] Files never leave the user's device without explicit consent
 - [ ] PHASES.md boxes ticked for tasks this PR finishes
-- [ ] New test files are in `fixtures/` with their source and licence recorded
+- [ ] New test fixtures are in `fixtures/` with their source and licence recorded

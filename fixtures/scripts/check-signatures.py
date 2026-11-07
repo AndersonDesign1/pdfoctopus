@@ -54,6 +54,7 @@ def check(path: str, root, expected) -> list[str]:
         if len(sigs) != len(expected):
             return [f"{path}: expected {len(expected)} signatures, found {len(sigs)}"]
         for sig, (intact, trusted, modified) in zip(sigs, expected):
+            errors_before = len(errors)
             # Validate at a fixed time so the check doesn't start failing when certificates expire.
             context = ValidationContext(
                 trust_roots=[root], allow_fetching=False, moment=sig.self_reported_timestamp
@@ -71,7 +72,7 @@ def check(path: str, root, expected) -> list[str]:
                 actual = False if level == "NONE" else level
                 if actual != modified:
                     errors.append(f"{name}: modified after signing={actual}, expected {modified}")
-            if not errors:
+            if len(errors) == errors_before:
                 print(f"ok  {name}")
     return errors
 
