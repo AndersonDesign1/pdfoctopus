@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+name: Feature request
+description: Suggest something PDFoctopus should do.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Check [PHASES.md](https://github.com/AndersonDesign1/pdfoctopus/blob/main/PHASES.md)
+        first: it may already be planned.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: Describe the task or problem, not just the solution.
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: What would you like PDFoctopus to do?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What do you use today?
+      description: Other tools or workarounds, and what's wrong with them.
+  - type: dropdown
+    id: app
+    attributes:
+      label: Where do you need it?
+      multiple: true
+      options:
+        - Web app
+        - Desktop app

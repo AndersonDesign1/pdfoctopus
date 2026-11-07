@@ -1,0 +1,74 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+name: Bug report
+description: Something doesn't work, crashes, or damages a PDF.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! **Please don't attach PDFs that contain personal or confidential
+        information.** If the problem only happens with a private file, describe it instead
+        (where it came from, which program made it, page count, whether it has forms,
+        signatures or a password).
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+      placeholder: |
+        1. Opened invoice.pdf
+        2. Rotated page 2 and saved
+        3. The saved file shows a blank page 2 in Adobe Reader
+    validations:
+      required: true
+  - type: dropdown
+    id: app
+    attributes:
+      label: Which app?
+      options:
+        - Web app
+        - Desktop app (Windows)
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or date
+      description: Desktop version number, or the date you used the web app.
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Browser / operating system
+      placeholder: e.g. Chrome 140 on Windows 11
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Opening / viewing
+        - Page tools (merge, split, rotate…)
+        - Saving
+        - Signing
+        - Annotations / redaction
+        - Forms
+        - Passwords / permissions
+        - Compress
+        - Create
+        - Convert
+        - Text editing
+        - Other
+  - type: textarea
+    id: file
+    attributes:
+      label: Sample file
+      description: >
+        Attach a PDF that shows the problem only if it's safe to share publicly. Otherwise
+        describe it. If it is one of the files in `fixtures/`, name it.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Error messages
+      description: Any message shown in the app, or from the browser console (F12).
+      render: text
