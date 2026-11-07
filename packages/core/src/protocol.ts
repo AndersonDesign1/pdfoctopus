@@ -2,13 +2,15 @@
 //
 // Messages exchanged between the UI thread and the PDF worker.
 
-import type { RenderedPage } from "./engine";
+import type { DocumentInfo, OpenResult, RenderedPage, SearchHit } from "./engine";
 import type { PdfErrorCode } from "./errors";
 
 export type WorkerRequest =
   | { id: number; type: "init" }
   | { id: number; type: "open"; bytes: Uint8Array }
+  | { id: number; type: "authenticate"; password: string }
   | { id: number; type: "render"; index: number; scale?: number }
+  | { id: number; type: "search"; query: string }
   | { id: number; type: "save"; incremental?: boolean }
   | { id: number; type: "close" };
 
@@ -16,8 +18,10 @@ export type RequestType = WorkerRequest["type"];
 
 export interface WorkerResults {
   init: null;
-  open: { pageCount: number };
+  open: OpenResult;
+  authenticate: DocumentInfo | null;
   render: RenderedPage;
+  search: { hits: SearchHit[]; truncated: boolean };
   save: Uint8Array;
   close: null;
 }

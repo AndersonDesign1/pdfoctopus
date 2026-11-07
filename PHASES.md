@@ -18,7 +18,7 @@ tasks needed to finish it and the **exit criteria** that must be true before we 
 | #   | Phase                                                             | Estimate | Status         |
 | --- | ----------------------------------------------------------------- | -------- | -------------- |
 | 0   | [Foundations](#phase-0-foundations)                               | 1–2 wks  | 🟨 In progress |
-| 1   | [Core viewer + page tools](#phase-1-core-viewer--page-tools)      | 2–3 wks  | ⬜ Not started |
+| 1   | [Core viewer + page tools](#phase-1-core-viewer--page-tools)      | 2–3 wks  | 🟨 In progress |
 | 2   | [Sign, annotate & forms](#phase-2-sign-annotate--forms)           | 3–4 wks  | ⬜ Not started |
 | 3   | [Security, compress & create](#phase-3-security-compress--create) | 2–3 wks  | ⬜ Not started |
 | 4   | [Conversion](#phase-4-conversion)                                 | 2–3 wks  | ⬜ Not started |
@@ -97,14 +97,14 @@ tasks needed to finish it and the **exit criteria** that must be true before we 
 
 ### Viewer
 
-- [ ] Open files by drag-and-drop, file picker and (desktop) "Open with"
-- [ ] Render all pages with virtual scrolling (only visible pages rendered)
-- [ ] Zoom (fit width, fit page, custom %) and pinch-to-zoom
-- [ ] Thumbnail sidebar
-- [ ] Text search with highlighted results and next/previous
-- [ ] Page navigation (go to page, keyboard shortcuts)
-- [ ] Dark mode
-- [ ] Show document properties (title, author, page count, size)
+- [x] Open files by drag-and-drop, file picker and (desktop) "Open with"
+- [x] Render all pages with virtual scrolling (only visible pages rendered)
+- [x] Zoom (fit width, fit page, custom %) and pinch-to-zoom
+- [x] Thumbnail sidebar
+- [x] Text search with highlighted results and next/previous
+- [x] Page navigation (go to page, keyboard shortcuts)
+- [x] Dark mode
+- [x] Show document properties (title, author, page count, size)
 
 ### Page tools
 
@@ -127,7 +127,7 @@ tasks needed to finish it and the **exit criteria** that must be true before we 
 ### Exit criteria
 
 - [ ] Every page tool works on all `fixtures/` without crashing
-- [ ] A 500-page PDF scrolls smoothly
+- [x] A 500-page PDF scrolls smoothly
 - [ ] Saved files open correctly in Adobe Reader and a browser PDF viewer
 
 ---
