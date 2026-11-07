@@ -2,14 +2,17 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  anchorAt,
   CSS_PX_PER_PT,
   computeLayout,
   currentPage,
   fitScale,
   pageAtOffset,
+  pageLeft,
   percentToScale,
   renderScale,
   scaleToPercent,
+  scrollForAnchor,
   stepZoom,
   visibleRange,
 } from "./layout";
@@ -49,9 +52,41 @@ describe("visibleRange and currentPage", () => {
     expect(pageAtOffset(layout, -50)).toBe(0);
   });
 
-  it("reports the page a third of the way down the viewport", () => {
+  it("reports the page that fills the view, not one that's nearly scrolled off", () => {
     expect(currentPage(layout, 0, 900)).toBe(0);
-    expect(currentPage(layout, (layout.tops[10] as number) - 200, 900)).toBe(10);
+    const top10 = layout.tops[10] as number;
+    // Page 10 starts 200 px down: page 9's last 190 px aren't enough to count.
+    expect(currentPage(layout, top10 - 200, 900)).toBe(10);
+    // Most of the view is still page 9.
+    expect(currentPage(layout, top10 - 700, 900)).toBe(9);
+  });
+
+  it("agrees with go-to-page when many small pages fit on screen", () => {
+    // 10% zoom: an A4 page is about 112 px tall, so 8 pages fit in a 900 px view.
+    const tiny = computeLayout(pages, 0.1 * CSS_PX_PER_PT, opts);
+    for (const target of [0, 1, 10, 250]) {
+      const scrollTop = (tiny.tops[target] as number) - opts.padding;
+      expect(currentPage(tiny, scrollTop, 900)).toBe(target);
+    }
+  });
+});
+
+describe("zoom anchoring", () => {
+  it("keeps the point under the pointer in place, horizontally too", () => {
+    const page = { width: 600, height: 800 };
+    const viewportWidth = 1000;
+    const before = computeLayout([page], 1, opts);
+    // Pointer at x=750, y=300 in the viewport, not scrolled.
+    const anchor = anchorAt(before, { top: 0, left: 0 }, viewportWidth, 750, 300);
+    if (!anchor) throw new Error("no anchor");
+    const pointOnPage = 750 - pageLeft(before, 0, viewportWidth);
+    const after = computeLayout([page], 2, opts);
+    const scroll = scrollForAnchor(after, anchor, viewportWidth);
+    // The same point of the page, at double size, is back under the pointer.
+    const screenX = pageLeft(after, 0, viewportWidth) + pointOnPage * 2 - scroll.left;
+    expect(screenX).toBeCloseTo(750);
+    const screenY = (after.tops[0] as number) + (300 - opts.padding) * 2 - scroll.top;
+    expect(screenY).toBeCloseTo(300);
   });
 });
 

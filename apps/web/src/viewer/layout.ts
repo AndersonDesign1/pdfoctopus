@@ -104,11 +104,77 @@ export function visibleRange(
 }
 
 /**
- * The page the reader is looking at: the one under a line a third of the way down the
- * viewport, which matches where people's eyes rest when reading down a page.
+ * The page the reader is looking at: the topmost visible page that shows enough of itself,
+ * meaning at least half of the page or enough to fill half the view, whichever is less.
+ * Small pages count as soon as they're mostly visible, so "go to page N" (which puts N at
+ * the top) reports N even when several pages fit on screen. A big page counts while it
+ * fills much of the view, not just when a sliver of it remains at the top.
  */
 export function currentPage(layout: Layout, scrollTop: number, viewportHeight: number): number {
-  return pageAtOffset(layout, scrollTop + viewportHeight / 3);
+  const { first, last } = visibleRange(layout, scrollTop, viewportHeight);
+  if (last < first) return 0;
+  for (let i = first; i <= last; i++) {
+    const top = layout.tops[i] as number;
+    const height = layout.heights[i] as number;
+    const visible = Math.min(top + height, scrollTop + viewportHeight) - Math.max(top, scrollTop);
+    if (visible >= Math.min(height, viewportHeight) / 2) return i;
+  }
+  return last;
+}
+
+/** Left edge of a page in the column (pages are centred). */
+export function pageLeft(layout: Layout, index: number, viewportWidth: number): number {
+  const contentWidth = Math.max(layout.totalWidth, viewportWidth);
+  return (contentWidth - (layout.widths[index] ?? 0)) / 2;
+}
+
+/** A point on a page (as fractions of its size) and where it is shown in the viewport. */
+export interface Anchor {
+  page: number;
+  fracX: number;
+  fracY: number;
+  viewportX: number;
+  viewportY: number;
+}
+
+/** The point of the document shown at (viewportX, viewportY) for this scroll position. */
+export function anchorAt(
+  layout: Layout,
+  scroll: { top: number; left: number },
+  viewportWidth: number,
+  viewportX: number,
+  viewportY: number,
+): Anchor | null {
+  if (layout.tops.length === 0) return null;
+  const y = scroll.top + viewportY;
+  const page = pageAtOffset(layout, y);
+  const x = scroll.left + viewportX;
+  return {
+    page,
+    fracX: (x - pageLeft(layout, page, viewportWidth)) / (layout.widths[page] as number),
+    fracY: (y - (layout.tops[page] as number)) / (layout.heights[page] as number),
+    viewportX,
+    viewportY,
+  };
+}
+
+/** The scroll position that shows the anchored point at the same place in the viewport. */
+export function scrollForAnchor(
+  layout: Layout,
+  anchor: Anchor,
+  viewportWidth: number,
+): { top: number; left: number } {
+  const page = Math.min(anchor.page, layout.tops.length - 1);
+  return {
+    top:
+      (layout.tops[page] as number) +
+      anchor.fracY * (layout.heights[page] as number) -
+      anchor.viewportY,
+    left:
+      pageLeft(layout, page, viewportWidth) +
+      anchor.fracX * (layout.widths[page] as number) -
+      anchor.viewportX,
+  };
 }
 
 /** The scale that makes a page fit the viewport, in CSS pixels per point. */

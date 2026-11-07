@@ -16,15 +16,17 @@ import {
   useState,
 } from "react";
 import {
+  type Anchor,
+  anchorAt,
   clampScale,
   computeLayout,
   currentPage,
   DEFAULT_LAYOUT,
   fitScale,
   type Layout,
-  pageAtOffset,
   renderScale,
   type Size,
+  scrollForAnchor,
   visibleRange,
   type ZoomMode,
 } from "./layout";
@@ -56,15 +58,6 @@ export interface ViewerProps {
   onCurrentPageChange(index: number): void;
   hits: SearchHit[];
   currentHit: number;
-}
-
-/** Where the view is anchored while zooming: a point on a page, and where it is on screen. */
-interface Anchor {
-  page: number;
-  fracY: number;
-  fracX: number;
-  viewportX: number;
-  viewportY: number;
 }
 
 /** Render resolution waits until zooming pauses, so a pinch doesn't queue dozens of renders. */
@@ -156,18 +149,14 @@ export const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
   /** Remember which point of which page is at (viewportX, viewportY) in the old layout. */
   const recordAnchor = useCallback((viewportX: number, viewportY: number) => {
     const el = scrollRef.current;
-    const old = layoutRef.current;
-    if (!el || old.tops.length === 0) return;
-    const y = el.scrollTop + viewportY;
-    const page = pageAtOffset(old, y);
-    const contentWidth = Math.max(old.totalWidth, el.clientWidth);
-    anchorRef.current = {
-      page,
-      fracY: (y - (old.tops[page] as number)) / (old.heights[page] as number),
-      fracX: (el.scrollLeft + viewportX) / contentWidth,
+    if (!el) return;
+    anchorRef.current = anchorAt(
+      layoutRef.current,
+      { top: el.scrollTop, left: el.scrollLeft },
+      el.clientWidth,
       viewportX,
       viewportY,
-    };
+    );
   }, []);
 
   // When the scale changes, scroll so the anchored point stays where it was on screen.
@@ -182,32 +171,24 @@ export const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
       anchorRef.current = null;
       return;
     }
-    if (!anchorRef.current) recordAnchorFrom(previous, el);
-    const a = anchorRef.current;
+    // Toolbar and fit-mode zooms anchor at the middle of the view. Use the last scroll
+    // position seen, since the browser may already have clamped the live one.
+    const a =
+      anchorRef.current ??
+      anchorAt(
+        previous,
+        lastScrollRef.current,
+        el.clientWidth,
+        el.clientWidth / 2,
+        el.clientHeight / 2,
+      );
     anchorRef.current = null;
     if (!a) return;
-    const page = Math.min(a.page, layout.tops.length - 1);
-    el.scrollTop =
-      (layout.tops[page] as number) + a.fracY * (layout.heights[page] as number) - a.viewportY;
-    el.scrollLeft = a.fracX * Math.max(layout.totalWidth, el.clientWidth) - a.viewportX;
-    setScroll({ top: el.scrollTop, left: el.scrollLeft });
-
+    const target = scrollForAnchor(layout, a, el.clientWidth);
+    el.scrollTop = target.top;
+    el.scrollLeft = target.left;
     lastScrollRef.current = { top: el.scrollTop, left: el.scrollLeft };
-
-    function recordAnchorFrom(old: Layout, target: HTMLDivElement) {
-      const vy = target.clientHeight / 2;
-      const y = lastScrollRef.current.top + vy;
-      const p = pageAtOffset(old, y);
-      anchorRef.current = {
-        page: p,
-        fracY: (y - (old.tops[p] as number)) / (old.heights[p] as number),
-        fracX:
-          (lastScrollRef.current.left + target.clientWidth / 2) /
-          Math.max(old.totalWidth, target.clientWidth),
-        viewportX: target.clientWidth / 2,
-        viewportY: vy,
-      };
-    }
+    setScroll(lastScrollRef.current);
   }, [layout, viewport.width]);
 
   // Follow scrolling (once per frame).

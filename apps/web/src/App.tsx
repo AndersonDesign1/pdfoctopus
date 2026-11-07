@@ -101,6 +101,8 @@ export function App() {
   const [truncated, setTruncated] = useState(false);
   const [currentHit, setCurrentHit] = useState(0);
   const [searching, setSearching] = useState(false);
+  /** Bumped whenever a search is cleared or superseded, so late results are ignored. */
+  const searchGeneration = useRef(0);
 
   /** Replace (or clear) the open document, freeing the old one's bitmaps. */
   const replaceDoc = useCallback((next: OpenDocument | undefined) => {
@@ -108,6 +110,7 @@ export function App() {
       previous?.renderer.dispose();
       return next;
     });
+    searchGeneration.current++;
     setQuery("");
     setHits([]);
     setSearched(null);
@@ -301,9 +304,12 @@ export function App() {
       if (hits.length) showHit(hits, (currentHit + direction + hits.length) % hits.length);
       return;
     }
+    const generation = ++searchGeneration.current;
     setSearching(true);
     try {
       const result = await getClient().search(text);
+      // The search was cleared, replaced, or the document changed while it ran.
+      if (generation !== searchGeneration.current) return;
       setHits(result.hits);
       setTruncated(result.truncated);
       setSearched(text);
@@ -314,13 +320,15 @@ export function App() {
       );
       if (result.hits.length) showHit(result.hits, start);
     } catch (err) {
-      reportError("search this file", err);
+      if (generation === searchGeneration.current) reportError("search this file", err);
     } finally {
-      setSearching(false);
+      if (generation === searchGeneration.current) setSearching(false);
     }
   }
 
   function clearSearch() {
+    searchGeneration.current++;
+    setSearching(false);
     setQuery("");
     setHits([]);
     setSearched(null);

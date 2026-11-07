@@ -9,8 +9,14 @@ import { RenderQueue } from "./renderQueue";
 
 export type RenderKind = "page" | "thumb";
 
-/** Pages rendered for display are a few MB each; thumbnails are tiny. */
-const CACHE_LIMIT: Record<RenderKind, number> = { page: 16, thumb: 400 };
+/**
+ * Memory budgets for cached bitmaps (4 bytes per pixel). A page at normal zoom is a few MB,
+ * but at deep zoom one page can reach 64 MB, so limiting by count alone isn't safe.
+ */
+const CACHE_BYTES: Record<RenderKind, number> = {
+  page: 256 * 1024 * 1024,
+  thumb: 48 * 1024 * 1024,
+};
 const PRIORITY: Record<RenderKind, number> = { page: 0, thumb: 1 };
 
 interface CachedBitmap {
@@ -18,11 +24,26 @@ interface CachedBitmap {
   scale: number;
 }
 
-class BitmapCache {
+const bytesOf = (bitmap: ImageBitmap) => bitmap.width * bitmap.height * 4;
+
+export class BitmapCache {
   /** Insertion order is the LRU order: the first entry is the least recently used. */
   private readonly entries = new Map<string, CachedBitmap>();
+  private bytes = 0;
 
-  constructor(private readonly limit: number) {}
+  /** `keep` entries are never evicted, so the pages on screen always stay drawable. */
+  constructor(
+    private readonly limitBytes: number,
+    private readonly keep = 2,
+  ) {}
+
+  get size(): number {
+    return this.entries.size;
+  }
+
+  get totalBytes(): number {
+    return this.bytes;
+  }
 
   get(key: string): CachedBitmap | undefined {
     const entry = this.entries.get(key);
@@ -44,11 +65,18 @@ class BitmapCache {
   }
 
   set(key: string, entry: CachedBitmap): void {
-    this.entries.delete(key);
+    const existing = this.entries.get(key);
+    if (existing) {
+      this.entries.delete(key);
+      this.bytes -= bytesOf(existing.bitmap);
+      if (existing.bitmap !== entry.bitmap) existing.bitmap.close();
+    }
     this.entries.set(key, entry);
-    while (this.entries.size > this.limit) {
+    this.bytes += bytesOf(entry.bitmap);
+    while (this.bytes > this.limitBytes && this.entries.size > this.keep) {
       const [oldestKey, oldest] = this.entries.entries().next().value as [string, CachedBitmap];
       this.entries.delete(oldestKey);
+      this.bytes -= bytesOf(oldest.bitmap);
       oldest.bitmap.close();
     }
   }
@@ -56,14 +84,15 @@ class BitmapCache {
   clear(): void {
     for (const entry of this.entries.values()) entry.bitmap.close();
     this.entries.clear();
+    this.bytes = 0;
   }
 }
 
 export class PageRenderer {
   private readonly queue: RenderQueue<ImageBitmap>;
   private readonly caches: Record<RenderKind, BitmapCache> = {
-    page: new BitmapCache(CACHE_LIMIT.page),
-    thumb: new BitmapCache(CACHE_LIMIT.thumb),
+    page: new BitmapCache(CACHE_BYTES.page),
+    thumb: new BitmapCache(CACHE_BYTES.thumb),
   };
 
   constructor(private readonly client: PdfWorkerClient) {
