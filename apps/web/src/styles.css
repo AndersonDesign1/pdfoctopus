@@ -1,28 +1,63 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 
+/* ---- Theme tokens ---- */
+
 :root {
-  --bg: #f6f7fb;
+  --bg: #eceef4;
   --fg: #1d1f2b;
-  --muted: #6b7080;
-  --accent: #7b4dff;
+  --muted: #5f6475;
+  --accent: #6b3cf5;
+  --accent-fg: #ffffff;
   --link: #5b2fe0;
   --surface: #ffffff;
-  color-scheme: light dark;
+  --surface-2: #f6f7fb;
+  --border: #d6d9e3;
+  --error: #c62828;
+  --hit: rgb(255 214 0 / 0.4);
+  --hit-current: rgb(255 120 0 / 0.55);
+  --page-shadow: 0 1px 3px rgb(0 0 0 / 0.12), 0 4px 16px rgb(0 0 0 / 0.08);
+  color-scheme: light;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #14151c;
+  :root:not([data-theme="light"]) {
+    --bg: #101117;
     --fg: #e8e9f0;
-    --muted: #9a9fb0;
-    --surface: #1e2029;
-    --link: #a58bff;
+    --muted: #a3a8ba;
+    --accent: #6b3cf5;
+    --link: #b39bff;
+    --error: #ff8a80;
+    --surface: #1b1d26;
+    --surface-2: #232633;
+    --border: #343849;
+    --page-shadow: 0 1px 3px rgb(0 0 0 / 0.5), 0 4px 16px rgb(0 0 0 / 0.4);
+    color-scheme: dark;
   }
+}
+
+:root[data-theme="dark"] {
+  --bg: #101117;
+  --fg: #e8e9f0;
+  --muted: #a3a8ba;
+  --accent: #6b3cf5;
+  --link: #b39bff;
+  --error: #ff8a80;
+  --surface: #1b1d26;
+  --surface-2: #232633;
+  --border: #343849;
+  --page-shadow: 0 1px 3px rgb(0 0 0 / 0.5), 0 4px 16px rgb(0 0 0 / 0.4);
+  color-scheme: dark;
 }
 
 * {
   box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
 }
 
 body {
@@ -31,8 +66,10 @@ body {
   color: var(--fg);
 }
 
+/* ---- App frame ---- */
+
 .app {
-  min-height: 100vh;
+  height: 100%;
   display: flex;
   flex-direction: column;
 }
@@ -40,49 +77,46 @@ body {
 .app-header {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 12px 16px;
+  gap: 8px;
+  padding: 6px 10px;
   background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
 }
 
-.app-header h1 {
-  font-size: 1.25rem;
-  margin: 0;
-}
-
-.badge {
-  font-size: 0.75rem;
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: var(--accent);
-  color: #fff;
-}
-
-.app-main {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 12px;
-  padding: 24px 16px;
+.brand {
+  font-weight: 700;
+  white-space: nowrap;
 }
 
 .toolbar {
   display: flex;
   flex-wrap: wrap;
-  justify-content: center;
-  gap: 8px;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+}
+
+.divider {
+  width: 1px;
+  height: 22px;
+  background: var(--border);
+  margin: 0 4px;
+}
+
+.button,
+.tool {
+  position: relative;
+  cursor: pointer;
+  border: 0;
+  border-radius: 6px;
+  font: inherit;
 }
 
 .button {
-  position: relative;
-  cursor: pointer;
-  padding: 10px 20px;
-  border: 0;
-  border-radius: 8px;
+  padding: 8px 16px;
   background: var(--accent);
-  color: #fff;
-  font: inherit;
+  color: var(--accent-fg);
   font-weight: 600;
 }
 
@@ -92,16 +126,101 @@ body {
   box-shadow: inset 0 0 0 1px currentColor;
 }
 
+.tool {
+  padding: 6px 8px;
+  background: transparent;
+  color: var(--fg);
+}
+
+.tool.icon {
+  min-width: 28px;
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+.tool:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+
+.tool[aria-pressed="true"] {
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+.toolbar .button {
+  padding: 6px 12px;
+}
+
 .button:focus-visible,
-.button:focus-within {
-  outline: 3px solid var(--link);
+.button:focus-within,
+.tool:focus-visible,
+select:focus-visible,
+input:focus-visible {
+  outline: 2px solid var(--link);
   outline-offset: 2px;
 }
 
 .button:disabled,
-.button[aria-disabled="true"] {
-  cursor: progress;
-  opacity: 0.7;
+.button[aria-disabled="true"],
+.tool:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+select,
+input {
+  font: inherit;
+  color: var(--fg);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 8px;
+}
+
+.page-nav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+}
+
+.page-nav input {
+  text-align: center;
+  width: auto;
+}
+
+.search {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.search input {
+  width: 170px;
+}
+
+.search-count {
+  font-size: 0.85rem;
+  color: var(--muted);
+  min-width: 6em;
+  padding-left: 4px;
+}
+
+.theme-toggle {
+  margin-left: auto;
+  font-size: 1.1rem;
+}
+
+/* ---- Notices ---- */
+
+.notices {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
 }
 
 .engine-loading {
@@ -117,6 +236,224 @@ body {
   accent-color: var(--accent);
 }
 
+.status {
+  color: var(--muted);
+  margin: 0;
+}
+
+.status:empty {
+  display: none;
+}
+
+/* ---- Workspace ---- */
+
+.app-main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.workspace {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+}
+
+.empty-state {
+  margin: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 48px 24px;
+  border: 2px dashed var(--border);
+  border-radius: 16px;
+  text-align: center;
+}
+
+.empty-title {
+  font-size: 1.3rem;
+  font-weight: 600;
+  margin: 0;
+}
+
+.pdfo-scroller {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  position: relative;
+  /* Let the browser scroll, but leave two-finger pinch to the app. */
+  touch-action: pan-x pan-y;
+  outline: none;
+}
+
+.pdfo-scroller:focus-visible {
+  outline: 2px solid var(--link);
+  outline-offset: -2px;
+}
+
+.pdfo-column {
+  position: relative;
+}
+
+.pdfo-page {
+  position: absolute;
+  background: #fff;
+  box-shadow: var(--page-shadow);
+}
+
+.pdfo-page canvas {
+  display: block;
+}
+
+.pdfo-hit {
+  position: absolute;
+  background: var(--hit);
+  mix-blend-mode: multiply;
+  pointer-events: none;
+  border-radius: 2px;
+}
+
+.pdfo-hit.current {
+  background: var(--hit-current);
+  outline: 2px solid rgb(255 120 0);
+}
+
+.pdfo-thumbs {
+  width: 152px;
+  flex: none;
+  overflow-y: auto;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+}
+
+.pdfo-thumb {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 4px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.8rem;
+}
+
+.pdfo-thumb-label {
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pdfo-thumb-canvas {
+  display: block;
+  background: #fff;
+  box-shadow: var(--page-shadow);
+}
+
+.pdfo-thumb.current {
+  background: var(--surface-2);
+  color: var(--fg);
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+.pdfo-thumb:focus-visible {
+  outline: 2px solid var(--link);
+}
+
+/* ---- Overlays and dialogs ---- */
+
+.drop-overlay {
+  position: fixed;
+  inset: 12px;
+  display: grid;
+  place-items: center;
+  border: 3px dashed var(--accent);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--surface) 85%, transparent);
+  font-size: 1.4rem;
+  font-weight: 600;
+  pointer-events: none;
+  z-index: 10;
+}
+
+.pdfo-dialog {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--fg);
+  padding: 20px 24px;
+  width: min(480px, calc(100vw - 32px));
+}
+
+.pdfo-dialog::backdrop {
+  background: rgb(0 0 0 / 0.45);
+}
+
+.pdfo-dialog h2 {
+  margin: 0 0 12px;
+  font-size: 1.15rem;
+}
+
+.pdfo-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.pdfo-error {
+  color: var(--error);
+}
+
+.pdfo-page-error {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px;
+  text-align: center;
+  color: var(--fg);
+  background: var(--surface);
+}
+
+.pdfo-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.pdfo-properties {
+  margin: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.pdfo-properties div {
+  display: grid;
+  grid-template-columns: 9em 1fr;
+  gap: 12px;
+}
+
+.pdfo-properties dt {
+  color: var(--muted);
+}
+
+.pdfo-properties dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
 /* Hidden visually but still focusable and available to screen readers. */
 .visually-hidden {
   position: absolute;
@@ -130,31 +467,47 @@ body {
   border: 0;
 }
 
-.status {
-  color: var(--muted);
-  margin: 0;
-}
-
-.status:empty {
-  display: none;
-}
-
-.pdfo-page {
-  max-width: 100%;
-  height: auto;
-  background: #fff;
-  box-shadow: 0 2px 12px rgb(0 0 0 / 0.15);
-}
-
 .pdfo-footer {
   display: flex;
   justify-content: center;
   gap: 16px;
-  padding: 12px 16px;
-  font-size: 0.85rem;
+  padding: 4px 16px;
+  font-size: 0.8rem;
   color: var(--muted);
+  background: var(--surface);
+  border-top: 1px solid var(--border);
 }
 
 .pdfo-footer a {
   color: var(--link);
+}
+
+@media (max-width: 720px) {
+  .pdfo-thumbs,
+  .divider,
+  .tool[aria-pressed] {
+    display: none;
+  }
+
+  .brand {
+    width: 100%;
+  }
+
+  .page-nav input {
+    width: 3.5em;
+  }
+
+  .search {
+    flex: 1;
+  }
+
+  .search input {
+    flex: 1;
+    min-width: 0;
+    width: auto;
+  }
+
+  .search-count {
+    min-width: 0;
+  }
 }
