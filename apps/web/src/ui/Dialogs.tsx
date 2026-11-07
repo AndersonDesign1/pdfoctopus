@@ -51,6 +51,12 @@ export function PasswordDialog({
   const [password, setPassword] = useState("");
   const [wrong, setWrong] = useState(false);
   const [checking, setChecking] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  // The field is disabled during the check, which drops focus; put it back after a wrong
+  // password so the user can simply type again.
+  useEffect(() => {
+    if (wrong && !checking) inputRef.current?.focus();
+  }, [wrong, checking]);
   return (
     <Modal title="Password required" onClose={onCancel}>
       <form
@@ -71,8 +77,10 @@ export function PasswordDialog({
         <label className="pdfo-field">
           Password
           <input
+            ref={inputRef}
             type="password"
             value={password}
+            disabled={checking}
             onChange={(e) => {
               setPassword(e.target.value);
               setWrong(false);

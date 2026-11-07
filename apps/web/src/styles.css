@@ -12,6 +12,7 @@
   --surface: #ffffff;
   --surface-2: #f6f7fb;
   --border: #d6d9e3;
+  --error: #c62828;
   --hit: rgb(255 214 0 / 0.4);
   --hit-current: rgb(255 120 0 / 0.55);
   --page-shadow: 0 1px 3px rgb(0 0 0 / 0.12), 0 4px 16px rgb(0 0 0 / 0.08);
@@ -24,8 +25,9 @@
     --bg: #101117;
     --fg: #e8e9f0;
     --muted: #a3a8ba;
-    --accent: #8b66ff;
+    --accent: #6b3cf5;
     --link: #b39bff;
+    --error: #ff8a80;
     --surface: #1b1d26;
     --surface-2: #232633;
     --border: #343849;
@@ -38,8 +40,9 @@
   --bg: #101117;
   --fg: #e8e9f0;
   --muted: #a3a8ba;
-  --accent: #8b66ff;
+  --accent: #6b3cf5;
   --link: #b39bff;
+  --error: #ff8a80;
   --surface: #1b1d26;
   --surface-2: #232633;
   --border: #343849;
@@ -394,7 +397,21 @@ input {
 }
 
 .pdfo-error {
-  color: #d33;
+  color: var(--error);
+}
+
+.pdfo-page-error {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px;
+  text-align: center;
+  color: #444;
+  background: #fff;
 }
 
 .pdfo-dialog-actions {

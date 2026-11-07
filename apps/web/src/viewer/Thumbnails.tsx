@@ -84,7 +84,7 @@ export function Thumbnails({ pages, labels, renderer, current, onSelect }: Thumb
         className={i === current ? "pdfo-thumb current" : "pdfo-thumb"}
         style={{ top: layout.tops[i], width: width + 8 }}
         onClick={() => onSelect(i)}
-        aria-label={`Go to page ${i + 1}`}
+        aria-label={labels[i] ? `Go to page ${i + 1} (${labels[i]})` : `Go to page ${i + 1}`}
         aria-current={i === current ? "page" : undefined}
       >
         <PageCanvas

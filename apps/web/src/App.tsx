@@ -37,7 +37,8 @@ type EngineState =
 interface PasswordPrompt {
   fileName: string;
   fileSize: number;
-  resolve(info: DocumentInfo | null): void;
+  /** The unlocked document, null if the user cancelled, or "failed" if unlocking errored. */
+  resolve(info: DocumentInfo | null | "failed"): void;
 }
 
 const MB = 1024 * 1024;
@@ -189,11 +190,13 @@ export function App() {
       replaceDoc(undefined);
       const opened = await pdf.open(bytes);
       const info = opened.needsPassword
-        ? await new Promise<DocumentInfo | null>((resolve) =>
+        ? await new Promise<DocumentInfo | null | "failed">((resolve) =>
             setPasswordPrompt({ fileName: file.name, fileSize: file.size, resolve }),
           )
         : opened;
       setPasswordPrompt(undefined);
+      // On "failed" the error has already been reported: keep that message.
+      if (info === "failed") return;
       if (!info) {
         setStatus("");
         return;
@@ -313,12 +316,25 @@ export function App() {
       setHits(result.hits);
       setTruncated(result.truncated);
       setSearched(text);
-      // Start from the first hit at or after the page being read.
-      const start = Math.max(
-        0,
-        result.hits.findIndex((h) => h.page >= page),
-      );
-      if (result.hits.length) showHit(result.hits, start);
+      // Start from the page being read: the first hit on or after it for "next", the last
+      // hit on or before it for "previous" (wrapping round if there's none that way).
+      const hitsFound = result.hits;
+      if (hitsFound.length) {
+        let start: number;
+        if (direction > 0) {
+          start = hitsFound.findIndex((h) => h.page >= page);
+          if (start < 0) start = 0;
+        } else {
+          start = hitsFound.length - 1;
+          for (let i = hitsFound.length - 1; i >= 0; i--) {
+            if ((hitsFound[i] as SearchHit).page <= page) {
+              start = i;
+              break;
+            }
+          }
+        }
+        showHit(hitsFound, start);
+      }
     } catch (err) {
       if (generation === searchGeneration.current) reportError("search this file", err);
     } finally {
@@ -578,7 +594,14 @@ export function App() {
                   placeholder="Find in document"
                   aria-label="Find in document"
                   value={query}
-                  onChange={(e) => setQuery(e.target.value)}
+                  onChange={(e) => {
+                    setQuery(e.target.value);
+                    // The text changed: a search still running is for the old text.
+                    if (searching) {
+                      searchGeneration.current++;
+                      setSearching(false);
+                    }
+                  }}
                   onKeyDown={(e) => {
                     if (e.key === "Escape") clearSearch();
                     else if (e.key === "Enter" && e.shiftKey) {
@@ -711,8 +734,8 @@ export function App() {
               if (info) passwordPrompt.resolve(info);
               return info !== null;
             } catch (err) {
-              passwordPrompt.resolve(null);
               reportError("unlock this file", err);
+              passwordPrompt.resolve("failed");
               return true;
             }
           }}

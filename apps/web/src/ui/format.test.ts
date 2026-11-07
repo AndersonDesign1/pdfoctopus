@@ -29,3 +29,20 @@ describe("formatting", () => {
     expect(formatPageSize(612, 792)).toBe("216 × 279 mm (Letter)");
   });
 });
+
+describe("parsePdfDate rejects malformed dates", () => {
+  it.each([
+    "D:20261303000000Z", // month 13
+    "D:20260231000000Z", // 31 February
+    "D:20261103250000Z", // hour 25
+    "D:20261103142000+99'99'", // impossible offset
+    "D:20261103142000 trailing junk",
+  ])("%s", (value) => {
+    expect(parsePdfDate(value)).toBeNull();
+  });
+
+  it("still accepts the trailing apostrophe some producers write", () => {
+    expect(parsePdfDate("D:20261103142000+01'00'")?.toISOString()).toBe("2026-11-03T13:20:00.000Z");
+    expect(parsePdfDate("D:20261103142000+0100")?.toISOString()).toBe("2026-11-03T13:20:00.000Z");
+  });
+});

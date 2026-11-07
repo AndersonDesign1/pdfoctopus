@@ -32,6 +32,7 @@ export class RenderQueue<T> {
   private readonly queued = new Map<string, Entry<T>>();
   private readonly running = new Map<string, Entry<T>>();
   private counter = 0;
+  private pumpScheduled = false;
 
   constructor(
     private readonly run: (index: number, scale: number) => Promise<T>,
@@ -55,7 +56,7 @@ export class RenderQueue<T> {
     // Callers that drop the promise mustn't trigger unhandled-rejection warnings on cancel.
     promise.catch(() => {});
     this.queued.set(job.key, { job, order: this.counter++, promise, resolve, reject });
-    this.pump();
+    this.schedulePump();
     return promise;
   }
 
@@ -90,6 +91,20 @@ export class RenderQueue<T> {
       }
     }
     return best;
+  }
+
+  /**
+   * Start work on the next microtask rather than immediately, so every request made in the
+   * same render (e.g. the visible pages and the thumbnails on first display) is queued
+   * before one is picked, and priorities decide the order from the first job.
+   */
+  private schedulePump(): void {
+    if (this.pumpScheduled) return;
+    this.pumpScheduled = true;
+    queueMicrotask(() => {
+      this.pumpScheduled = false;
+      this.pump();
+    });
   }
 
   private pump(): void {

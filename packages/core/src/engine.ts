@@ -188,8 +188,9 @@ export class PdfEngine {
         for (const hit of page.search(query, "ignore-case,ignore-diacritics")) {
           // Make coordinates relative to the page's visible top-left corner.
           const quads = hit.map((q) => q.map((v, j) => v - (j % 2 === 0 ? x0 : y0)));
+          // Collect one hit past the limit, so exactly MAX_SEARCH_HITS isn't reported as more.
+          if (hits.length === MAX_SEARCH_HITS) return { hits, truncated: true };
           hits.push({ page: i, quads });
-          if (hits.length >= MAX_SEARCH_HITS) return { hits, truncated: true };
         }
       } finally {
         page.destroy();

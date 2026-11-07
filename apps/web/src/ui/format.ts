@@ -6,20 +6,39 @@
  */
 export function parsePdfDate(value: string): Date | null {
   const m =
-    /^(?:D:)?(\d{4})(\d{2})?(\d{2})?(\d{2})?(\d{2})?(\d{2})?(Z|[+-]\d{2}'?\d{2}'?|[+-]\d{2})?/.exec(
+    /^(?:D:)?(\d{4})(\d{2})?(\d{2})?(\d{2})?(\d{2})?(\d{2})?(?:(Z)|([+-])(\d{2})(?:'?(\d{2}))?'?)?$/.exec(
       value.trim(),
     );
   if (!m) return null;
-  const [, y, mo = "01", d = "01", h = "00", mi = "00", s = "00", tz] = m;
-  let offsetMinutes = 0;
-  if (tz && tz !== "Z") {
-    const sign = tz.startsWith("-") ? -1 : 1;
-    const digits = tz.replace(/[^0-9]/g, "");
-    offsetMinutes = sign * (Number(digits.slice(0, 2)) * 60 + Number(digits.slice(2, 4) || 0));
+  const [, y, mo = "01", d = "01", h = "00", mi = "00", s = "00", , sign, tzh = "00", tzm = "00"] =
+    m;
+  const [year, month, day, hour, minute, second] = [y, mo, d, h, mi, s].map(Number) as [
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+  ];
+  const [offH, offM] = [Number(tzh), Number(tzm)];
+  // Reject out-of-range parts instead of letting Date.UTC roll them over into another date.
+  if (
+    month < 1 ||
+    month > 12 ||
+    day < 1 ||
+    hour > 23 ||
+    minute > 59 ||
+    second > 59 ||
+    offH > 23 ||
+    offM > 59
+  ) {
+    return null;
   }
-  const utc = Date.UTC(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi), Number(s));
-  const date = new Date(utc - offsetMinutes * 60_000);
-  return Number.isNaN(date.getTime()) ? null : date;
+  const utc = Date.UTC(year, month - 1, day, hour, minute, second);
+  // Day 31 in a 30-day month rolls over: catch it by checking the day survived.
+  if (new Date(utc).getUTCDate() !== day) return null;
+  const offsetMinutes = (sign === "-" ? -1 : 1) * (offH * 60 + offM);
+  return new Date(utc - (sign ? offsetMinutes : 0) * 60_000);
 }
 
 /** A PDF date for display, or the raw text if it can't be parsed. */

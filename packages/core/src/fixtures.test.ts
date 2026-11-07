@@ -34,7 +34,11 @@ function listPdfs(dir: string): string[] {
   });
 }
 
-const files = listPdfs(fixturesDir).map((path) => ({ name: relative(fixturesDir, path), path }));
+// Names always use "/" (relative() gives "\\" on Windows), matching the keys above.
+const files = listPdfs(fixturesDir).map((path) => ({
+  name: relative(fixturesDir, path).replaceAll("\\", "/"),
+  path,
+}));
 
 /** Open a file and render page 1. Returns the page count. */
 function openAndRender(name: string, path: string): number {

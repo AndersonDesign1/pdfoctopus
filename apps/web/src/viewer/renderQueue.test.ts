@@ -22,12 +22,16 @@ describe("RenderQueue", () => {
     const a = queue.request({ key: "a", index: 1, scale: 1, priority: 1 });
     queue.request({ key: "b", index: 2, scale: 1, priority: 1 });
     queue.request({ key: "c", index: 3, scale: 1, priority: 0 });
-    expect(calls.map((c) => c.index)).toEqual([1]);
-    calls[0]?.finish();
-    expect(await a).toBe("page 1");
     await tick();
-    // "c" has a higher priority than "b", which was requested earlier.
-    expect(calls.map((c) => c.index)).toEqual([1, 3]);
+    // Requests made together are all queued before one starts, so "c" (highest priority)
+    // runs first even though it was requested last.
+    expect(calls.map((c) => c.index)).toEqual([3]);
+    calls[0]?.finish();
+    await tick();
+    // Then "a" and "b" in the order requested.
+    expect(calls.map((c) => c.index)).toEqual([3, 1]);
+    calls[1]?.finish();
+    expect(await a).toBe("page 1");
   });
 
   it("shares one render between duplicate requests", async () => {
@@ -35,6 +39,7 @@ describe("RenderQueue", () => {
     const queue = new RenderQueue(run);
     const first = queue.request({ key: "a", index: 1, scale: 1, priority: 1 });
     const second = queue.request({ key: "a", index: 1, scale: 1, priority: 0 });
+    await tick();
     calls[0]?.finish();
     expect(await first).toBe("page 1");
     expect(await second).toBe("page 1");
@@ -49,6 +54,7 @@ describe("RenderQueue", () => {
     const c = queue.request({ key: "c", index: 3, scale: 1, priority: 0 });
     queue.retain((job) => job.key !== "b");
     await expect(b).rejects.toBeInstanceOf(RenderCancelledError);
+    await tick();
     calls[0]?.finish();
     await tick();
     expect(calls.map((x) => x.index)).toEqual([1, 3]);

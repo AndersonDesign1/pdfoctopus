@@ -32,18 +32,22 @@ fn startup_file_name(state: State<'_, StartupFile>) -> Option<String> {
         .map(|name| name.to_string_lossy().into_owned())
 }
 
-/// Read the PDF the app was opened with. Works once; later calls return an error.
+/// Read the PDF the app was opened with. Once it has been read successfully, later calls
+/// return an error; a failed read can be retried.
 #[tauri::command]
 fn read_startup_file(state: State<'_, StartupFile>) -> Result<Response, String> {
-    let path = state
+    let mut guard = state
         .0
         .lock()
-        .map_err(|_| "state lock poisoned".to_string())?
-        .take()
-        .ok_or_else(|| "no file to open".to_string())?;
-    std::fs::read(&path)
-        .map(Response::new)
-        .map_err(|err| format!("could not read {}: {err}", path.display()))
+        .map_err(|_| "state lock poisoned".to_string())?;
+    let path = guard
+        .as_ref()
+        .ok_or_else(|| "no file to open".to_string())?
+        .clone();
+    let bytes = std::fs::read(&path)
+        .map_err(|err| format!("could not read {}: {err}", path.display()))?;
+    guard.take();
+    Ok(Response::new(bytes))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

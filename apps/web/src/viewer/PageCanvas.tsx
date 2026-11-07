@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { PageRenderer, RenderKind } from "./renderer";
 import { RenderCancelledError } from "./renderQueue";
 
@@ -42,7 +42,10 @@ export function PageCanvas({
   label,
 }: PageCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [failed, setFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `attempt` re-runs the render on Retry
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -55,26 +58,43 @@ export function PageCanvas({
     if (placeholder) draw(canvas, placeholder);
 
     let current = true;
+    setFailed(false);
     renderer.render(kind, index, renderScale).then(
       (bitmap) => {
         if (current) draw(canvas, bitmap);
       },
       (err) => {
-        if (!(err instanceof RenderCancelledError)) console.warn(`Page ${index + 1}:`, err);
+        if (err instanceof RenderCancelledError) return;
+        console.warn(`Page ${index + 1}:`, err);
+        if (current) setFailed(true);
       },
     );
     return () => {
       current = false;
     };
-  }, [renderer, kind, index, renderScale]);
+  }, [renderer, kind, index, renderScale, attempt]);
 
   return (
-    <canvas
-      ref={canvasRef}
-      className={className}
-      style={{ width, height }}
-      role="img"
-      aria-label={label}
-    />
+    <>
+      <canvas
+        ref={canvasRef}
+        className={className}
+        style={{ width, height }}
+        role="img"
+        aria-label={label}
+      />
+      {failed && kind === "page" && (
+        <div className="pdfo-page-error" role="alert">
+          <span>This page couldn't be displayed. It may be damaged.</span>
+          <button
+            type="button"
+            className="button secondary"
+            onClick={() => setAttempt((n) => n + 1)}
+          >
+            Try again
+          </button>
+        </div>
+      )}
+    </>
   );
 }
