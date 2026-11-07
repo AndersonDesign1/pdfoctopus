@@ -8,8 +8,9 @@
 // - /assets/* files have a content hash in their name and never change: cache first.
 // - Everything else (the HTML page, favicon): network first, cached copy when offline,
 //   so a new deploy is picked up on the next visit.
-// - On activate, files the current version no longer uses are deleted, so old versions
-//   don't pile up.
+// - A new version waits until every tab running the old one is closed (no skipWaiting), so
+//   open tabs never lose files they still need. It then activates and deletes cached files
+//   it doesn't use, so old versions don't pile up.
 // - Caching is best effort: if storage is full, responses are still served from the network.
 //
 // Only same-origin GET requests are handled. PDFs never pass through here: they are read
@@ -38,7 +39,6 @@ async function tryPut(cache, key, response) {
 }
 
 self.addEventListener("install", (event) => {
-  self.skipWaiting();
   event.waitUntil(
     (async () => {
       const cache = await caches.open(CACHE);
@@ -46,12 +46,12 @@ self.addEventListener("install", (event) => {
         PRECACHE.map(async (path) => {
           // Hashed files already cached from an earlier version don't need downloading again.
           if (path !== "/" && (await cache.match(path, MATCH))) return;
-          try {
-            const response = await fetch(path, { cache: "no-cache" });
-            if (response.ok) await tryPut(cache, path, response);
-          } catch {
-            // Offline or blocked: it will be cached the first time it is used instead.
-          }
+          // A failed download fails the install: the browser keeps the current version and
+          // tries again later, rather than activating a version that can't work offline.
+          const response = await fetch(path, { cache: "no-cache" });
+          if (!response.ok) throw new Error(`Could not download ${path}: ${response.status}`);
+          // Storage being full is not a reason to fail: the app still works online.
+          await tryPut(cache, path, response);
         }),
       );
     })(),
@@ -64,7 +64,8 @@ self.addEventListener("activate", (event) => {
       for (const key of await caches.keys()) {
         if (key.startsWith("pdfoctopus-") && key !== CACHE) await caches.delete(key);
       }
-      // Remove files from earlier versions that this one no longer uses.
+      // Remove files from earlier versions that this one no longer uses. No tab runs an
+      // earlier version any more: this worker only activates once they have all closed.
       const cache = await caches.open(CACHE);
       for (const request of await cache.keys()) {
         const path = new URL(request.url).pathname;

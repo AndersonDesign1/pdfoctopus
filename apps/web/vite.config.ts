@@ -26,11 +26,19 @@ function serviceWorkerPrecache(): Plugin {
     },
     closeBundle() {
       const assets = readdirSync(join(outDir, "assets")).map((name) => `/assets/${name}`);
+      // Top-level public files (e.g. the favicon). The page itself is cached as "/".
+      const skip = new Set(["index.html", "sw.js", "_headers", "assets"]);
+      const publicFiles = readdirSync(outDir)
+        .filter((name) => !skip.has(name))
+        .map((name) => `/${name}`);
       const swPath = join(outDir, "sw.js");
       const marker = '/* __PRECACHE__ */ ["/"]';
       const sw = readFileSync(swPath, "utf8");
       if (!sw.includes(marker)) throw new Error(`sw.js is missing the ${marker} marker`);
-      writeFileSync(swPath, sw.replace(marker, JSON.stringify(["/", ...assets.sort()])));
+      writeFileSync(
+        swPath,
+        sw.replace(marker, JSON.stringify(["/", ...publicFiles.sort(), ...assets.sort()])),
+      );
     },
   };
 }
