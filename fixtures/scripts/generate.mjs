@@ -38,7 +38,9 @@ const REQUIRED_FONTS = ["DejaVu Sans", "Liberation Serif", "Inter", "WenQuanYi Z
 let installedFonts = null;
 try {
   installedFonts = execFileSync("fc-list", [":", "family"], { encoding: "utf8" });
-} catch {
+} catch (error) {
+  // Only a missing fc-list skips the check; any other failure (e.g. broken fontconfig) stops.
+  if (error.code !== "ENOENT") throw error;
   console.warn(
     `Warning: can't list fonts (fontconfig's fc-list isn't available). Make sure these are ` +
       `installed, or the output will differ: ${REQUIRED_FONTS.join(", ")}`,

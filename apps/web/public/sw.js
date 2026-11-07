@@ -49,9 +49,14 @@ self.addEventListener("install", (event) => {
       try {
         await Promise.all(
           PRECACHE.map(async (path) => {
-            // Hashed files already cached by an earlier version are copied, not downloaded.
-            const existing = path !== "/" && (await caches.match(path, MATCH));
-            if (existing) return tryPut(cache, path, existing);
+            // Hashed files never change, so one already cached by an earlier version is copied
+            // instead of downloaded again (unless it is a stray copy of the HTML page). Other
+            // files, like the page and the favicon, are always fetched fresh.
+            if (path.startsWith("/assets/")) {
+              const existing = await caches.match(path, MATCH);
+              const type = existing?.headers.get("content-type") ?? "";
+              if (existing && !type.includes("text/html")) return tryPut(cache, path, existing);
+            }
             // A failed download fails the install: the browser keeps the current version
             // and tries again later, rather than activating one that can't work offline.
             const response = await fetch(path, { cache: "no-cache" });
