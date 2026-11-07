@@ -95,6 +95,9 @@ export function App() {
     setStatus(`Opening ${file.name}…`);
     try {
       const bytes = new Uint8Array(await file.arrayBuffer());
+      // Opening replaces the worker's document, so the previous one is gone from here on
+      // even if this file fails. Stop showing it, so Save can't act on the wrong document.
+      setDoc(undefined);
       const { pageCount } = await pdf.open(bytes);
       const firstPage = await pdf.renderPage(0);
       // Update everything together, only once the whole open succeeded.
