@@ -84,7 +84,8 @@ export function App() {
   const [engine, setEngine] = useState<EngineState>({ status: "loading", progress: null });
   const [doc, setDoc] = useState<OpenDocument>();
   const [busy, setBusy] = useState(false);
-  const openingRef = useRef(false);
+  /** True while a file is being opened or saved; one operation at a time. */
+  const workingRef = useRef(false);
   const [status, setStatus] = useState("");
   const [passwordPrompt, setPasswordPrompt] = useState<PasswordPrompt>();
   const [showProperties, setShowProperties] = useState(false);
@@ -178,13 +179,14 @@ export function App() {
 
   async function openFile(file: File) {
     // A ref, not the `busy` state: callbacks holding an older render's openFile (the
-    // desktop startup file, a drop) would otherwise see a stale `busy` and open in parallel.
-    if (openingRef.current) return;
+    // desktop startup file, a drop) would otherwise see a stale `busy` and run in parallel
+    // with another open or a save.
+    if (workingRef.current) return;
     if (!isPdfFile(file)) {
       setStatus(`${file.name} isn't a PDF.`);
       return;
     }
-    openingRef.current = true;
+    workingRef.current = true;
     const pdf = getClient();
     setBusy(true);
     setStatus(`Opening ${file.name}…`);
@@ -218,13 +220,14 @@ export function App() {
     } catch (err) {
       reportError("open this file", err);
     } finally {
-      openingRef.current = false;
+      workingRef.current = false;
       setBusy(false);
     }
   }
 
   async function onSave() {
-    if (busy || !doc) return;
+    if (workingRef.current || !doc) return;
+    workingRef.current = true;
     const pdf = getClient();
     setBusy(true);
     setStatus("Saving…");
@@ -257,6 +260,7 @@ export function App() {
     } catch (err) {
       reportError("save this file", err);
     } finally {
+      workingRef.current = false;
       setBusy(false);
     }
   }
