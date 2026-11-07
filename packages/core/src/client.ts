@@ -131,8 +131,19 @@ export class PdfWorkerClient {
     return this.call<"open">({ type: "open", bytes }, [bytes.buffer as ArrayBuffer]);
   }
 
+  /** Unlock a password-protected document. Resolves to null if the password is wrong. */
+  authenticate(password: string) {
+    return this.call<"authenticate">({ type: "authenticate", password });
+  }
+
+  /** Render a page to RGBA pixels. `scale` 1 = 72 dpi. */
   renderPage(index: number, scale?: number) {
     return this.call<"render">({ type: "render", index, scale });
+  }
+
+  /** Find text (ignoring case and accents) on every page. */
+  search(query: string) {
+    return this.call<"search">({ type: "search", query });
   }
 
   /**

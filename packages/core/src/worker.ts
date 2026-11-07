@@ -75,8 +75,12 @@ async function handle(req: WorkerRequest): Promise<WorkerSuccess> {
       return success(req.id, "init", null);
     case "open":
       return success(req.id, "open", engine.open(req.bytes));
+    case "authenticate":
+      return success(req.id, "authenticate", engine.authenticate(req.password));
     case "render":
       return success(req.id, "render", engine.renderPage(req.index, req.scale));
+    case "search":
+      return success(req.id, "search", engine.search(req.query));
     case "save":
       return success(req.id, "save", engine.save({ incremental: req.incremental }));
     case "close":
@@ -87,7 +91,7 @@ async function handle(req: WorkerRequest): Promise<WorkerSuccess> {
 
 /** Large binary results are transferred, not copied, back to the UI thread. */
 function transferables(res: WorkerSuccess): Transferable[] {
-  if (res.type === "render") return [res.result.png.buffer as ArrayBuffer];
+  if (res.type === "render") return [res.result.pixels.buffer as ArrayBuffer];
   if (res.type === "save") return [res.result.buffer as ArrayBuffer];
   return [];
 }
