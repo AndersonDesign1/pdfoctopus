@@ -2,11 +2,39 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import * as mupdf from "mupdf";
 import { describe, expect, it } from "vitest";
 import { createBlankPdf, PdfEngine } from "./engine";
 import { PasswordRequiredError } from "./errors";
 
 const generated = join(import.meta.dirname, "..", "..", "..", "fixtures", "generated");
+/** A 300 x 300 pt page whose MediaBox starts at (1000, 2000), with the word "offset". */
+function offsetPagePdf(): Uint8Array {
+  const pdf = new mupdf.PDFDocument();
+  try {
+    const font = pdf.addSimpleFont(new mupdf.Font("Helvetica"));
+    const resources = pdf.newDictionary();
+    const fonts = pdf.newDictionary();
+    fonts.put("F1", font);
+    resources.put("Font", fonts);
+    const page = pdf.addPage(
+      [1000, 2000, 1300, 2300],
+      0,
+      resources,
+      "BT /F1 24 Tf 1050 2150 Td (offset) Tj ET",
+    );
+    pdf.insertPage(-1, page);
+    const buffer = pdf.saveToBuffer("");
+    try {
+      return buffer.asUint8Array().slice();
+    } finally {
+      buffer.destroy();
+    }
+  } finally {
+    pdf.destroy();
+  }
+}
+
 const fixture = (name: string) => new Uint8Array(readFileSync(join(generated, name)));
 
 describe("PdfEngine", () => {
@@ -60,15 +88,35 @@ describe("PdfEngine", () => {
     expect(truncated).toBe(false);
     // "Northwind Paper Co." twice and "billing@northwind.example": case doesn't matter.
     expect(hits).toHaveLength(3);
+    const info = engine.info();
+    const size = info.pages[0] as { width: number; height: number };
     for (const hit of hits) {
       expect(hit.page).toBe(0);
       for (const quad of hit.quads) {
         expect(quad).toHaveLength(8);
-        for (const v of quad) expect(v).toBeGreaterThanOrEqual(0);
+        quad.forEach((v, j) => {
+          expect(v).toBeGreaterThanOrEqual(0);
+          expect(v).toBeLessThanOrEqual(j % 2 === 0 ? size.width : size.height);
+        });
       }
     }
+    // Accents are ignored too.
+    expect(engine.search("NÖRTHWÍND").hits).toHaveLength(3);
     expect(engine.search("   ").hits).toEqual([]);
     expect(engine.search("no such words anywhere").hits).toEqual([]);
+    engine.close();
+  });
+
+  it("returns highlight boxes relative to a page whose box doesn't start at 0,0", () => {
+    // A page whose MediaBox starts at (1000, 2000): absolute coordinates would be huge.
+    const engine = new PdfEngine();
+    engine.open(offsetPagePdf());
+    const { hits } = engine.search("offset");
+    expect(hits).toHaveLength(1);
+    for (const v of (hits[0] as { quads: number[][] }).quads[0] as number[]) {
+      expect(v).toBeGreaterThanOrEqual(0);
+      expect(v).toBeLessThanOrEqual(300);
+    }
     engine.close();
   });
 

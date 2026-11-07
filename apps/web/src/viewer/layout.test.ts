@@ -90,6 +90,23 @@ describe("zoom anchoring", () => {
   });
 });
 
+describe("zoom anchoring in the gaps", () => {
+  it("keeps a point between pages between the same pages", () => {
+    const pages2 = [A4, A4];
+    const before = computeLayout(pages2, 0.5, opts);
+    // A point in the gap below page 0, 4 px under it.
+    const gapY = (before.tops[0] as number) + (before.heights[0] as number) + 4;
+    const anchor = anchorAt(before, { top: gapY - 100, left: 0 }, 1000, 500, 100);
+    if (!anchor) throw new Error("no anchor");
+    const after = computeLayout(pages2, 4, opts);
+    const scroll = scrollForAnchor(after, anchor, 1000);
+    const y = scroll.top + 100;
+    // Still 4 px below page 0, so still in the gap (not on page 1).
+    expect(y - ((after.tops[0] as number) + (after.heights[0] as number))).toBeCloseTo(4);
+    expect(y).toBeLessThan(after.tops[1] as number);
+  });
+});
+
 describe("zoom", () => {
   it("fits width and page", () => {
     const viewport = { width: 1000, height: 700 };
@@ -108,11 +125,15 @@ describe("zoom", () => {
     // From an in-between zoom, go to the next step, not past it.
     expect(scaleToPercent(stepZoom(percentToScale(105), 1))).toBe(110);
     expect(scaleToPercent(stepZoom(percentToScale(800), 1))).toBe(800);
+    // Just below a step (e.g. after wheel zooming) goes to that step, not past it.
+    expect(scaleToPercent(stepZoom(percentToScale(109.95), 1))).toBe(110);
   });
 
   it("caps the render resolution", () => {
     expect(renderScale(A4, 1, 2)).toBe(2);
     const capped = renderScale(A4, 10, 2, 16_000_000);
     expect(A4.width * A4.height * capped * capped).toBeLessThanOrEqual(16_000_000 * 1.01);
+    // A huge page still gets a positive scale.
+    expect(renderScale({ width: 1e6, height: 1e6 }, 1, 2)).toBeGreaterThan(0);
   });
 });

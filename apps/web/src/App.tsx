@@ -84,6 +84,7 @@ export function App() {
   const [engine, setEngine] = useState<EngineState>({ status: "loading", progress: null });
   const [doc, setDoc] = useState<OpenDocument>();
   const [busy, setBusy] = useState(false);
+  const openingRef = useRef(false);
   const [status, setStatus] = useState("");
   const [passwordPrompt, setPasswordPrompt] = useState<PasswordPrompt>();
   const [showProperties, setShowProperties] = useState(false);
@@ -112,6 +113,7 @@ export function App() {
       return next;
     });
     searchGeneration.current++;
+    setSearching(false);
     setQuery("");
     setHits([]);
     setSearched(null);
@@ -175,11 +177,14 @@ export function App() {
   }
 
   async function openFile(file: File) {
-    if (busy) return;
+    // A ref, not the `busy` state: callbacks holding an older render's openFile (the
+    // desktop startup file, a drop) would otherwise see a stale `busy` and open in parallel.
+    if (openingRef.current) return;
     if (!isPdfFile(file)) {
       setStatus(`${file.name} isn't a PDF.`);
       return;
     }
+    openingRef.current = true;
     const pdf = getClient();
     setBusy(true);
     setStatus(`Opening ${file.name}…`);
@@ -213,6 +218,7 @@ export function App() {
     } catch (err) {
       reportError("open this file", err);
     } finally {
+      openingRef.current = false;
       setBusy(false);
     }
   }
@@ -399,6 +405,10 @@ export function App() {
 
   // ---- Drag and drop ----
 
+  // Installed once, so the enter/leave counter survives re-renders; it opens files through
+  // a ref that always points at the latest openFile.
+  const openFileRef = useRef(openFile);
+  openFileRef.current = openFile;
   useEffect(() => {
     let depth = 0;
     const hasFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes("Files");
@@ -425,7 +435,7 @@ export function App() {
       setDragging(false);
       const files = Array.from(e.dataTransfer?.files ?? []);
       const file = files.find(isPdfFile) ?? files[0];
-      if (file) void openFile(file);
+      if (file) void openFileRef.current(file);
     };
     window.addEventListener("dragenter", enter);
     window.addEventListener("dragover", over);
@@ -437,7 +447,7 @@ export function App() {
       window.removeEventListener("dragleave", leave);
       window.removeEventListener("drop", drop);
     };
-  });
+  }, []);
 
   // ---- Render ----
 
@@ -595,6 +605,10 @@ export function App() {
                   aria-label="Find in document"
                   value={query}
                   onChange={(e) => {
+                    if (e.target.value === "") {
+                      clearSearch();
+                      return;
+                    }
                     setQuery(e.target.value);
                     // The text changed: a search still running is for the old text.
                     if (searching) {

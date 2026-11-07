@@ -5,7 +5,7 @@
 // arrive, so memory stays bounded even on a 500-page document.
 
 import type { PdfWorkerClient } from "@pdfoctopus/core";
-import { RenderQueue } from "./renderQueue";
+import { RenderCancelledError, RenderQueue } from "./renderQueue";
 
 export type RenderKind = "page" | "thumb";
 
@@ -95,6 +95,8 @@ export class PageRenderer {
     thumb: new BitmapCache(CACHE_BYTES.thumb),
   };
 
+  private disposed = false;
+
   constructor(private readonly client: PdfWorkerClient) {
     this.queue = new RenderQueue(async (index, scale) => {
       const page = await this.client.renderPage(index, scale);
@@ -136,17 +138,23 @@ export class PageRenderer {
       scale,
       priority: PRIORITY[kind],
     });
+    // A render that was already running when the document closed: don't keep it.
+    if (this.disposed) {
+      bitmap.close();
+      throw new RenderCancelledError();
+    }
     this.caches[kind].set(key, { bitmap, scale });
     return bitmap;
   }
 
-  /** Drop queued renders of this kind for pages outside `keep`. */
-  retain(kind: RenderKind, keep: (index: number) => boolean): void {
-    this.queue.retain((job) => !job.key.startsWith(`${kind}:`) || keep(job.index));
+  /** Drop queued renders of this kind that `keep` no longer wants (by page and scale). */
+  retain(kind: RenderKind, keep: (index: number, scale: number) => boolean): void {
+    this.queue.retain((job) => !job.key.startsWith(`${kind}:`) || keep(job.index, job.scale));
   }
 
   /** Forget everything, e.g. when the document changes. */
   dispose(): void {
+    this.disposed = true;
     this.queue.clear();
     this.caches.page.clear();
     this.caches.thumb.clear();

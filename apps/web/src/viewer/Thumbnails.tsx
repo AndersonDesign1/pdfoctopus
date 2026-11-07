@@ -25,7 +25,8 @@ export function Thumbnails({ pages, labels, renderer, current, onSelect }: Thumb
   const [scrollTop, setScrollTop] = useState(0);
   const [height, setHeight] = useState(0);
 
-  const widest = useMemo(() => Math.max(1, ...pages.map((p) => p.width)), [pages]);
+  // reduce, not Math.max(...spread): spreading tens of thousands of pages can overflow the stack.
+  const widest = useMemo(() => pages.reduce((w, p) => Math.max(w, p.width), 1), [pages]);
   const scale = THUMB_WIDTH / widest;
   const layout = useMemo(() => computeLayout(pages, scale, LAYOUT), [pages, scale]);
 
@@ -63,13 +64,17 @@ export function Thumbnails({ pages, labels, renderer, current, onSelect }: Thumb
     }
   }, [current, layout]);
 
-  const range = visibleRange(layout, scrollTop, height);
+  // Hidden (e.g. on narrow screens) means zero height: render nothing.
+  const range = height > 0 ? visibleRange(layout, scrollTop, height) : { first: 0, last: -1 };
   const first = Math.max(0, range.first - 2);
   const last = Math.min(pages.length - 1, range.last + 2);
 
   useEffect(() => {
     renderer.retain("thumb", (i) => i >= first && i <= last);
   }, [renderer, first, last]);
+
+  // When the sidebar is closed, drop any thumbnails still waiting to render.
+  useEffect(() => () => renderer.retain("thumb", () => false), [renderer]);
 
   const dpr = typeof window === "undefined" ? 1 : window.devicePixelRatio || 1;
   const items = [];

@@ -99,14 +99,16 @@ export const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
   },
   ref,
 ) {
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLElement>(null);
   const [viewport, setViewport] = useState<Size>({ width: 0, height: 0 });
   const [scroll, setScroll] = useState({ top: 0, left: 0 });
 
-  // Track the viewport size.
+  // Track the viewport size. The scroller is also made focusable here, so keyboard users
+  // can scroll it directly (arrow keys, Page Up/Down) after tabbing to it.
   useLayoutEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
+    el.tabIndex = 0;
     const update = () => setViewport({ width: el.clientWidth, height: el.clientHeight });
     update();
     const observer = new ResizeObserver(update);
@@ -211,9 +213,20 @@ export const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
     };
   }, []);
 
+  // The page the user last asked for with "go to page", and the scroll position that left
+  // us at. It stays current until the user scrolls away. This matters at the end of the
+  // document, where a short last page can't be scrolled to the top of the view.
+  const requestedRef = useRef<{ page: number; top: number } | null>(null);
+
   // The current page, reported to the toolbar.
   useEffect(() => {
     if (layout.tops.length === 0 || viewport.height === 0) return;
+    const requested = requestedRef.current;
+    if (requested && Math.abs(scroll.top - requested.top) < 2) {
+      onCurrentPageChange(requested.page);
+      return;
+    }
+    requestedRef.current = null;
     onCurrentPageChange(currentPage(layout, scroll.top, viewport.height));
   }, [layout, scroll.top, viewport.height, onCurrentPageChange]);
 
@@ -238,47 +251,46 @@ export const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
     return () => el.removeEventListener("wheel", onWheel);
   }, [onZoomChange, recordAnchor]);
 
-  // Two-finger pinch on touch screens.
+  // Two-finger pinch on touch screens. Touch events (not pointer events) are used because
+  // a non-passive touchmove can preventDefault, which stops the browser from turning the
+  // two-finger gesture into a scroll and cancelling it.
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    const touches = new Map<number, { x: number; y: number }>();
     let start: { distance: number; scale: number } | null = null;
-    const distance = () => {
-      const [a, b] = [...touches.values()];
-      return a && b ? Math.hypot(a.x - b.x, a.y - b.y) : 0;
+    const distance = (t: TouchList) => {
+      const a = t[0];
+      const b = t[1];
+      return a && b ? Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) : 0;
     };
-    const down = (e: PointerEvent) => {
-      if (e.pointerType !== "touch") return;
-      touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
-      if (touches.size === 2) start = { distance: distance(), scale: scaleRef.current };
+    const onStart = (e: TouchEvent) => {
+      if (e.touches.length === 2)
+        start = { distance: distance(e.touches), scale: scaleRef.current };
     };
-    const move = (e: PointerEvent) => {
-      if (!touches.has(e.pointerId)) return;
-      touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
-      if (!start || touches.size !== 2 || start.distance === 0) return;
-      const [a, b] = [...touches.values()];
-      if (!a || !b) return;
+    const onMove = (e: TouchEvent) => {
+      if (!start || e.touches.length !== 2 || start.distance === 0) return;
+      e.preventDefault();
+      const a = e.touches[0] as Touch;
+      const b = e.touches[1] as Touch;
       const rect = el.getBoundingClientRect();
-      recordAnchor((a.x + b.x) / 2 - rect.left, (a.y + b.y) / 2 - rect.top);
+      recordAnchor((a.clientX + b.clientX) / 2 - rect.left, (a.clientY + b.clientY) / 2 - rect.top);
       onZoomChange({
         mode: "custom",
-        scale: clampScale((start.scale * distance()) / start.distance),
+        scale: clampScale((start.scale * distance(e.touches)) / start.distance),
       });
     };
-    const up = (e: PointerEvent) => {
-      touches.delete(e.pointerId);
-      if (touches.size < 2) start = null;
+    const onEnd = (e: TouchEvent) => {
+      if (e.touches.length < 2) start = null;
     };
-    el.addEventListener("pointerdown", down);
-    el.addEventListener("pointermove", move);
-    el.addEventListener("pointerup", up);
-    el.addEventListener("pointercancel", up);
+    el.addEventListener("touchstart", onStart, { passive: true });
+    el.addEventListener("touchmove", onMove, { passive: false });
+    el.addEventListener("touchend", onEnd);
+    el.addEventListener("touchcancel", onEnd);
     return () => {
-      el.removeEventListener("pointerdown", down);
-      el.removeEventListener("pointermove", move);
-      el.removeEventListener("pointerup", up);
-      el.removeEventListener("pointercancel", up);
+      el.removeEventListener("touchstart", onStart);
+      el.removeEventListener("touchmove", onMove);
+      el.removeEventListener("touchend", onEnd);
+      el.removeEventListener("touchcancel", onEnd);
     };
   }, [onZoomChange, recordAnchor]);
 
@@ -292,7 +304,12 @@ export const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
       scrollToPage(index: number) {
         const el = scrollRef.current;
         const top = layoutRef.current.tops[index];
-        if (el && top !== undefined) el.scrollTop = top - DEFAULT_LAYOUT.padding;
+        if (!el || top === undefined) return;
+        el.scrollTop = top - DEFAULT_LAYOUT.padding;
+        // Read back the position: the browser clamps it near the end of the document.
+        requestedRef.current = { page: index, top: el.scrollTop };
+        lastScrollRef.current = { top: el.scrollTop, left: el.scrollLeft };
+        setScroll({ top: el.scrollTop, left: el.scrollLeft });
       },
       scrollToHit(hit: SearchHit) {
         const el = scrollRef.current;
@@ -320,13 +337,20 @@ export const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
   const first = Math.max(0, range.first - 1);
   const last = Math.min(pages.length - 1, range.last + 1);
 
-  // Cancel queued renders for pages that scrolled away.
-  useEffect(() => {
-    renderer.retain("page", (i) => i >= first - 1 && i <= last + 1);
-  }, [renderer, first, last]);
-
   const settledScale = useSettled(scale, SETTLE_MS);
   const dpr = typeof window === "undefined" ? 1 : window.devicePixelRatio || 1;
+
+  // Cancel queued renders for pages that scrolled away, and for zoom levels that are no
+  // longer current (repeated zooming would otherwise render every intermediate level).
+  useEffect(() => {
+    renderer.retain(
+      "page",
+      (i, s) =>
+        i >= first - 1 &&
+        i <= last + 1 &&
+        s === renderScale(pages[i] as PageSize, settledScale, dpr),
+    );
+  }, [renderer, first, last, pages, settledScale, dpr]);
 
   const hitsByPage = useMemo(() => {
     const map = new Map<number, { hit: SearchHit; index: number }[]>();
@@ -375,10 +399,10 @@ export const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
   }
 
   return (
-    <div ref={scrollRef} className="pdfo-scroller" tabIndex={-1}>
+    <section ref={scrollRef} className="pdfo-scroller" aria-label="Document pages">
       <div className="pdfo-column" style={{ height: layout.totalHeight, width: contentWidth }}>
         {pageViews}
       </div>
-    </div>
+    </section>
   );
 });

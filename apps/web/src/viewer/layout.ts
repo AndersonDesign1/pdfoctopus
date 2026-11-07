@@ -128,13 +128,26 @@ export function pageLeft(layout: Layout, index: number, viewportWidth: number): 
   return (contentWidth - (layout.widths[index] ?? 0)) / 2;
 }
 
-/** A point on a page (as fractions of its size) and where it is shown in the viewport. */
+/**
+ * A point of the document and where it is shown in the viewport. A point on a page is a
+ * fraction of the page's size; a point outside it (the gaps and padding, which don't scale)
+ * is the nearest page edge plus a fixed offset in CSS pixels.
+ */
 export interface Anchor {
   page: number;
   fracX: number;
   fracY: number;
+  offsetX: number;
+  offsetY: number;
   viewportX: number;
   viewportY: number;
+}
+
+/** Split a position along one axis into a fraction of the page plus a fixed overhang. */
+function splitAxis(pos: number, start: number, size: number): [frac: number, offset: number] {
+  if (pos < start) return [0, pos - start];
+  if (pos > start + size) return [1, pos - (start + size)];
+  return [(pos - start) / size, 0];
 }
 
 /** The point of the document shown at (viewportX, viewportY) for this scroll position. */
@@ -149,13 +162,17 @@ export function anchorAt(
   const y = scroll.top + viewportY;
   const page = pageAtOffset(layout, y);
   const x = scroll.left + viewportX;
-  return {
-    page,
-    fracX: (x - pageLeft(layout, page, viewportWidth)) / (layout.widths[page] as number),
-    fracY: (y - (layout.tops[page] as number)) / (layout.heights[page] as number),
-    viewportX,
-    viewportY,
-  };
+  const [fracX, offsetX] = splitAxis(
+    x,
+    pageLeft(layout, page, viewportWidth),
+    layout.widths[page] as number,
+  );
+  const [fracY, offsetY] = splitAxis(
+    y,
+    layout.tops[page] as number,
+    layout.heights[page] as number,
+  );
+  return { page, fracX, fracY, offsetX, offsetY, viewportX, viewportY };
 }
 
 /** The scroll position that shows the anchored point at the same place in the viewport. */
@@ -168,11 +185,13 @@ export function scrollForAnchor(
   return {
     top:
       (layout.tops[page] as number) +
-      anchor.fracY * (layout.heights[page] as number) -
+      anchor.fracY * (layout.heights[page] as number) +
+      anchor.offsetY -
       anchor.viewportY,
     left:
       pageLeft(layout, page, viewportWidth) +
-      anchor.fracX * (layout.widths[page] as number) -
+      anchor.fracX * (layout.widths[page] as number) +
+      anchor.offsetX -
       anchor.viewportX,
   };
 }
@@ -203,7 +222,9 @@ export function percentToScale(percent: number): number {
 /** The next zoom step above (direction 1) or below (direction -1) the current scale. */
 export function stepZoom(scale: number, direction: 1 | -1): number {
   const zoom = scale / CSS_PX_PER_PT;
-  const epsilon = 0.001;
+  // Small enough that any zoom just below a step still goes to that step, large enough to
+  // treat a step we're already at (up to floating-point error) as reached.
+  const epsilon = 1e-4;
   const steps = direction > 0 ? ZOOM_STEPS : [...ZOOM_STEPS].reverse();
   const next = steps.find((s) => (direction > 0 ? s > zoom + epsilon : s < zoom - epsilon));
   return clampScale((next ?? zoom) * CSS_PX_PER_PT);
@@ -223,6 +244,7 @@ export function renderScale(
   const wanted = scale * devicePixelRatio;
   const pixels = page.width * page.height * wanted * wanted;
   const capped = pixels > maxPixels ? Math.sqrt(maxPixels / (page.width * page.height)) : wanted;
-  // Round so tiny scroll-driven changes don't produce a new render each time.
-  return Math.round(capped * 100) / 100;
+  // Round so tiny scroll-driven changes don't produce a new render each time, but never to
+  // zero for a huge page.
+  return Math.max(0.01, Math.round(capped * 100) / 100);
 }

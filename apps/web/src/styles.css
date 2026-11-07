@@ -287,6 +287,11 @@ input {
   outline: none;
 }
 
+.pdfo-scroller:focus-visible {
+  outline: 2px solid var(--link);
+  outline-offset: -2px;
+}
+
 .pdfo-column {
   position: relative;
 }
@@ -338,6 +343,13 @@ input {
   color: var(--muted);
   font: inherit;
   font-size: 0.8rem;
+}
+
+.pdfo-thumb-label {
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .pdfo-thumb-canvas {

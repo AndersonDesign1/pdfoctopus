@@ -120,11 +120,21 @@ export function PropertiesDialog({
 }) {
   const m = info.metadata;
   const first = info.pages[0];
+  const mixedSizes =
+    !!first &&
+    info.pages.some(
+      (p) => Math.abs(p.width - first.width) > 1 || Math.abs(p.height - first.height) > 1,
+    );
   const rows: [string, string | undefined][] = [
     ["File", fileName],
     ["Size", formatBytes(fileSize)],
     ["Pages", String(info.pageCount)],
-    ["Page size", first ? formatPageSize(first.width, first.height) : undefined],
+    [
+      "Page size",
+      first
+        ? `${mixedSizes ? "Mixed sizes; first page " : ""}${formatPageSize(first.width, first.height)}`
+        : undefined,
+    ],
     ["Title", m.title],
     ["Author", m.author],
     ["Subject", m.subject],
