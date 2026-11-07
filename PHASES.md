@@ -13,12 +13,75 @@ tasks needed to finish it and the **exit criteria** that must be true before we 
 
 ---
 
+## Next up
+
+Start here if you're picking the project up. Do these in order, and update this list in the
+same PR that changes it. Last updated: 2026-11-07, when the Phase 1 viewer (PR #8) was ready
+to merge.
+
+### 1. Clear the open Dependabot PRs
+
+Dependabot opened these PRs on 2026-11-07. Lint, typecheck, test, desktop and signature CI
+passed on all of them. Their only red check, **Workers Builds**, ran before the Cloudflare
+preview build command was fixed. Comment `@dependabot rebase` on each one to re-run it on
+the latest `main`, then:
+
+| PR  | Update                               | What to do                                                                                                                                                                                                                                                           |
+| --- | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| #4  | `actions/checkout` 4 → 7             | Merge once green. CI only checks out the repo, with no options that changed.                                                                                                                                                                                         |
+| #3  | `actions/setup-python` 5 → 7         | Merge once the `signatures` job is green. v7 removed the `pip-install` input, which we don't use.                                                                                                                                                                    |
+| #5  | `playwright` 1.63.0 → 1.64.1 (minor) | Merge once green. Playwright is pinned exactly in the root `package.json`. If a machine has its own pre-installed browser, it may need the matching version.                                                                                                         |
+| #6  | `@types/node` 22 → 26 (major)        | Probably close it with `@dependabot ignore this major version`. The types should match the Node version the code runs on, and `apps/web` and `packages/core` pin `^22`. Only take it when we move to a newer Node.                                                   |
+| #7  | `typescript` 5.9 → 7.0 (major)       | Don't merge blindly. TypeScript 7 is the rewritten (native) compiler. Check it out locally, run `bun install && bun run check`, confirm `tsc --version` really reports 7, and check that Vite and Vitest still build. If anything breaks, ignore this major for now. |
+
+### 2. Finish Phase 1: page tools and saving
+
+The viewer is done. The rest of Phase 1, as one or two PRs:
+
+1. **Engine operations** in `packages/core/src/engine.ts`, each with tests on `fixtures/`:
+   rotate, delete, move/reorder, insert blank, insert from another PDF, extract to a new PDF,
+   merge, and split. Expose them through the worker protocol (`protocol.ts`, `worker.ts`,
+   `client.ts`) the same way `search` and `authenticate` are.
+2. **Undo/redo:** keep a history of page operations, with each one able to reverse itself, so
+   no full copies of the document are needed.
+3. **UI:** drag-and-drop reordering and a selection in the thumbnail sidebar
+   (`apps/web/src/viewer/Thumbnails.tsx`), page tools in the toolbar, and dialogs for split
+   and merge. After an edit, cached bitmaps would show the old pages. `dispose()` is final,
+   so either replace the renderer (dispose the old one and put a new `PageRenderer` on the
+   document, as `replaceDoc` does when a file opens) or add a way to drop only the edited
+   pages from the cache.
+4. **Saving:** incremental save is already the default, and `IncrementalSaveError` already
+   asks before a rewrite (`onSave` in `apps/web/src/App.tsx`). Still to do: "Save as", and
+   ticking the saving boxes once every page tool is covered.
+5. **Exit criteria:** run every page tool over all of `fixtures/`, and open the saved files in
+   Adobe Reader and a browser PDF viewer.
+
+### 3. Admin tasks still open from Phase 0
+
+The domain, SignPath, Oracle Cloud and the trademark check (see
+[Phase 0](#phase-0-foundations)). Also confirm the exit criteria on a real Windows machine:
+`bun run desktop`, and "Open with" for PDFs, which has only been compiled so far.
+
+### Where things are
+
+- **Engine:** `packages/core` (MuPDF in a Web Worker, plus a promise-based client). Tests:
+  `bun run test` (Vitest, Node).
+- **Viewer:** `apps/web/src/viewer`. Layout maths is in `layout.ts` (unit-tested), render
+  scheduling in `renderQueue.ts`, and the bitmap cache in `renderer.ts`.
+- **App shell, toolbar and shortcuts:** `apps/web/src/App.tsx`. Dialogs:
+  `apps/web/src/ui/Dialogs.tsx`.
+- **Desktop:** `apps/desktop/src-tauri` (Tauri v2; the Rust commands are in `src/lib.rs`).
+- **Before every PR:** run `bun run check` and sign off every commit with `git commit -s`.
+  CI, DCO, Socket and the cubic review all run on each PR, and Cloudflare deploys a preview.
+
+---
+
 ## Overview
 
 | #   | Phase                                                             | Estimate | Status         |
 | --- | ----------------------------------------------------------------- | -------- | -------------- |
 | 0   | [Foundations](#phase-0-foundations)                               | 1–2 wks  | 🟨 In progress |
-| 1   | [Core viewer + page tools](#phase-1-core-viewer--page-tools)      | 2–3 wks  | ⬜ Not started |
+| 1   | [Core viewer + page tools](#phase-1-core-viewer--page-tools)      | 2–3 wks  | 🟨 In progress |
 | 2   | [Sign, annotate & forms](#phase-2-sign-annotate--forms)           | 3–4 wks  | ⬜ Not started |
 | 3   | [Security, compress & create](#phase-3-security-compress--create) | 2–3 wks  | ⬜ Not started |
 | 4   | [Conversion](#phase-4-conversion)                                 | 2–3 wks  | ⬜ Not started |
@@ -48,8 +111,8 @@ tasks needed to finish it and the **exit criteria** that must be true before we 
 - [x] `README.md` describing the project
 - [x] `CONTRIBUTING.md` with DCO sign-off instructions
 - [x] `PHASES.md` (this file)
-- [ ] Enable a DCO check on pull requests (e.g. the DCO GitHub App)
-- [ ] Branch protection on `main` (require CI + review)
+- [x] Enable a DCO check on pull requests (e.g. the DCO GitHub App)
+- [x] Branch protection on `main` (require CI + review)
 - [x] Issue and PR templates
 
 ### Monorepo & tooling
@@ -97,14 +160,14 @@ tasks needed to finish it and the **exit criteria** that must be true before we 
 
 ### Viewer
 
-- [ ] Open files by drag-and-drop, file picker and (desktop) "Open with"
-- [ ] Render all pages with virtual scrolling (only visible pages rendered)
-- [ ] Zoom (fit width, fit page, custom %) and pinch-to-zoom
-- [ ] Thumbnail sidebar
-- [ ] Text search with highlighted results and next/previous
-- [ ] Page navigation (go to page, keyboard shortcuts)
-- [ ] Dark mode
-- [ ] Show document properties (title, author, page count, size)
+- [x] Open files by drag-and-drop, file picker and (desktop) "Open with"
+- [x] Render all pages with virtual scrolling (only visible pages rendered)
+- [x] Zoom (fit width, fit page, custom %) and pinch-to-zoom
+- [x] Thumbnail sidebar
+- [x] Text search with highlighted results and next/previous
+- [x] Page navigation (go to page, keyboard shortcuts)
+- [x] Dark mode
+- [x] Show document properties (title, author, page count, size)
 
 ### Page tools
 
@@ -127,7 +190,7 @@ tasks needed to finish it and the **exit criteria** that must be true before we 
 ### Exit criteria
 
 - [ ] Every page tool works on all `fixtures/` without crashing
-- [ ] A 500-page PDF scrolls smoothly
+- [x] A 500-page PDF scrolls smoothly
 - [ ] Saved files open correctly in Adobe Reader and a browser PDF viewer
 
 ---

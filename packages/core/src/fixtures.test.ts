@@ -18,6 +18,14 @@ const EXPECTED_TO_FAIL: Record<string, string> = {
     "MuPDF finds no pages in this file (pypdf reads 4); revisit when improving repair",
 };
 
+/** Open passwords for encrypted fixtures (see fixtures/README.md). */
+const PASSWORDS: Record<string, string> = {
+  "generated/encrypted-aes256.pdf": "open-sesame",
+  "generated/encrypted-rc4-40.pdf": "open-sesame",
+  "third-party/py-pdf/005-libreoffice-writer-password_libreoffice-writer-password.pdf":
+    "openpassword",
+};
+
 function listPdfs(dir: string): string[] {
   return readdirSync(dir).flatMap((name) => {
     const path = join(dir, name);
@@ -26,16 +34,23 @@ function listPdfs(dir: string): string[] {
   });
 }
 
-const files = listPdfs(fixturesDir).map((path) => ({ name: relative(fixturesDir, path), path }));
+// Names always use "/" (relative() gives "\\" on Windows), matching the keys above.
+const files = listPdfs(fixturesDir).map((path) => ({
+  name: relative(fixturesDir, path).replaceAll("\\", "/"),
+  path,
+}));
 
 /** Open a file and render page 1. Returns the page count. */
-function openAndRender(path: string): number {
+function openAndRender(name: string, path: string): number {
   const engine = new PdfEngine();
   try {
-    const { pageCount } = engine.open(new Uint8Array(readFileSync(path)));
+    const opened = engine.open(new Uint8Array(readFileSync(path)));
+    const info = opened.needsPassword ? engine.authenticate(PASSWORDS[name] ?? "") : opened;
+    if (!info) throw new Error(`No working password for ${name}`);
+    expect(info.pages).toHaveLength(info.pageCount);
     const page = engine.renderPage(0, 0.25);
-    expect(page.png.length).toBeGreaterThan(0);
-    return pageCount;
+    expect(page.pixels.length).toBe(page.width * page.height * 4);
+    return info.pageCount;
   } finally {
     engine.close();
   }
@@ -54,14 +69,14 @@ describe("fixtures", () => {
   const opening = files.filter((f) => !(f.name in EXPECTED_TO_FAIL));
   const failing = files.filter((f) => f.name in EXPECTED_TO_FAIL);
 
-  it.each(opening.map((f) => [f.name, f.path]))("%s opens and renders", (_, path) => {
-    expect(openAndRender(path)).toBeGreaterThan(0);
+  it.each(opening.map((f) => [f.name, f.path]))("%s opens and renders", (name, path) => {
+    expect(openAndRender(name, path)).toBeGreaterThan(0);
   });
 
-  it.each(failing.map((f) => [f.name, f.path]))("%s fails cleanly", (_, path) => {
+  it.each(failing.map((f) => [f.name, f.path]))("%s fails cleanly", (name, path) => {
     let error: unknown;
     try {
-      openAndRender(path);
+      openAndRender(name, path);
     } catch (err) {
       error = err;
     }

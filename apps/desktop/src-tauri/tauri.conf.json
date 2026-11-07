@@ -34,6 +34,14 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "license": "AGPL-3.0-or-later"
+    "license": "AGPL-3.0-or-later",
+    "fileAssociations": [
+      {
+        "ext": ["pdf"],
+        "mimeType": "application/pdf",
+        "description": "PDF document",
+        "role": "Editor"
+      }
+    ]
   }
 }
