@@ -14,6 +14,10 @@ describe("parsePdfDate", () => {
     expect(parsePdfDate("D:2026")?.toISOString()).toBe("2026-01-01T00:00:00.000Z");
   });
 
+  it("keeps years before 100 as written", () => {
+    expect(parsePdfDate("D:00500615000000Z")?.getUTCFullYear()).toBe(50);
+  });
+
   it("rejects text that isn't a date", () => {
     expect(parsePdfDate("yesterday")).toBeNull();
   });

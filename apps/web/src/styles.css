@@ -422,8 +422,8 @@ input {
   gap: 8px;
   padding: 12px;
   text-align: center;
-  color: #444;
-  background: #fff;
+  color: var(--fg);
+  background: var(--surface);
 }
 
 .pdfo-dialog-actions {

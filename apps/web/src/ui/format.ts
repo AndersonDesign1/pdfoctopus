@@ -34,9 +34,13 @@ export function parsePdfDate(value: string): Date | null {
   ) {
     return null;
   }
-  const utc = Date.UTC(year, month - 1, day, hour, minute, second);
+  // Date.UTC maps years 0–99 to 1900–1999, so set the full year explicitly.
+  const date = new Date(0);
+  date.setUTCFullYear(year, month - 1, day);
+  date.setUTCHours(hour, minute, second, 0);
   // Day 31 in a 30-day month rolls over: catch it by checking the day survived.
-  if (new Date(utc).getUTCDate() !== day) return null;
+  if (date.getUTCDate() !== day) return null;
+  const utc = date.getTime();
   const offsetMinutes = (sign === "-" ? -1 : 1) * (offH * 60 + offM);
   return new Date(utc - (sign ? offsetMinutes : 0) * 60_000);
 }
