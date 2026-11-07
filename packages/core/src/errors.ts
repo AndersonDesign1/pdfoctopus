@@ -8,6 +8,7 @@ export type PdfErrorCode =
   | "incremental-save-unavailable"
   | "engine-crashed"
   | "engine-load-failed"
+  | "password-required"
   | "unknown";
 
 /** Thrown when a file can't be saved incrementally and a full rewrite would be needed. */
@@ -16,6 +17,15 @@ export class IncrementalSaveError extends Error {
   constructor(message = "This PDF can't be saved incrementally; a full rewrite is required") {
     super(message);
     this.name = "IncrementalSaveError";
+  }
+}
+
+/** The document is encrypted and must be unlocked with `authenticate` first. */
+export class PasswordRequiredError extends Error {
+  readonly code = "password-required" as const;
+  constructor(message = "This PDF is password-protected") {
+    super(message);
+    this.name = "PasswordRequiredError";
   }
 }
 
@@ -49,7 +59,8 @@ export function errorCode(err: unknown): PdfErrorCode {
   if (
     err instanceof IncrementalSaveError ||
     err instanceof EngineCrashedError ||
-    err instanceof EngineLoadError
+    err instanceof EngineLoadError ||
+    err instanceof PasswordRequiredError
   ) {
     return err.code;
   }
@@ -70,6 +81,8 @@ export function errorFromCode(code: PdfErrorCode, message: string): Error {
       return new EngineCrashedError(message);
     case "engine-load-failed":
       return new EngineLoadError(message);
+    case "password-required":
+      return new PasswordRequiredError(message);
     default:
       return new Error(message);
   }
