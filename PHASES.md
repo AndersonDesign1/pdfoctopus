@@ -46,8 +46,10 @@ The viewer is done. The rest of Phase 1, as one or two PRs:
    no full copies of the document are needed.
 3. **UI:** drag-and-drop reordering and a selection in the thumbnail sidebar
    (`apps/web/src/viewer/Thumbnails.tsx`), page tools in the toolbar, and dialogs for split
-   and merge. After an edit, call `PageRenderer.dispose()` (or drop the affected pages) so
-   cached bitmaps don't show the old pages.
+   and merge. After an edit, cached bitmaps would show the old pages. `dispose()` is final,
+   so either replace the renderer (dispose the old one and put a new `PageRenderer` on the
+   document, as `replaceDoc` does when a file opens) or add a way to drop only the edited
+   pages from the cache.
 4. **Saving:** incremental save is already the default, and `IncrementalSaveError` already
    asks before a rewrite (`onSave` in `apps/web/src/App.tsx`). Still to do: "Save as", and
    ticking the saving boxes once every page tool is covered.
