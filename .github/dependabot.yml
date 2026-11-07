@@ -13,6 +13,11 @@ updates:
     groups:
       js-minor-and-patch:
         update-types: ["minor", "patch"]
+    ignore:
+      # Node's types must match the Node version we run (22), so they move together with
+      # Node, by hand, rather than whenever a new major is published.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "cargo"
     directory: "/apps/desktop/src-tauri"

@@ -16,23 +16,26 @@ tasks needed to finish it and the **exit criteria** that must be true before we 
 ## Next up
 
 Start here if you're picking the project up. Do these in order, and update this list in the
-same PR that changes it. Last updated: 2026-11-07, when the Phase 1 viewer (PR #8) was ready
-to merge.
+same PR that changes it. Last updated: 2026-11-07, after the first round of Dependabot PRs.
 
-### 1. Clear the open Dependabot PRs
+### 1. Dependabot PRs: done (2026-11-07)
 
-Dependabot opened these PRs on 2026-11-07. Lint, typecheck, test, desktop and signature CI
-passed on all of them. Their only red check, **Workers Builds**, ran before the Cloudflare
-preview build command was fixed. Comment `@dependabot rebase` on each one to re-run it on
-the latest `main`, then:
+- Merged: #4 (`actions/checkout` 4 → 7), #5 (`playwright` 1.64.1) and #7 (TypeScript 7.0).
+  TypeScript 7 was checked locally first: `tsc --version` reports 7.0.2, typecheck, tests and
+  the Vite build pass, and a deliberate type error is still caught.
+- #3 (`actions/setup-python` 5 → 7) conflicted with #4, so the same one-line bump was made in
+  the PR that updated this section, and #3 was closed.
+- #6 (`@types/node` 22 → 26) was closed. `.github/dependabot.yml` now ignores major updates
+  to `@types/node`: the types must match the Node version we run (22), so bump them together
+  with Node.
+- **Open question for the repo owner:** the Cloudflare **Workers Builds** check fails
+  instantly on every Dependabot branch, without running the build, while it passes on our own
+  branches and on `main`. It's only the preview check and isn't required, but check the
+  build's log in the Cloudflare dashboard (Workers & Pages → pdfoctopus → Builds) to see why.
+  It may be the setting for which branches get preview builds.
 
-| PR  | Update                               | What to do                                                                                                                                                                                                                                                           |
-| --- | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| #4  | `actions/checkout` 4 → 7             | Merge once green. CI only checks out the repo, with no options that changed.                                                                                                                                                                                         |
-| #3  | `actions/setup-python` 5 → 7         | Merge once the `signatures` job is green. v7 removed the `pip-install` input, which we don't use.                                                                                                                                                                    |
-| #5  | `playwright` 1.63.0 → 1.64.1 (minor) | Merge once green. Playwright is pinned exactly in the root `package.json`. If a machine has its own pre-installed browser, it may need the matching version.                                                                                                         |
-| #6  | `@types/node` 22 → 26 (major)        | Probably close it with `@dependabot ignore this major version`. The types should match the Node version the code runs on, and `apps/web` and `packages/core` pin `^22`. Only take it when we move to a newer Node.                                                   |
-| #7  | `typescript` 5.9 → 7.0 (major)       | Don't merge blindly. TypeScript 7 is the rewritten (native) compiler. Check it out locally, run `bun install && bun run check`, confirm `tsc --version` really reports 7, and check that Vite and Vitest still build. If anything breaks, ignore this major for now. |
+From now on, Dependabot opens a few PRs each week. Merge minor and patch updates once CI is
+green. Test major updates locally first, as was done for TypeScript 7.
 
 ### 2. Finish Phase 1: page tools and saving
 
