@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
@@ -32,13 +33,16 @@ function serviceWorkerPrecache(): Plugin {
         .filter((name) => !skip.has(name))
         .map((name) => `/${name}`);
       const swPath = join(outDir, "sw.js");
-      const marker = '/* __PRECACHE__ */ ["/"]';
-      const sw = readFileSync(swPath, "utf8");
-      if (!sw.includes(marker)) throw new Error(`sw.js is missing the ${marker} marker`);
-      writeFileSync(
-        swPath,
-        sw.replace(marker, JSON.stringify(["/", ...publicFiles.sort(), ...assets.sort()])),
-      );
+      const listMarker = '/* __PRECACHE__ */ ["/"]';
+      const versionMarker = '/* __VERSION__ */ "dev"';
+      let sw = readFileSync(swPath, "utf8");
+      for (const marker of [listMarker, versionMarker]) {
+        if (!sw.includes(marker)) throw new Error(`sw.js is missing the ${marker} marker`);
+      }
+      sw = sw.replace(listMarker, JSON.stringify(["/", ...publicFiles.sort(), ...assets.sort()]));
+      // Any change to the worker or the file list gives a new version, and so a new cache.
+      const version = createHash("sha256").update(sw).digest("hex").slice(0, 12);
+      writeFileSync(swPath, sw.replace(versionMarker, JSON.stringify(version)));
     },
   };
 }

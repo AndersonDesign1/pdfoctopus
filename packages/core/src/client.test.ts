@@ -79,6 +79,23 @@ describe("PdfWorkerClient", () => {
     expect(other).not.toHaveBeenCalled();
   });
 
+  it("settles the failing request even if onFatalError throws", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const client = new PdfWorkerClient({
+      onFatalError: () => {
+        throw new Error("bug in callback");
+      },
+    });
+    const render = client.renderPage(0);
+    const other = client.renderPage(1);
+    const { id } = FakeWorker.last.sent[0] as WorkerRequest;
+    FakeWorker.last.reply({ id, ok: false, code: "engine-crashed", error: "unreachable" });
+    await expect(render).rejects.toBeInstanceOf(EngineCrashedError);
+    await expect(other).rejects.toBeInstanceOf(EngineCrashedError);
+    expect(errors).toHaveBeenCalled();
+    errors.mockRestore();
+  });
+
   it("treats an uncaught worker error as a crash", async () => {
     const client = new PdfWorkerClient();
     const opening = client.init();

@@ -8,7 +8,9 @@
 // - Chromium for Playwright: `bunx playwright install chromium`
 // - LibreOffice (`soffice` on the PATH)
 // - The fonts the sources use (checked below). On Debian/Ubuntu:
-//   `apt install fonts-dejavu-core fonts-liberation fonts-wqy-zenhei`
+//   `apt install fonts-dejavu-core fonts-liberation fonts-inter fonts-wqy-zenhei`
+//   (LibreOffice uses Inter for the contract's headings.) The committed fixtures were made
+//   on Linux; the font check needs fontconfig and is skipped with a warning without it.
 // - Python 3 with pyhanko: `pip install -r fixtures/scripts/requirements.txt`
 //
 //   node fixtures/scripts/generate.mjs
@@ -32,12 +34,23 @@ const tmp = mkdtempSync(join(tmpdir(), "pdfo-fixtures-"));
 
 // Without these fonts, Chromium silently substitutes others (or draws empty boxes for CJK),
 // and the regenerated fixtures would differ from the committed ones.
-const REQUIRED_FONTS = ["DejaVu Sans", "Liberation Serif", "WenQuanYi Zen Hei"];
-const installedFonts = execFileSync("fc-list", [":", "family"], { encoding: "utf8" });
-const missingFonts = REQUIRED_FONTS.filter((font) => !installedFonts.includes(font));
-if (missingFonts.length > 0) {
-  console.error(`Missing fonts: ${missingFonts.join(", ")}. See the requirements at the top.`);
-  process.exit(1);
+const REQUIRED_FONTS = ["DejaVu Sans", "Liberation Serif", "Inter", "WenQuanYi Zen Hei"];
+let installedFonts = null;
+try {
+  installedFonts = execFileSync("fc-list", [":", "family"], { encoding: "utf8" });
+} catch {
+  console.warn(
+    `Warning: can't list fonts (fontconfig's fc-list isn't available). Make sure these are ` +
+      `installed, or the output will differ: ${REQUIRED_FONTS.join(", ")}`,
+  );
+}
+if (installedFonts !== null) {
+  const families = new Set(installedFonts.split(/[,\n]/).map((f) => f.trim()));
+  const missingFonts = REQUIRED_FONTS.filter((font) => !families.has(font));
+  if (missingFonts.length > 0) {
+    console.error(`Missing fonts: ${missingFonts.join(", ")}. See the requirements at the top.`);
+    process.exit(1);
+  }
 }
 
 const requireFromCore = createRequire(join(root, "packages", "core", "package.json"));

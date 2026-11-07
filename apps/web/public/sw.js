@@ -16,13 +16,17 @@
 // Only same-origin GET requests are handled. PDFs never pass through here: they are read
 // from disk by the page and never fetched.
 
-const CACHE = "pdfoctopus-v1";
-
 // Every file the current build needs, written in by the build (see vite.config.ts). It also
 // makes this file change on every deploy that changes the app, which is how the browser
 // knows to install the new version.
 const PRECACHE = /* __PRECACHE__ */ ["/"];
-const PRECACHE_SET = new Set(PRECACHE);
+
+// A hash of this whole file as built, written in by the build. Each version of the service
+// worker gets its own cache: a new version fills its cache during install without touching
+// the one the running version serves from, and the switch happens only on activate. A
+// failed install therefore can't leave a half-updated cache.
+const VERSION = /* __VERSION__ */ "dev";
+const CACHE = `pdfoctopus-${VERSION}`;
 
 // Match on the URL alone. Files are cached during install by a plain fetch, while the page
 // later requests them as module scripts (with an Origin header). If the server sends
@@ -42,18 +46,30 @@ self.addEventListener("install", (event) => {
   event.waitUntil(
     (async () => {
       const cache = await caches.open(CACHE);
-      await Promise.all(
-        PRECACHE.map(async (path) => {
-          // Hashed files already cached from an earlier version don't need downloading again.
-          if (path !== "/" && (await cache.match(path, MATCH))) return;
-          // A failed download fails the install: the browser keeps the current version and
-          // tries again later, rather than activating a version that can't work offline.
-          const response = await fetch(path, { cache: "no-cache" });
-          if (!response.ok) throw new Error(`Could not download ${path}: ${response.status}`);
-          // Storage being full is not a reason to fail: the app still works online.
-          await tryPut(cache, path, response);
-        }),
-      );
+      try {
+        await Promise.all(
+          PRECACHE.map(async (path) => {
+            // Hashed files already cached by an earlier version are copied, not downloaded.
+            const existing = path !== "/" && (await caches.match(path, MATCH));
+            if (existing) return tryPut(cache, path, existing);
+            // A failed download fails the install: the browser keeps the current version
+            // and tries again later, rather than activating one that can't work offline.
+            const response = await fetch(path, { cache: "no-cache" });
+            if (!response.ok) throw new Error(`Could not download ${path}: ${response.status}`);
+            // With single-page-app fallback, a missing file comes back as the HTML page with
+            // status 200. Never store that under an asset's name.
+            const type = response.headers.get("content-type") ?? "";
+            if (path.startsWith("/assets/") && type.includes("text/html")) {
+              throw new Error(`Could not download ${path}: got an HTML page instead`);
+            }
+            // Storage being full is not a reason to fail: the app still works online.
+            await tryPut(cache, path, response);
+          }),
+        );
+      } catch (err) {
+        await caches.delete(CACHE);
+        throw err;
+      }
     })(),
   );
 });
@@ -61,15 +77,10 @@ self.addEventListener("install", (event) => {
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     (async () => {
+      // Remove earlier versions' caches. No tab runs an earlier version any more: this
+      // worker only activates once they have all closed.
       for (const key of await caches.keys()) {
         if (key.startsWith("pdfoctopus-") && key !== CACHE) await caches.delete(key);
-      }
-      // Remove files from earlier versions that this one no longer uses. No tab runs an
-      // earlier version any more: this worker only activates once they have all closed.
-      const cache = await caches.open(CACHE);
-      for (const request of await cache.keys()) {
-        const path = new URL(request.url).pathname;
-        if (path.startsWith("/assets/") && !PRECACHE_SET.has(path)) await cache.delete(request);
       }
       await self.clients.claim();
     })(),

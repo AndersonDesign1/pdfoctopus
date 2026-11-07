@@ -53,7 +53,10 @@ export class PdfWorkerClient {
       if (isFatalEngineError(error)) {
         // The engine's memory may be corrupt (or it never loaded): discard this worker so
         // the next attempt starts clean. Other calls in flight fail with the same error.
+        // Settle this request first, so nothing the owner's callback does can leave it hanging.
+        p.reject(error);
         this.fail(error);
+        return;
       }
       p.reject(error);
     };
@@ -77,7 +80,13 @@ export class PdfWorkerClient {
   private fail(error: Error) {
     const first = this.fatal === null;
     this.terminateWith(error);
-    if (first) this.onFatalError?.(error);
+    if (!first) return;
+    try {
+      this.onFatalError?.(error);
+    } catch (callbackError) {
+      // A bug in the owner's callback must not break the client's own error handling.
+      console.error("onFatalError callback threw", callbackError);
+    }
   }
 
   private terminateWith(error: Error) {
