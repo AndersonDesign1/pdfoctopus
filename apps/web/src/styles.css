@@ -511,3 +511,104 @@ input {
     min-width: 0;
   }
 }
+
+/* ---- Page selection and reordering ---- */
+
+.pdfo-thumb.selected {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--fg);
+}
+
+.pdfo-thumb.selected.current {
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+.pdfo-thumb[draggable="true"] {
+  cursor: grab;
+}
+
+.pdfo-drop-marker {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  height: 3px;
+  margin-top: -1px;
+  border-radius: 2px;
+  background: var(--accent);
+  pointer-events: none;
+}
+
+.pdfo-choice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0;
+}
+
+.pdfo-choice input[type="text"],
+.pdfo-choice input[type="number"] {
+  flex: 1;
+  min-width: 0;
+}
+
+.pdfo-hint {
+  color: var(--muted);
+  font-size: 0.9em;
+  margin: 4px 0 0;
+}
+
+.pdfo-file-list {
+  list-style: none;
+  margin: 8px 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
+.pdfo-file-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.pdfo-file-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pdfo-file-list input[type="password"] {
+  width: 100%;
+}
+
+.unsaved-dot {
+  color: var(--accent);
+  margin-left: 4px;
+}
+
+.pdfo-fieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.page-tools {
+  flex-basis: 100%;
+}
+
+.page-target {
+  color: var(--muted);
+  font-size: 0.9em;
+  padding: 0 4px;
+  white-space: nowrap;
+}

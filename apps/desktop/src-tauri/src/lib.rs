@@ -54,8 +54,8 @@ fn read_startup_file(state: State<'_, StartupFile>) -> Result<Response, String> 
 pub fn run() {
     tauri::Builder::default()
         .manage(StartupFile(Mutex::new(pdf_from_args())))
-        // Native "Save as" dialog. A path the user picks there is added to the fs scope,
-        // so the app can write only to files the user chose.
+        // Native "Save as" and folder dialogs. A file or folder the user picks there is added
+        // to the fs scope, so the app can write only where the user chose.
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .invoke_handler(tauri::generate_handler![startup_file_name, read_startup_file])

@@ -16,7 +16,7 @@ tasks needed to finish it and the **exit criteria** that must be true before we 
 ## Next up
 
 Start here if you're picking the project up. Do these in order, and update this list in the
-same PR that changes it. Last updated: 2026-11-07, after the first round of Dependabot PRs.
+same PR that changes it. Last updated: 2026-11-10, after the page tools and saving work.
 
 ### 1. Dependabot PRs: done (2026-11-07)
 
@@ -37,34 +37,34 @@ same PR that changes it. Last updated: 2026-11-07, after the first round of Depe
 From now on, Dependabot opens a few PRs each week. Merge minor and patch updates once CI is
 green. Test major updates locally first, as was done for TypeScript 7.
 
-### 2. Finish Phase 1: page tools and saving
+### 2. Finish Phase 1: the last exit check (needs a person)
 
-The viewer is done. The rest of Phase 1 is being done in one PR, in two stages. Steps 1 and 2
-are done (2026-11-10); steps 3 to 5 are next.
+Page tools, undo/redo, the UI and saving are done (2026-11-10). What's left is a manual
+check that can't run in CI:
 
-1. ✅ **Engine operations** in `packages/core/src/engine.ts`, each with tests on `fixtures/`:
-   rotate, delete, move/reorder, insert blank, insert from another PDF, extract to a new PDF,
-   merge, and split. Expose them through the worker protocol (`protocol.ts`, `worker.ts`,
-   `client.ts`) the same way `search` and `authenticate` are. Done: `rotatePages`,
-   `deletePages`, `movePages`, `insertBlankPages`, `insertPdfs` (merge = insert at the end),
-   `extractPages` and `splitPages`, plus range helpers in `pageRanges.ts`. Tests are in
-   `pageOps.test.ts`, and `fixtures.test.ts` runs every tool, undo, redo and save over every
-   fixture.
-2. ✅ **Undo/redo:** keep a history of page operations, with each one able to reverse itself, so
-   no full copies of the document are needed. Done: the history lives in the engine (`undo`,
-   `redo`, `history`), and every page operation returns the new document info and the
-   undo/redo state. Removed pages are kept as the same page objects and put back on undo.
-3. **UI:** drag-and-drop reordering and a selection in the thumbnail sidebar
-   (`apps/web/src/viewer/Thumbnails.tsx`), page tools in the toolbar, and dialogs for split
-   and merge. After an edit, cached bitmaps would show the old pages. `dispose()` is final,
-   so either replace the renderer (dispose the old one and put a new `PageRenderer` on the
-   document, as `replaceDoc` does when a file opens) or add a way to drop only the edited
-   pages from the cache.
-4. **Saving:** incremental save is already the default, and `IncrementalSaveError` already
-   asks before a rewrite (`onSave` in `apps/web/src/App.tsx`). Still to do: "Save as", and
-   ticking the saving boxes once every page tool is covered.
-5. **Exit criteria:** run every page tool over all of `fixtures/`, and open the saved files in
-   Adobe Reader and a browser PDF viewer.
+- Open a PDF in the web app, use every page tool (rotate, delete, drag to reorder, blank
+  page, insert PDF, merge, extract, split, undo and redo), save it, and open the result in
+  **Adobe Reader** and in a **browser's PDF viewer** (Chrome or Edge, and Firefox). Also try
+  a signed fixture: the earlier signature should still show as valid in Adobe Reader.
+- Once that passes, tick the last Phase 1 exit criterion and mark Phase 1 ✅ Done.
+
+What was built, for reference:
+
+- **Engine** (`packages/core/src/engine.ts`): `rotatePages`, `deletePages`, `movePages`,
+  `insertBlankPages`, `insertPdfs` (merge = insert at the end), `extractPages` and
+  `splitPages`, each one undoable step. The history keeps the removed page objects
+  themselves, not copies of the document. Range helpers are in `pageRanges.ts`.
+  `fixtures.test.ts` runs every tool, undo, redo and save over every fixture.
+- **UI:** select pages in the thumbnails (click, Ctrl/Cmd-click, Shift-click, Ctrl+A,
+  Escape) and drag them to reorder (`viewer/Thumbnails.tsx`, `viewer/selection.ts`). Page
+  tools and undo/redo are in the second toolbar row; tools act on the selection, or the
+  current page when nothing is selected. Split and merge/insert dialogs are in
+  `ui/Dialogs.tsx`. After each edit the renderer is replaced so no stale bitmaps show.
+- **Saving:** "Save" writes back to the file chosen at the first save (desktop, and
+  Chrome/Edge); "Save as" always asks. Split writes all parts into a chosen folder, or
+  downloads them in other browsers. The app warns before closing with unsaved changes.
+- **Known gaps:** page labels aren't renumbered after moving or deleting pages; the
+  desktop folder picker for split (`dialog:allow-open`) hasn't been tried on Windows yet.
 
 ### 3. Admin tasks still open from Phase 0
 
@@ -181,25 +181,25 @@ The domain, SignPath, Oracle Cloud and the trademark check (see
 
 ### Page tools
 
-- [ ] Merge multiple PDFs
-- [ ] Split by range, every N pages, or into single pages
-- [ ] Reorder pages by drag-and-drop in the thumbnail view
-- [ ] Rotate pages
-- [ ] Delete pages
-- [ ] Insert pages (blank or from another PDF)
-- [ ] Extract pages into a new PDF
-- [ ] Undo / redo for all page operations
+- [x] Merge multiple PDFs
+- [x] Split by range, every N pages, or into single pages
+- [x] Reorder pages by drag-and-drop in the thumbnail view
+- [x] Rotate pages
+- [x] Delete pages
+- [x] Insert pages (blank or from another PDF)
+- [x] Extract pages into a new PDF
+- [x] Undo / redo for all page operations
 
 ### Saving
 
-- [ ] Incremental save by default (edits appended, original bytes untouched)
-- [ ] When a file can't be saved incrementally, ask the user before rewriting it
+- [x] Incremental save by default (edits appended, original bytes untouched)
+- [x] When a file can't be saved incrementally, ask the user before rewriting it
 - [x] Automated test: the original bytes stay identical after an incremental save
-- [ ] "Save as" a new file
+- [x] "Save as" a new file
 
 ### Exit criteria
 
-- [ ] Every page tool works on all `fixtures/` without crashing
+- [x] Every page tool works on all `fixtures/` without crashing
 - [x] A 500-page PDF scrolls smoothly
 - [ ] Saved files open correctly in Adobe Reader and a browser PDF viewer
 
