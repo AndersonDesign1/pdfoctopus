@@ -83,7 +83,7 @@ function download(bytes: Uint8Array, suggestedName: string): SaveOutcome {
   a.remove();
   // Give the browser time to start the download before releasing the data.
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
-  return { result: "downloaded" };
+  return { result: "downloaded", fileName: suggestedName };
 }
 
 /** Where one file will be written, chosen before the bytes exist. */
