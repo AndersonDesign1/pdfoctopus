@@ -212,7 +212,8 @@ export function Thumbnails({
     <nav
       ref={scrollRef}
       className="pdfo-thumbs"
-      aria-label="Pages. Click to select, Ctrl or Shift to select more, drag to reorder."
+      aria-label="Pages"
+      aria-describedby="pdfo-thumbs-help"
       onDragOver={onDragOver}
       onDragLeave={(e) => {
         // Only when leaving the sidebar itself, not when moving between thumbnails.
@@ -221,6 +222,10 @@ export function Thumbnails({
       onDrop={onDrop}
       onKeyDown={onKeyDown}
     >
+      <p id="pdfo-thumbs-help" className="visually-hidden">
+        Click a page to select it. Hold Ctrl or Shift to select more. Drag to reorder. Delete
+        removes the selected pages.
+      </p>
       <div style={{ height: layout.totalHeight, position: "relative" }}>
         {items}
         {markerTop !== null && (

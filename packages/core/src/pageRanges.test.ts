@@ -15,6 +15,8 @@ describe("parsePageRanges", () => {
     expect(() => parsePageRanges("0", 5)).toThrow(/outside/);
     expect(() => parsePageRanges("4-6", 5)).toThrow(/outside/);
     expect(() => parsePageRanges("4-2", 5)).toThrow(/backwards/);
+    expect(() => parsePageRanges("-", 5)).toThrow(/isn't a page/);
+    expect(() => parsePageRanges("8-", 5)).toThrow(/outside/);
   });
 });
 

@@ -51,10 +51,12 @@ check that can't run in CI:
 What was built, for reference:
 
 - **Engine** (`packages/core/src/engine.ts`): `rotatePages`, `deletePages`, `movePages`,
-  `insertBlankPages`, `insertPdfs` (merge = insert at the end), `extractPages` and
-  `splitPages`, each one undoable step. The history keeps the removed page objects
-  themselves, not copies of the document. Range helpers are in `pageRanges.ts`.
-  `fixtures.test.ts` runs every tool, undo, redo and save over every fixture.
+  `insertBlankPages` and `insertPdfs` (merge = insert at the end) are each one undoable
+  step; `extractPages` and `splitPages` make new PDFs and leave the document unchanged.
+  The history keeps the removed page objects themselves, not copies of the document.
+  Range helpers are in `pageRanges.ts`. `fixtures.test.ts` runs every tool, undo, redo and
+  save over every fixture that opens as a PDF, and checks that the one that isn't really a
+  PDF (an HTML file) is refused cleanly.
 - **UI:** select pages in the thumbnails (click, Ctrl/Cmd-click, Shift-click, Ctrl+A,
   Escape) and drag them to reorder (`viewer/Thumbnails.tsx`, `viewer/selection.ts`). Page
   tools and undo/redo are in the second toolbar row; tools act on the selection, or the

@@ -332,8 +332,13 @@ export function InsertPdfDialog({
       return next;
     });
 
+  // Adding can't be stopped half-way, so the dialog can't be closed while it runs.
+  const cancel = () => {
+    if (!busy) onCancel();
+  };
+
   return (
-    <Modal title={title} onClose={onCancel}>
+    <Modal title={title} onClose={cancel}>
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -424,7 +429,7 @@ export function InsertPdfDialog({
           </p>
         )}
         <div className="pdfo-dialog-actions">
-          <button type="button" className="button secondary" onClick={onCancel}>
+          <button type="button" className="button secondary" onClick={cancel} disabled={busy}>
             Cancel
           </button>
           <button type="submit" className="button" disabled={busy || files.length === 0}>

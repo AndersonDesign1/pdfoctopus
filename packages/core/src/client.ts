@@ -160,8 +160,9 @@ export class PdfWorkerClient {
     return this.call<"save">({ type: "save", incremental });
   }
 
-  // Page operations. Each is one undoable step and resolves to the updated document info
-  // and undo/redo state. Pages are 0-based.
+  // Page edits (rotate, delete, move, insert) are each one undoable step and resolve to the
+  // updated document info and undo/redo state. Extract and split return new PDFs and leave
+  // the document unchanged. Pages are 0-based.
 
   /** Rotate pages clockwise, on top of any rotation they already have. */
   rotatePages(pages: number[], degrees: RotationDelta) {

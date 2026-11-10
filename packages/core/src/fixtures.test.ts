@@ -118,8 +118,8 @@ function runPageTools(name: string, path: string): void {
     if (engine.pageCount > 1) engine.deletePages([1]);
     expect(engine.pageCount).toBe(count + 1);
     expect(engine.extractPages([0, engine.pageCount - 1]).length).toBeGreaterThan(0);
-    const split = engine.splitPages([[0], [engine.pageCount - 1]]);
-    expect(split).toHaveLength(2);
+    const split = engine.splitPages([[0], [engine.pageCount - 1, 0]]);
+    expect(split.map((bytes) => reopenedPageCount(bytes, password))).toEqual([1, 2]);
 
     // Undo everything, then redo it, and the page count must follow.
     while (engine.history().canUndo) engine.undo();
@@ -147,6 +147,18 @@ function runPageTools(name: string, path: string): void {
     }
   } finally {
     engine.close();
+  }
+}
+
+/** Page count of a PDF produced by extract or split (they come out unencrypted). */
+function reopenedPageCount(bytes: Uint8Array, password?: string): number {
+  const check = new PdfEngine();
+  try {
+    const opened = check.open(bytes);
+    const info = opened.needsPassword ? check.authenticate(password ?? "") : opened;
+    return info?.pageCount ?? -1;
+  } finally {
+    check.close();
   }
 }
 

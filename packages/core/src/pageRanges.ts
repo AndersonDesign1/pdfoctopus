@@ -19,6 +19,8 @@ export function parsePageRanges(text: string, pageCount: number): number[][] {
     let first: number;
     let last: number;
     if (match) {
+      // A lone "-" is unfinished input, not "every page".
+      if (!match[1] && !match[2]) throw new Error(`"${part}" isn't a page or a range`);
       first = match[1] ? Number(match[1]) : 1;
       last = match[2] ? Number(match[2]) : pageCount;
     } else if (/^\d+$/.test(part)) {
@@ -26,7 +28,7 @@ export function parsePageRanges(text: string, pageCount: number): number[][] {
     } else {
       throw new Error(`"${part}" isn't a page or a range`);
     }
-    if (first < 1 || last > pageCount) {
+    if (first < 1 || first > pageCount || last > pageCount) {
       throw new Error(`"${part}" is outside the document (pages 1 to ${pageCount})`);
     }
     if (first > last) throw new Error(`"${part}" runs backwards`);

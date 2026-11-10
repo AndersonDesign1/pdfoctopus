@@ -10,8 +10,11 @@ import { PasswordRequiredError } from "./errors";
 const generated = join(import.meta.dirname, "..", "..", "..", "fixtures", "generated");
 const fixture = (name: string) => new Uint8Array(readFileSync(join(generated, name)));
 
-/** A PDF whose page i (0-based) carries the word "mark<i>x", so pages can be told apart. */
-function markedPdf(count: number, width = 300, height = 400): Uint8Array {
+/**
+ * A PDF whose page i (0-based) carries the word "mark<first + i>x", so pages can be told
+ * apart (also from pages inserted from another marked PDF with a different `first`).
+ */
+function markedPdf(count: number, width = 300, height = 400, first = 0): Uint8Array {
   const pdf = new mupdf.PDFDocument();
   try {
     const font = pdf.addSimpleFont(new mupdf.Font("Helvetica"));
@@ -24,7 +27,7 @@ function markedPdf(count: number, width = 300, height = 400): Uint8Array {
         [0, 0, width, height],
         0,
         resources,
-        `BT /F1 20 Tf 40 200 Td (mark${i}x) Tj ET`,
+        `BT /F1 20 Tf 40 200 Td (mark${first + i}x) Tj ET`,
       );
       pdf.insertPage(-1, page);
     }
@@ -197,7 +200,9 @@ describe("insertPdfs", () => {
     ]);
     expect(result.info.pageCount).toBe(1 + 2 + 1);
     expect(result.history.undoLabel).toBe("Add 2 files");
-    expect(engine.search("northwind").hits.every((h) => h.page === 3)).toBe(true);
+    const hits = engine.search("northwind").hits;
+    expect(hits.length).toBeGreaterThan(0);
+    expect(hits.every((h) => h.page === 3)).toBe(true);
     engine.undo();
     expect(engine.pageCount).toBe(1);
   });
@@ -270,13 +275,15 @@ describe("history", () => {
     engine.movePages([0, 1], 4);
     engine.deletePages([2, 5]);
     engine.insertBlankPages(3, 2);
-    engine.insertPdfs(0, [{ bytes: markedPdf(1) }]);
+    engine.insertPdfs(0, [{ bytes: markedPdf(1, 300, 400, 20) }]);
     engine.rotatePages([0, 1, 2], 180);
     engine.movePages([7], 0);
     while (engine.history().canUndo) engine.undo();
     expect(order(engine)).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
     while (engine.history().canRedo) engine.redo();
     const redone = order(engine);
+    // The inserted page (mark 20) is in the redone order, moved to position 1 by the last move.
+    expect(redone[1]).toBe(20);
     while (engine.history().canUndo) engine.undo();
     while (engine.history().canRedo) engine.redo();
     expect(order(engine)).toEqual(redone);
