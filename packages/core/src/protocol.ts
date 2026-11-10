@@ -2,7 +2,16 @@
 //
 // Messages exchanged between the UI thread and the PDF worker.
 
-import type { DocumentInfo, OpenResult, RenderedPage, SearchHit } from "./engine";
+import type {
+  DocumentInfo,
+  EditResult,
+  OpenResult,
+  PageSize,
+  PdfSource,
+  RenderedPage,
+  RotationDelta,
+  SearchHit,
+} from "./engine";
 import type { PdfErrorCode } from "./errors";
 
 export type WorkerRequest =
@@ -12,6 +21,15 @@ export type WorkerRequest =
   | { id: number; type: "render"; index: number; scale?: number }
   | { id: number; type: "search"; query: string }
   | { id: number; type: "save"; incremental?: boolean }
+  | { id: number; type: "rotatePages"; pages: number[]; degrees: RotationDelta }
+  | { id: number; type: "deletePages"; pages: number[] }
+  | { id: number; type: "movePages"; pages: number[]; to: number }
+  | { id: number; type: "insertBlankPages"; at: number; count?: number; size?: PageSize }
+  | { id: number; type: "insertPdfs"; at: number; sources: PdfSource[] }
+  | { id: number; type: "extractPages"; pages: number[] }
+  | { id: number; type: "splitPages"; groups: number[][] }
+  | { id: number; type: "undo" }
+  | { id: number; type: "redo" }
   | { id: number; type: "close" };
 
 export type RequestType = WorkerRequest["type"];
@@ -23,6 +41,15 @@ export interface WorkerResults {
   render: RenderedPage;
   search: { hits: SearchHit[]; truncated: boolean };
   save: Uint8Array;
+  rotatePages: EditResult;
+  deletePages: EditResult;
+  movePages: EditResult;
+  insertBlankPages: EditResult;
+  insertPdfs: EditResult;
+  extractPages: Uint8Array;
+  splitPages: Uint8Array[];
+  undo: EditResult | null;
+  redo: EditResult | null;
   close: null;
 }
 

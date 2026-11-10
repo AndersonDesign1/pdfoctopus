@@ -2,21 +2,51 @@
 
 import {
   type DocumentInfo,
+  describePages,
+  type EditResult,
   EngineCrashedError,
   EngineLoadError,
+  type HistoryState,
   IncrementalSaveError,
+  isFatalEngineError,
   type LoadProgress,
+  PasswordRequiredError,
   PdfWorkerClient,
+  type RotationDelta,
   type SearchHit,
 } from "@pdfoctopus/core";
 import { Footer } from "@pdfoctopus/ui";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { saveFile } from "./saveFile";
-import { PasswordDialog, PropertiesDialog } from "./ui/Dialogs";
+import {
+  chooseDestination,
+  chooseFolder,
+  derivedName,
+  type SaveTarget,
+  writeFiles,
+  writeToDestination,
+} from "./saveFile";
+import {
+  type ChosenPdf,
+  InsertPdfDialog,
+  type InsertPosition,
+  PasswordDialog,
+  PropertiesDialog,
+  SplitDialog,
+} from "./ui/Dialogs";
 import { THEMES, type Theme, useTheme } from "./ui/theme";
 import { percentToScale, scaleToPercent, stepZoom } from "./viewer/layout";
 import { PageRenderer } from "./viewer/renderer";
+import {
+  clampSelection,
+  clickSelection,
+  EMPTY_SELECTION,
+  moveTarget,
+  type Selection,
+  selectAll,
+  selectRun,
+  targetPages,
+} from "./viewer/selection";
 import { Thumbnails } from "./viewer/Thumbnails";
 import { Viewer, type ViewerHandle, type Zoom } from "./viewer/Viewer";
 
@@ -27,7 +57,27 @@ interface OpenDocument {
   fileSize: number;
   info: DocumentInfo;
   renderer: PageRenderer;
+  /** Where the file was last saved, so "Save" can write there again without asking. */
+  saveTarget?: SaveTarget;
 }
+
+/** Open dialogs for the page tools. */
+type PageDialog =
+  | { kind: "split" }
+  | {
+      kind: "insert";
+      title: string;
+      defaultPosition: InsertPosition;
+      error?: string;
+      needsPasswords?: boolean;
+    };
+
+const NO_HISTORY: HistoryState = {
+  canUndo: false,
+  canRedo: false,
+  undoLabel: null,
+  redoLabel: null,
+};
 
 type EngineState =
   | { status: "loading"; progress: LoadProgress | null }
@@ -73,6 +123,25 @@ function typingInField(target: EventTarget | null): boolean {
   );
 }
 
+/** "1-3, 5" for a list of 0-based pages, to prefill the split dialog. */
+function formatRanges(pages: readonly number[]): string {
+  const parts: string[] = [];
+  let i = 0;
+  while (i < pages.length) {
+    let j = i;
+    while (j + 1 < pages.length && pages[j + 1] === (pages[j] as number) + 1) j++;
+    const a = (pages[i] as number) + 1;
+    const b = (pages[j] as number) + 1;
+    parts.push(a === b ? String(a) : `${a}-${b}`);
+    i = j + 1;
+  }
+  return parts.join(", ");
+}
+
+function countPages(n: number): string {
+  return `${n} page${n === 1 ? "" : "s"}`;
+}
+
 let nextDocId = 1;
 
 export function App() {
@@ -83,6 +152,19 @@ export function App() {
 
   const [engine, setEngine] = useState<EngineState>({ status: "loading", progress: null });
   const [doc, setDoc] = useState<OpenDocument>();
+  /** The latest document, for code that runs after an await. */
+  const docRef = useRef(doc);
+  docRef.current = doc;
+  const [selection, setSelection] = useState<Selection>(EMPTY_SELECTION);
+  const [history, setHistory] = useState<HistoryState>(NO_HISTORY);
+  /** True when there are edits that haven't been saved. */
+  const [dirty, setDirty] = useState(false);
+  /** The latest `dirty`, for callbacks from older renders (a drop, the desktop startup file). */
+  const dirtyRef = useRef(dirty);
+  dirtyRef.current = dirty;
+  const [pageDialog, setPageDialog] = useState<PageDialog>();
+  /** A page to scroll to once the viewer has the edited document. */
+  const pendingScroll = useRef<number | null>(null);
   const [busy, setBusy] = useState(false);
   /** True while a file is being opened or saved; one operation at a time. */
   const workingRef = useRef(false);
@@ -121,6 +203,10 @@ export function App() {
     setCurrentHit(0);
     setPage(0);
     setShowProperties(false);
+    setSelection(EMPTY_SELECTION);
+    setHistory(NO_HISTORY);
+    setDirty(false);
+    setPageDialog(undefined);
   }, []);
 
   /** Start a fresh worker and begin loading MuPDF in the background. */
@@ -186,6 +272,16 @@ export function App() {
       setStatus(`${file.name} isn't a PDF.`);
       return;
     }
+    // Opening replaces the document and its undo history: never drop unsaved edits silently.
+    if (
+      dirtyRef.current &&
+      !window.confirm(
+        `You have unsaved changes to ${docRef.current?.fileName ?? "this PDF"}.\n\n` +
+          `Open ${file.name} anyway? Your changes will be lost.`,
+      )
+    ) {
+      return;
+    }
     workingRef.current = true;
     const pdf = getClient();
     setBusy(true);
@@ -225,13 +321,26 @@ export function App() {
     }
   }
 
-  async function onSave() {
+  /**
+   * Save the document. "Save" writes back to where it was last saved when the platform
+   * allows it; the first save, and "Save as", ask where to save.
+   */
+  async function onSave(saveAs = false) {
     if (workingRef.current || !doc) return;
     workingRef.current = true;
     const pdf = getClient();
     setBusy(true);
-    setStatus("Saving…");
     try {
+      // Ask where to save first, while the browser still counts this as part of the click.
+      const destination = await chooseDestination(
+        doc.fileName,
+        saveAs ? undefined : doc.saveTarget,
+      );
+      if (!destination) {
+        setStatus("Not saved.");
+        return;
+      }
+      setStatus("Saving…");
       let bytes: Uint8Array;
       try {
         bytes = await pdf.save(true);
@@ -249,14 +358,24 @@ export function App() {
         }
         bytes = await pdf.save(false);
       }
-      const result = await saveFile(bytes, doc.fileName);
-      setStatus(
-        result === "saved"
-          ? "Saved."
-          : result === "downloaded"
-            ? `Downloaded ${doc.fileName}.`
-            : "Not saved.",
+      const outcome = await writeToDestination(destination, bytes);
+      const savedId = doc.id;
+      const savedBytes = bytes.byteLength;
+      setDoc((prev) =>
+        prev && prev.id === savedId
+          ? {
+              ...prev,
+              fileName: outcome.fileName ?? prev.fileName,
+              fileSize: savedBytes,
+              // A "Save as" that fell back to a download leaves no file to write to again:
+              // forget the old one, so the next Save asks instead of overwriting it.
+              saveTarget: outcome.target ?? (saveAs ? undefined : prev.saveTarget),
+            }
+          : prev,
       );
+      setDirty(false);
+      const name = outcome.fileName ?? doc.fileName;
+      setStatus(outcome.result === "saved" ? `Saved ${name}.` : `Downloaded ${name}.`);
     } catch (err) {
       reportError("save this file", err);
     } finally {
@@ -264,6 +383,209 @@ export function App() {
       setBusy(false);
     }
   }
+
+  // ---- Page tools ----
+
+  /**
+   * Show the edited document. The renderer is replaced, because its cached bitmaps show the
+   * pages as they were. The document keeps its id, so the view and its scroll position stay.
+   */
+  function applyEdit(result: EditResult, message: string, select?: Selection, scrollTo?: number) {
+    const current = docRef.current;
+    if (!current) return;
+    const renderer = new PageRenderer(getClient());
+    current.renderer.dispose();
+    const next = { ...current, info: result.info, renderer };
+    docRef.current = next;
+    setDoc(next);
+    setHistory(result.history);
+    setDirty(true);
+    // Search results point at the old pages.
+    searchGeneration.current++;
+    setSearching(false);
+    setHits([]);
+    setSearched(null);
+    const count = result.info.pageCount;
+    setSelection(select ?? clampSelection(selection, count));
+    setPage((p) => Math.min(p, count - 1));
+    if (scrollTo !== undefined) pendingScroll.current = Math.min(scrollTo, count - 1);
+    setStatus(message);
+  }
+
+  useEffect(() => {
+    if (!doc || pendingScroll.current === null) return;
+    const target = pendingScroll.current;
+    pendingScroll.current = null;
+    // After the viewer has laid out the new pages.
+    requestAnimationFrame(() => viewer.current?.scrollToPage(target));
+  }, [doc]);
+
+  /** Run one task against the worker at a time, reporting failures in the status line. */
+  async function runTask(action: string, task: (pdf: PdfWorkerClient) => Promise<void>) {
+    if (workingRef.current || !docRef.current) return;
+    workingRef.current = true;
+    setBusy(true);
+    try {
+      await task(getClient());
+    } catch (err) {
+      reportError(action, err);
+    } finally {
+      workingRef.current = false;
+      setBusy(false);
+    }
+  }
+
+  const targets = targetPages(selection, page);
+
+  function rotate(degrees: RotationDelta) {
+    const pages = targets;
+    void runTask("rotate the pages", async (pdf) => {
+      const result = await pdf.rotatePages(pages, degrees);
+      applyEdit(result, `Rotated ${countPages(pages.length)}.`);
+    });
+  }
+
+  function deleteSelected() {
+    const pages = targets;
+    void runTask("delete the pages", async (pdf) => {
+      const result = await pdf.deletePages(pages);
+      applyEdit(
+        result,
+        `Deleted ${countPages(pages.length)}. Undo with Ctrl+Z.`,
+        EMPTY_SELECTION,
+        pages[0],
+      );
+    });
+  }
+
+  function movePages(pages: number[], dropBefore: number) {
+    const to = moveTarget(pages, dropBefore);
+    if (to === null) return;
+    void runTask("move the pages", async (pdf) => {
+      const result = await pdf.movePages(pages, to);
+      applyEdit(result, `Moved ${countPages(pages.length)}.`, selectRun(to, pages.length), to);
+    });
+  }
+
+  function insertBlank() {
+    const at = (targets[targets.length - 1] as number) + 1;
+    void runTask("insert a page", async (pdf) => {
+      const result = await pdf.insertBlankPages(at, 1);
+      applyEdit(result, "Inserted a blank page.", selectRun(at, 1), at);
+    });
+  }
+
+  function undoOrRedo(which: "undo" | "redo") {
+    if (!(which === "undo" ? history.canUndo : history.canRedo)) return;
+    const label = which === "undo" ? history.undoLabel : history.redoLabel;
+    void runTask(which, async (pdf) => {
+      const result = await (which === "undo" ? pdf.undo() : pdf.redo());
+      if (!result) return;
+      applyEdit(
+        result,
+        `${which === "undo" ? "Undone" : "Redone"}: ${label ?? "last change"}.`,
+        EMPTY_SELECTION,
+      );
+    });
+  }
+
+  function extractSelected() {
+    const pages = targets;
+    const fileName = doc?.fileName ?? "document.pdf";
+    void runTask("extract the pages", async (pdf) => {
+      const destination = await chooseDestination(derivedName(fileName, describePages(pages)));
+      if (!destination) {
+        setStatus("Not saved.");
+        return;
+      }
+      const outcome = await writeToDestination(destination, await pdf.extractPages(pages));
+      setStatus(`Extracted ${countPages(pages.length)} into ${outcome.fileName ?? "a new PDF"}.`);
+    });
+  }
+
+  function split(groups: number[][], names: string[]) {
+    const fileName = doc?.fileName ?? "document.pdf";
+    setPageDialog(undefined);
+    void runTask("split the document", async (pdf) => {
+      const folder = await chooseFolder();
+      if (!folder) {
+        setStatus("Not saved.");
+        return;
+      }
+      setStatus(`Splitting into ${groups.length} files…`);
+      const parts = await pdf.splitPages(groups);
+      const result = await writeFiles(
+        folder,
+        parts.map((bytes, i) => ({
+          bytes,
+          name: derivedName(fileName, names[i] ?? `part-${i + 1}`),
+        })),
+      );
+      setStatus(`${result === "saved" ? "Saved" : "Downloaded"} ${parts.length} files.`);
+    });
+  }
+
+  async function insertPdfs(files: ChosenPdf[], position: InsertPosition) {
+    const current = docRef.current;
+    if (!current || workingRef.current) return;
+    const count = current.info.pageCount;
+    const at = { start: 0, before: page, after: page + 1, end: count }[position];
+    workingRef.current = true;
+    setBusy(true);
+    try {
+      const sources = await Promise.all(
+        files.map(async (f) => ({
+          bytes: new Uint8Array(await f.file.arrayBuffer()),
+          password: f.password || undefined,
+        })),
+      );
+      const result = await getClient().insertPdfs(at, sources);
+      const added = result.info.pageCount - count;
+      setPageDialog(undefined);
+      applyEdit(
+        result,
+        `Added ${countPages(added)} from ${files.length === 1 ? files[0]?.file.name : `${files.length} files`}.`,
+        selectRun(at, added),
+        at,
+      );
+    } catch (err) {
+      if (isFatalEngineError(err)) {
+        setPageDialog(undefined);
+        reportError("add the pages", err);
+      } else {
+        const locked = err instanceof PasswordRequiredError;
+        setPageDialog((d) =>
+          d?.kind === "insert"
+            ? {
+                ...d,
+                needsPasswords: d.needsPasswords || locked,
+                error: locked
+                  ? "One of these files is password-protected. Enter its password and try again."
+                  : `Could not add the pages: ${messageOf(err)}`,
+              }
+            : d,
+        );
+      }
+    } finally {
+      workingRef.current = false;
+      setBusy(false);
+    }
+  }
+
+  function onThumbClick(index: number, modifiers: { toggle: boolean; range: boolean }) {
+    setSelection((s) => clickSelection(s, index, modifiers));
+    if (!modifiers.toggle && !modifiers.range) goToPage(index);
+  }
+
+  // Warn before leaving with unsaved changes.
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
 
   // Desktop: open the PDF the app was launched with ("Open with", double-click), once.
   const startupFileHandled = useRef(false);
@@ -365,15 +687,21 @@ export function App() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.ctrlKey || e.metaKey;
+      // No shortcuts while a dialog is open: it has the user's attention (and its own keys).
+      if (pageDialog || passwordPrompt || showProperties) return;
       if (mod && e.key.toLowerCase() === "o") {
         e.preventDefault();
         fileInput.current?.click();
         return;
       }
       if (!doc) return;
-      if (mod && e.key.toLowerCase() === "s") {
+      const key = e.key.toLowerCase();
+      if (mod && key === "s") {
         e.preventDefault();
-        void onSave();
+        void onSave(e.shiftKey);
+      } else if (mod && !typingInField(e.target) && (key === "z" || key === "y")) {
+        e.preventDefault();
+        undoOrRedo(key === "y" || e.shiftKey ? "redo" : "undo");
       } else if (mod && e.key.toLowerCase() === "f") {
         e.preventDefault();
         searchInput.current?.focus();
@@ -503,10 +831,27 @@ export function App() {
               type="button"
               className="tool"
               disabled={busy}
-              onClick={onSave}
+              onClick={() => onSave(false)}
               title="Save (Ctrl+S)"
             >
               Save
+              {dirty && (
+                <span className="unsaved-dot" title="Unsaved changes">
+                  <span aria-hidden="true">•</span>
+                  <span className="visually-hidden">(unsaved changes)</span>
+                </span>
+              )}
+            </button>
+          )}
+          {doc && (
+            <button
+              type="button"
+              className="tool"
+              disabled={busy}
+              onClick={() => onSave(true)}
+              title="Save a copy under a new name (Ctrl+Shift+S)"
+            >
+              Save as
             </button>
           )}
           {doc && (
@@ -671,6 +1016,118 @@ export function App() {
             <span aria-hidden="true">{THEME_ICON[theme]}</span>
           </button>
         </div>
+        {doc && (
+          <div className="toolbar page-tools" role="toolbar" aria-label="Page tools">
+            <button
+              type="button"
+              className="tool icon"
+              disabled={busy || !history.canUndo}
+              onClick={() => undoOrRedo("undo")}
+              aria-label={history.undoLabel ? `Undo ${history.undoLabel}` : "Undo"}
+              title={history.undoLabel ? `Undo ${history.undoLabel} (Ctrl+Z)` : "Nothing to undo"}
+            >
+              ↶
+            </button>
+            <button
+              type="button"
+              className="tool icon"
+              disabled={busy || !history.canRedo}
+              onClick={() => undoOrRedo("redo")}
+              aria-label={history.redoLabel ? `Redo ${history.redoLabel}` : "Redo"}
+              title={history.redoLabel ? `Redo ${history.redoLabel} (Ctrl+Y)` : "Nothing to redo"}
+            >
+              ↷
+            </button>
+            <span className="divider" />
+            <span className="page-target" aria-live="polite">
+              {selection.pages.length > 1
+                ? `${selection.pages.length} pages selected`
+                : `Page ${(targets[0] as number) + 1}`}
+            </span>
+            <button
+              type="button"
+              className="tool icon"
+              disabled={busy}
+              onClick={() => rotate(-90)}
+              aria-label="Rotate left"
+              title="Rotate left"
+            >
+              ⟲
+            </button>
+            <button
+              type="button"
+              className="tool icon"
+              disabled={busy}
+              onClick={() => rotate(90)}
+              aria-label="Rotate right"
+              title="Rotate right"
+            >
+              ⟳
+            </button>
+            <button
+              type="button"
+              className="tool"
+              disabled={busy || targets.length >= pageCount}
+              onClick={deleteSelected}
+              title="Delete (Delete key in the page list)"
+            >
+              Delete
+            </button>
+            <button
+              type="button"
+              className="tool"
+              disabled={busy}
+              onClick={extractSelected}
+              title="Save these pages as a new PDF"
+            >
+              Extract
+            </button>
+            <span className="divider" />
+            <button
+              type="button"
+              className="tool"
+              disabled={busy}
+              onClick={insertBlank}
+              title="Insert a blank page after these pages"
+            >
+              Blank page
+            </button>
+            <button
+              type="button"
+              className="tool"
+              disabled={busy}
+              onClick={() =>
+                setPageDialog({
+                  kind: "insert",
+                  title: "Insert pages from a PDF",
+                  defaultPosition: "after",
+                })
+              }
+            >
+              Insert PDF
+            </button>
+            <button
+              type="button"
+              className="tool"
+              disabled={busy}
+              onClick={() =>
+                setPageDialog({ kind: "insert", title: "Merge PDFs", defaultPosition: "end" })
+              }
+              title="Add other PDFs to this one"
+            >
+              Merge
+            </button>
+            <button
+              type="button"
+              className="tool"
+              disabled={busy}
+              onClick={() => setPageDialog({ kind: "split" })}
+              title="Split into separate PDFs"
+            >
+              Split
+            </button>
+          </div>
+        )}
       </header>
 
       {(engine.status !== "ready" || status) && (
@@ -711,7 +1168,21 @@ export function App() {
                 labels={doc.info.labels}
                 renderer={doc.renderer}
                 current={page}
-                onSelect={goToPage}
+                selected={selection.pages}
+                onClickPage={onThumbClick}
+                onMovePages={busy ? undefined : movePages}
+                onKeyDown={(e) => {
+                  const mod = e.ctrlKey || e.metaKey;
+                  if (e.key === "Delete" || e.key === "Backspace") {
+                    e.preventDefault();
+                    if (targets.length < pageCount) deleteSelected();
+                  } else if (mod && e.key.toLowerCase() === "a") {
+                    e.preventDefault();
+                    setSelection(selectAll(pageCount));
+                  } else if (e.key === "Escape") {
+                    setSelection(EMPTY_SELECTION);
+                  }
+                }}
               />
             )}
             <Viewer
@@ -767,6 +1238,27 @@ export function App() {
           fileSize={doc.fileSize}
           info={doc.info}
           onClose={() => setShowProperties(false)}
+        />
+      )}
+
+      {pageDialog?.kind === "split" && doc && (
+        <SplitDialog
+          pageCount={pageCount}
+          initialRanges={selection.pages.length ? formatRanges(selection.pages) : ""}
+          onSplit={split}
+          onCancel={() => setPageDialog(undefined)}
+        />
+      )}
+
+      {pageDialog?.kind === "insert" && doc && (
+        <InsertPdfDialog
+          title={pageDialog.title}
+          defaultPosition={pageDialog.defaultPosition}
+          error={pageDialog.error}
+          needsPasswords={pageDialog.needsPasswords}
+          busy={busy}
+          onInsert={(files, position) => void insertPdfs(files, position)}
+          onCancel={() => setPageDialog(undefined)}
         />
       )}
 
