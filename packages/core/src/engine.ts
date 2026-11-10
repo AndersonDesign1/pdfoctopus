@@ -539,15 +539,15 @@ export class PdfEngine {
   /** Size of the page before `at` (or after it, when inserting at the start). */
   private neighbourSize(at: number, pageCount: number): PageSize {
     if (pageCount === 0) return { width: 595, height: 842 };
-    const object = this.requirePdf().findPage(Math.min(Math.max(at - 1, 0), pageCount - 1));
-    // The unrotated size: a new page has no rotation of its own.
-    const box = object.getInheritable("MediaBox");
-    if (!box.isArray() || box.length < 4) return { width: 595, height: 842 };
-    const [x0, y0, x1, y1] = [0, 1, 2, 3].map((i) => box.get(i).asNumber()) as number[];
-    return {
-      width: Math.abs((x1 as number) - (x0 as number)),
-      height: Math.abs((y1 as number) - (y0 as number)),
-    };
+    // The size as shown, after the neighbour's own rotation: the new page has no rotation, so
+    // this makes it look the same way round as the page next to it.
+    const page = this.requireDoc().loadPage(Math.min(Math.max(at - 1, 0), pageCount - 1));
+    try {
+      const [x0, y0, x1, y1] = page.getBounds();
+      return { width: Math.abs(x1 - x0), height: Math.abs(y1 - y0) };
+    } finally {
+      page.destroy();
+    }
   }
 
   private requirePdf(): mupdf.PDFDocument {

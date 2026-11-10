@@ -85,10 +85,15 @@ export function dropIndexAt(
   tops: readonly number[],
   heights: readonly number[],
 ): number {
-  for (let i = 0; i < tops.length; i++) {
-    if (y < (tops[i] as number) + (heights[i] as number) / 2) return i;
+  // Binary search for the first page whose middle is below y (it runs on every dragover).
+  let lo = 0;
+  let hi = tops.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if ((tops[mid] as number) + (heights[mid] as number) / 2 > y) hi = mid;
+    else lo = mid + 1;
   }
-  return tops.length;
+  return lo;
 }
 
 function normalise(pages: readonly number[]): number[] {

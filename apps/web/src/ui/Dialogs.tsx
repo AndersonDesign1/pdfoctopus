@@ -262,8 +262,8 @@ export function SplitDialog({
         <p className={"error" in plan ? "pdfo-error" : "pdfo-hint"} aria-live="polite">
           {"error" in plan
             ? plan.error
-            : `Creates ${groups.length} file${groups.length === 1 ? "" : "s"}. ` +
-              "Ranges are separated by commas; each becomes one file."}
+            : `Creates ${groups.length} file${groups.length === 1 ? "" : "s"}.` +
+              (mode === "ranges" ? " Separate ranges with commas; each becomes one file." : "")}
         </p>
         <div className="pdfo-dialog-actions">
           <button type="button" className="button secondary" onClick={onCancel}>

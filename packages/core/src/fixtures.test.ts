@@ -117,7 +117,8 @@ function runPageTools(name: string, path: string): void {
     engine.deletePages([0]);
     if (engine.pageCount > 1) engine.deletePages([1]);
     expect(engine.pageCount).toBe(count + 1);
-    expect(engine.extractPages([0, engine.pageCount - 1]).length).toBeGreaterThan(0);
+    const extracted = engine.extractPages([0, engine.pageCount - 1]);
+    expect(reopenedPageCount(extracted, password)).toBe(2);
     const split = engine.splitPages([[0], [engine.pageCount - 1, 0]]);
     expect(split.map((bytes) => reopenedPageCount(bytes, password))).toEqual([1, 2]);
 

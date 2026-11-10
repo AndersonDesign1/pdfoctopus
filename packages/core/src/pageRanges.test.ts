@@ -24,7 +24,7 @@ describe("splitEvery and splitSingle", () => {
   it("groups pages, with a shorter last group", () => {
     expect(splitEvery(2, 5)).toEqual([[0, 1], [2, 3], [4]]);
     expect(splitSingle(3)).toEqual([[0], [1], [2]]);
-    expect(() => splitEvery(0, 5)).toThrow();
+    expect(() => splitEvery(0, 5)).toThrow(/1 or more/);
   });
 });
 

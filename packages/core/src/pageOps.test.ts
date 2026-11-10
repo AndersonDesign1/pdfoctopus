@@ -171,6 +171,14 @@ describe("insertBlankPages", () => {
     expect(Array.from(saved.renderPage(1, 0.2).pixels.slice(0, 4))).toEqual([255, 255, 255, 255]);
   });
 
+  it("matches a rotated neighbour the way it's shown", () => {
+    const engine = open(markedPdf(1, 200, 100));
+    engine.rotatePages([0], 90);
+    const result = engine.insertBlankPages(1);
+    expect(result.info.pages[0]).toEqual({ width: 100, height: 200 });
+    expect(result.info.pages[1]).toEqual({ width: 100, height: 200 });
+  });
+
   it("rejects bad positions, counts and sizes", () => {
     const engine = open(markedPdf(2));
     expect(() => engine.insertBlankPages(3)).toThrow(/out of range/);

@@ -7,6 +7,10 @@
 //
 // Where the platform allows it, a save returns a `SaveTarget`. Passing it to the next save
 // writes to the same file again without asking ("Save" after a first "Save as").
+//
+// Choosing where to save and writing are separate steps (`chooseDestination` then
+// `writeToDestination`), because browsers only show their pickers right after a click: the
+// caller asks first, then does the slow work in the worker, then writes.
 
 import { isTauri } from "@tauri-apps/api/core";
 
@@ -18,7 +22,7 @@ interface WritableFile {
 interface FileHandle extends WritableFile {
   readonly name: string;
 }
-interface DirectoryHandle {
+export interface DirectoryHandle {
   /** Rejects with a "NotFoundError" DOMException when the file doesn't exist and !create. */
   getFileHandle(name: string, options: { create: boolean }): Promise<WritableFile>;
 }
@@ -68,17 +72,6 @@ async function handleWrite(handle: WritableFile, bytes: Uint8Array): Promise<voi
   await writable.close();
 }
 
-async function saveWithTauri(bytes: Uint8Array, suggestedName: string): Promise<SaveOutcome> {
-  const { save } = await import("@tauri-apps/plugin-dialog");
-  const path = await save({
-    defaultPath: suggestedName,
-    filters: [{ name: "PDF document", extensions: ["pdf"] }],
-  });
-  if (!path) return { result: "cancelled" };
-  await tauriWrite(path, bytes);
-  return { result: "saved", target: { kind: "path", path }, fileName: baseName(path) };
-}
-
 function download(bytes: Uint8Array, suggestedName: string): SaveOutcome {
   const url = URL.createObjectURL(pdfBlob(bytes));
   const a = document.createElement("a");
@@ -93,43 +86,70 @@ function download(bytes: Uint8Array, suggestedName: string): SaveOutcome {
   return { result: "downloaded" };
 }
 
+/** Where one file will be written, chosen before the bytes exist. */
+export type Destination =
+  | { kind: "target"; target: SaveTarget; fileName: string }
+  | { kind: "download"; fileName: string };
+
 /**
- * Save one PDF. With a `target` from an earlier save, write there directly; otherwise ask
- * where to save it ("Save as").
+ * Ask where to save one PDF ("Save as"), or reuse `target` from an earlier save without
+ * asking. Resolves to null if the user cancelled. Call it straight from the click handler,
+ * before any slow work, so the browser still allows its picker.
  */
+export async function chooseDestination(
+  suggestedName: string,
+  target?: SaveTarget,
+): Promise<Destination | null> {
+  if (target) {
+    const fileName = target.kind === "path" ? baseName(target.path) : target.handle.name;
+    return { kind: "target", target, fileName };
+  }
+  if (isTauri()) {
+    const { save } = await import("@tauri-apps/plugin-dialog");
+    const path = await save({
+      defaultPath: suggestedName,
+      filters: [{ name: "PDF document", extensions: ["pdf"] }],
+    });
+    if (!path) return null;
+    return { kind: "target", target: { kind: "path", path }, fileName: baseName(path) };
+  }
+  const fsWindow = window as FileSystemAccessWindow;
+  if (!fsWindow.showSaveFilePicker) return { kind: "download", fileName: suggestedName };
+  try {
+    // Called as a method: the browser rejects it when detached from `window`.
+    const handle = await fsWindow.showSaveFilePicker({ suggestedName, types: [PDF_TYPE] });
+    return { kind: "target", target: { kind: "handle", handle }, fileName: handle.name };
+  } catch (err) {
+    if (isAbort(err)) return null;
+    // E.g. the browser refused the picker. Fall back to a plain download rather than failing.
+    return { kind: "download", fileName: suggestedName };
+  }
+}
+
+/**
+ * Write a PDF to a destination from `chooseDestination`. Errors writing a chosen file (disk
+ * full, no permission) are real failures and are thrown, not hidden behind a download.
+ */
+export async function writeToDestination(
+  destination: Destination,
+  bytes: Uint8Array,
+): Promise<SaveOutcome> {
+  if (destination.kind === "download") return download(bytes, destination.fileName);
+  const { target } = destination;
+  if (target.kind === "path") await tauriWrite(target.path, bytes);
+  else await handleWrite(target.handle, bytes);
+  return { result: "saved", target, fileName: destination.fileName };
+}
+
+/** Choose a destination and write to it in one go, for bytes that are already at hand. */
 export async function saveFile(
   bytes: Uint8Array,
   suggestedName: string,
   target?: SaveTarget,
 ): Promise<SaveOutcome> {
-  if (target?.kind === "path") {
-    await tauriWrite(target.path, bytes);
-    return { result: "saved", target, fileName: baseName(target.path) };
-  }
-  if (target?.kind === "handle") {
-    await handleWrite(target.handle, bytes);
-    return { result: "saved", target, fileName: target.handle.name };
-  }
-
-  if (isTauri()) return saveWithTauri(bytes, suggestedName);
-
-  const fsWindow = window as FileSystemAccessWindow;
-  if (!fsWindow.showSaveFilePicker) return download(bytes, suggestedName);
-
-  let handle: FileHandle;
-  try {
-    // Called as a method: the browser rejects it when detached from `window`.
-    handle = await fsWindow.showSaveFilePicker({ suggestedName, types: [PDF_TYPE] });
-  } catch (err) {
-    if (isAbort(err)) return { result: "cancelled" };
-    // E.g. the browser refused because too much time passed since the click.
-    // Fall back to a plain download rather than failing.
-    return download(bytes, suggestedName);
-  }
-  // Errors writing the chosen file (disk full, no permission) are real failures and are
-  // reported to the user, not hidden behind a second download.
-  await handleWrite(handle, bytes);
-  return { result: "saved", target: { kind: "handle", handle }, fileName: handle.name };
+  const destination = await chooseDestination(suggestedName, target);
+  if (!destination) return { result: "cancelled" };
+  return writeToDestination(destination, bytes);
 }
 
 export interface NamedFile {
@@ -153,64 +173,80 @@ export async function unusedName(
   }
 }
 
+/** A folder to write several files into, or downloads when there's no folder picker. */
+export type Folder =
+  | { kind: "path"; path: string }
+  | { kind: "handle"; handle: DirectoryHandle }
+  | { kind: "download" };
+
 /**
- * Save several PDFs (e.g. the parts of a split) into one folder the user picks. Existing
- * files are never replaced: a name already in use gets a number added. Browsers without a
- * folder picker download them one by one instead (the browser then picks unused names).
+ * Ask for a folder to save several PDFs into (e.g. the parts of a split). Resolves to null
+ * if the user cancelled. Call it straight from the click handler, like `chooseDestination`.
  */
-export async function saveFiles(files: readonly NamedFile[]): Promise<SaveResult> {
+export async function chooseFolder(): Promise<Folder | null> {
   if (isTauri()) {
     const { open } = await import("@tauri-apps/plugin-dialog");
-    const folder = await open({ directory: true, title: "Choose a folder for the new files" });
-    if (typeof folder !== "string") return "cancelled";
-    const { exists } = await import("@tauri-apps/plugin-fs");
-    const separator = folder.includes("\\") ? "\\" : "/";
-    const pathOf = (name: string) => `${folder.replace(/[\\/]$/, "")}${separator}${name}`;
-    const taken = new Set<string>();
-    for (const file of files) {
-      const name = await unusedName(file.name, (n) => exists(pathOf(n)), taken);
-      taken.add(name.toLowerCase());
-      await tauriWrite(pathOf(name), file.bytes);
-    }
-    return "saved";
+    const path = await open({ directory: true, title: "Choose a folder for the new files" });
+    return typeof path === "string" ? { kind: "path", path } : null;
   }
-
   const fsWindow = window as FileSystemAccessWindow;
-  if (fsWindow.showDirectoryPicker) {
-    let folder: DirectoryHandle | undefined;
-    try {
-      folder = await fsWindow.showDirectoryPicker({ mode: "readwrite" });
-    } catch (err) {
-      if (isAbort(err)) return "cancelled";
-      // Refused for another reason: fall back to downloads below.
+  if (!fsWindow.showDirectoryPicker) return { kind: "download" };
+  try {
+    return { kind: "handle", handle: await fsWindow.showDirectoryPicker({ mode: "readwrite" }) };
+  } catch (err) {
+    if (isAbort(err)) return null;
+    // Refused for another reason: fall back to downloads.
+    return { kind: "download" };
+  }
+}
+
+/**
+ * Write several PDFs into a folder from `chooseFolder`. Existing files are never replaced: a
+ * name already in use gets a number added. Downloads let the browser pick unused names.
+ */
+export async function writeFiles(
+  folder: Folder,
+  files: readonly NamedFile[],
+): Promise<"saved" | "downloaded"> {
+  if (folder.kind === "download") {
+    for (const file of files) {
+      download(file.bytes, file.name);
+      // Browsers may drop downloads started in the same instant.
+      await new Promise((resolve) => setTimeout(resolve, 250));
     }
-    if (folder) {
-      const dir = folder;
-      const exists = async (name: string) => {
-        try {
-          await dir.getFileHandle(name, { create: false });
-          return true;
-        } catch (err) {
-          if (err instanceof DOMException && err.name === "NotFoundError") return false;
-          throw err;
-        }
-      };
-      const taken = new Set<string>();
-      for (const file of files) {
-        const name = await unusedName(file.name, exists, taken);
-        taken.add(name.toLowerCase());
-        await handleWrite(await dir.getFileHandle(name, { create: true }), file.bytes);
-      }
-      return "saved";
-    }
+    return "downloaded";
   }
 
-  for (const file of files) {
-    download(file.bytes, file.name);
-    // Browsers may drop downloads started in the same instant.
-    await new Promise((resolve) => setTimeout(resolve, 250));
+  let exists: (name: string) => Promise<boolean>;
+  let write: (name: string, bytes: Uint8Array) => Promise<void>;
+  if (folder.kind === "path") {
+    const fs = await import("@tauri-apps/plugin-fs");
+    const separator = folder.path.includes("\\") ? "\\" : "/";
+    const pathOf = (name: string) => `${folder.path.replace(/[\\/]$/, "")}${separator}${name}`;
+    exists = (name) => fs.exists(pathOf(name));
+    write = (name, bytes) => tauriWrite(pathOf(name), bytes);
+  } else {
+    const dir = folder.handle;
+    exists = async (name) => {
+      try {
+        await dir.getFileHandle(name, { create: false });
+        return true;
+      } catch (err) {
+        if (err instanceof DOMException && err.name === "NotFoundError") return false;
+        throw err;
+      }
+    };
+    write = async (name, bytes) =>
+      handleWrite(await dir.getFileHandle(name, { create: true }), bytes);
   }
-  return "downloaded";
+
+  const taken = new Set<string>();
+  for (const file of files) {
+    const name = await unusedName(file.name, exists, taken);
+    taken.add(name.toLowerCase());
+    await write(name, file.bytes);
+  }
+  return "saved";
 }
 
 /** "report.pdf" + "pages-1-3" → "report (pages-1-3).pdf". */

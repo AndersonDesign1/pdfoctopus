@@ -165,7 +165,7 @@ export function Thumbnails({
   if (dropBefore !== null) {
     markerTop =
       dropBefore < pages.length
-        ? (layout.tops[dropBefore] as number) - LAYOUT.gap / 2
+        ? Math.max(0, (layout.tops[dropBefore] as number) - LAYOUT.gap / 2)
         : layout.totalHeight - LAYOUT.padding / 2;
   }
 

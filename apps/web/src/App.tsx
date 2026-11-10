@@ -18,7 +18,14 @@ import {
 import { Footer } from "@pdfoctopus/ui";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { derivedName, type SaveTarget, saveFile, saveFiles } from "./saveFile";
+import {
+  chooseDestination,
+  chooseFolder,
+  derivedName,
+  type SaveTarget,
+  writeFiles,
+  writeToDestination,
+} from "./saveFile";
 import {
   type ChosenPdf,
   InsertPdfDialog,
@@ -323,8 +330,17 @@ export function App() {
     workingRef.current = true;
     const pdf = getClient();
     setBusy(true);
-    setStatus("Saving…");
     try {
+      // Ask where to save first, while the browser still counts this as part of the click.
+      const destination = await chooseDestination(
+        doc.fileName,
+        saveAs ? undefined : doc.saveTarget,
+      );
+      if (!destination) {
+        setStatus("Not saved.");
+        return;
+      }
+      setStatus("Saving…");
       let bytes: Uint8Array;
       try {
         bytes = await pdf.save(true);
@@ -342,18 +358,18 @@ export function App() {
         }
         bytes = await pdf.save(false);
       }
-      const outcome = await saveFile(bytes, doc.fileName, saveAs ? undefined : doc.saveTarget);
-      if (outcome.result === "cancelled") {
-        setStatus("Not saved.");
-        return;
-      }
+      const outcome = await writeToDestination(destination, bytes);
       const savedId = doc.id;
+      const savedBytes = bytes.byteLength;
       setDoc((prev) =>
         prev && prev.id === savedId
           ? {
               ...prev,
               fileName: outcome.fileName ?? prev.fileName,
-              saveTarget: outcome.target ?? prev.saveTarget,
+              fileSize: savedBytes,
+              // A "Save as" that fell back to a download leaves no file to write to again:
+              // forget the old one, so the next Save asks instead of overwriting it.
+              saveTarget: outcome.target ?? (saveAs ? undefined : prev.saveTarget),
             }
           : prev,
       );
@@ -477,13 +493,13 @@ export function App() {
     const pages = targets;
     const fileName = doc?.fileName ?? "document.pdf";
     void runTask("extract the pages", async (pdf) => {
-      const bytes = await pdf.extractPages(pages);
-      const outcome = await saveFile(bytes, derivedName(fileName, describePages(pages)));
-      setStatus(
-        outcome.result === "cancelled"
-          ? "Not saved."
-          : `Extracted ${countPages(pages.length)} into ${outcome.fileName ?? "a new PDF"}.`,
-      );
+      const destination = await chooseDestination(derivedName(fileName, describePages(pages)));
+      if (!destination) {
+        setStatus("Not saved.");
+        return;
+      }
+      const outcome = await writeToDestination(destination, await pdf.extractPages(pages));
+      setStatus(`Extracted ${countPages(pages.length)} into ${outcome.fileName ?? "a new PDF"}.`);
     });
   }
 
@@ -491,19 +507,21 @@ export function App() {
     const fileName = doc?.fileName ?? "document.pdf";
     setPageDialog(undefined);
     void runTask("split the document", async (pdf) => {
+      const folder = await chooseFolder();
+      if (!folder) {
+        setStatus("Not saved.");
+        return;
+      }
       setStatus(`Splitting into ${groups.length} files…`);
       const parts = await pdf.splitPages(groups);
-      const result = await saveFiles(
+      const result = await writeFiles(
+        folder,
         parts.map((bytes, i) => ({
           bytes,
           name: derivedName(fileName, names[i] ?? `part-${i + 1}`),
         })),
       );
-      setStatus(
-        result === "cancelled"
-          ? "Not saved."
-          : `${result === "saved" ? "Saved" : "Downloaded"} ${parts.length} files.`,
-      );
+      setStatus(`${result === "saved" ? "Saved" : "Downloaded"} ${parts.length} files.`);
     });
   }
 
@@ -669,12 +687,14 @@ export function App() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.ctrlKey || e.metaKey;
+      // No shortcuts while a dialog is open: it has the user's attention (and its own keys).
+      if (pageDialog || passwordPrompt || showProperties) return;
       if (mod && e.key.toLowerCase() === "o") {
         e.preventDefault();
         fileInput.current?.click();
         return;
       }
-      if (!doc || pageDialog || passwordPrompt || showProperties) return;
+      if (!doc) return;
       const key = e.key.toLowerCase();
       if (mod && key === "s") {
         e.preventDefault();
