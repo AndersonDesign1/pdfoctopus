@@ -233,6 +233,8 @@ export async function writeFiles(
         return true;
       } catch (err) {
         if (err instanceof DOMException && err.name === "NotFoundError") return false;
+        // A folder with that name: the name is taken, so try the next one.
+        if (err instanceof DOMException && err.name === "TypeMismatchError") return true;
         throw err;
       }
     };

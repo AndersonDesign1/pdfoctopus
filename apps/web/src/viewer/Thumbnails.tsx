@@ -223,8 +223,8 @@ export function Thumbnails({
       onKeyDown={onKeyDown}
     >
       <p id="pdfo-thumbs-help" className="visually-hidden">
-        Click a page to select it. Hold Ctrl or Shift to select more. Drag to reorder. Delete
-        removes the selected pages.
+        Click a page to select it. Hold Ctrl (Cmd on a Mac) to add or remove pages, or Shift to
+        select a range. Drag to reorder. Delete removes the selected pages.
       </p>
       <div style={{ height: layout.totalHeight, position: "relative" }}>
         {items}
