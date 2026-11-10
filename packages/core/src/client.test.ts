@@ -12,12 +12,14 @@ class FakeWorker {
   onerror: ((event: { message: string; preventDefault(): void }) => void) | null = null;
   onmessageerror: (() => void) | null = null;
   sent: WorkerRequest[] = [];
+  transfers: Transferable[][] = [];
   terminated = false;
   constructor() {
     FakeWorker.last = this;
   }
-  postMessage(req: WorkerRequest) {
+  postMessage(req: WorkerRequest, transfer: Transferable[] = []) {
     this.sent.push(req);
+    this.transfers.push(transfer);
   }
   terminate() {
     this.terminated = true;
@@ -102,5 +104,31 @@ describe("PdfWorkerClient", () => {
     FakeWorker.last.onerror?.({ message: "boom", preventDefault() {} });
     await expect(opening).rejects.toBeInstanceOf(EngineCrashedError);
     expect(client.crashed).toBe(true);
+  });
+
+  it("sends page operations and transfers each inserted file's buffer once", async () => {
+    const client = new PdfWorkerClient();
+    const shared = new Uint8Array(8);
+    const inserting = client.insertPdfs(2, [
+      { bytes: shared, pages: [0] },
+      { bytes: shared, pages: [1] },
+      { bytes: new Uint8Array(4) },
+    ]);
+    const req = FakeWorker.last.sent[0] as Extract<WorkerRequest, { type: "insertPdfs" }>;
+    expect(req.type).toBe("insertPdfs");
+    expect(req.at).toBe(2);
+    expect(FakeWorker.last.transfers[0]).toHaveLength(2);
+    const result = {
+      info: { pageCount: 1, pages: [{ width: 1, height: 1 }], labels: [null], metadata: {} },
+      history: { canUndo: true, canRedo: false, undoLabel: "Insert 2 files", redoLabel: null },
+    };
+    FakeWorker.last.reply({ id: req.id, ok: true, type: "insertPdfs", result });
+    await expect(inserting).resolves.toEqual(result);
+
+    const undoing = client.undo();
+    const undo = FakeWorker.last.sent[1] as WorkerRequest;
+    expect(undo.type).toBe("undo");
+    FakeWorker.last.reply({ id: undo.id, ok: true, type: "undo", result: null });
+    await expect(undoing).resolves.toBeNull();
   });
 });

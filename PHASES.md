@@ -39,14 +39,21 @@ green. Test major updates locally first, as was done for TypeScript 7.
 
 ### 2. Finish Phase 1: page tools and saving
 
-The viewer is done. The rest of Phase 1, as one or two PRs:
+The viewer is done. The rest of Phase 1 is being done in one PR, in two stages. Steps 1 and 2
+are done (2026-11-10); steps 3 to 5 are next.
 
-1. **Engine operations** in `packages/core/src/engine.ts`, each with tests on `fixtures/`:
+1. ✅ **Engine operations** in `packages/core/src/engine.ts`, each with tests on `fixtures/`:
    rotate, delete, move/reorder, insert blank, insert from another PDF, extract to a new PDF,
    merge, and split. Expose them through the worker protocol (`protocol.ts`, `worker.ts`,
-   `client.ts`) the same way `search` and `authenticate` are.
-2. **Undo/redo:** keep a history of page operations, with each one able to reverse itself, so
-   no full copies of the document are needed.
+   `client.ts`) the same way `search` and `authenticate` are. Done: `rotatePages`,
+   `deletePages`, `movePages`, `insertBlankPages`, `insertPdfs` (merge = insert at the end),
+   `extractPages` and `splitPages`, plus range helpers in `pageRanges.ts`. Tests are in
+   `pageOps.test.ts`, and `fixtures.test.ts` runs every tool, undo, redo and save over every
+   fixture.
+2. ✅ **Undo/redo:** keep a history of page operations, with each one able to reverse itself, so
+   no full copies of the document are needed. Done: the history lives in the engine (`undo`,
+   `redo`, `history`), and every page operation returns the new document info and the
+   undo/redo state. Removed pages are kept as the same page objects and put back on undo.
 3. **UI:** drag-and-drop reordering and a selection in the thumbnail sidebar
    (`apps/web/src/viewer/Thumbnails.tsx`), page tools in the toolbar, and dialogs for split
    and merge. After an edit, cached bitmaps would show the old pages. `dispose()` is final,

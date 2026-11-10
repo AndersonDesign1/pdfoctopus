@@ -2,6 +2,7 @@
 //
 // Promise-based client for the PDF worker. Use this from the UI thread.
 
+import type { PageSize, PdfSource, RotationDelta } from "./engine";
 import { EngineCrashedError, errorFromCode, isFatalEngineError } from "./errors";
 import type {
   LoadProgress,
@@ -22,6 +23,11 @@ export interface PdfWorkerClientOptions {
    * flight. Any open document is gone at that point. Not called for `terminate()`.
    */
   onFatalError?: (error: Error) => void;
+}
+
+/** Each buffer once: transferring the same buffer twice makes postMessage throw. */
+function uniqueBuffers(arrays: Uint8Array[]): ArrayBuffer[] {
+  return [...new Set(arrays.map((a) => a.buffer as ArrayBuffer))];
 }
 
 export class PdfWorkerClient {
@@ -152,6 +158,61 @@ export class PdfWorkerClient {
    */
   save(incremental = true) {
     return this.call<"save">({ type: "save", incremental });
+  }
+
+  // Page operations. Each is one undoable step and resolves to the updated document info
+  // and undo/redo state. Pages are 0-based.
+
+  /** Rotate pages clockwise, on top of any rotation they already have. */
+  rotatePages(pages: number[], degrees: RotationDelta) {
+    return this.call<"rotatePages">({ type: "rotatePages", pages, degrees });
+  }
+
+  /** Delete pages. At least one page must be left. */
+  deletePages(pages: number[]) {
+    return this.call<"deletePages">({ type: "deletePages", pages });
+  }
+
+  /**
+   * Move pages, keeping their order, so the first lands at index `to` of the result. `to`
+   * counts positions after the moved pages are taken out (0 to pageCount - pages.length).
+   */
+  movePages(pages: number[], to: number) {
+    return this.call<"movePages">({ type: "movePages", pages, to });
+  }
+
+  /** Insert blank pages before `at` (pageCount appends), sized like the neighbouring page. */
+  insertBlankPages(at: number, count?: number, size?: PageSize) {
+    return this.call<"insertBlankPages">({ type: "insertBlankPages", at, count, size });
+  }
+
+  /**
+   * Insert pages from other PDFs before `at`; pageCount appends, which is a merge. The
+   * sources' bytes are transferred to the worker, so they're unusable afterwards.
+   */
+  insertPdfs(at: number, sources: PdfSource[]) {
+    const transfer = uniqueBuffers(sources.map((s) => s.bytes));
+    return this.call<"insertPdfs">({ type: "insertPdfs", at, sources }, transfer);
+  }
+
+  /** Copy pages, in the order given, into a new PDF. The open document is unchanged. */
+  extractPages(pages: number[]) {
+    return this.call<"extractPages">({ type: "extractPages", pages });
+  }
+
+  /** Split into one new PDF per group of pages. The open document is unchanged. */
+  splitPages(groups: number[][]) {
+    return this.call<"splitPages">({ type: "splitPages", groups });
+  }
+
+  /** Undo the last page operation. Resolves to null when there was nothing to undo. */
+  undo() {
+    return this.call<"undo">({ type: "undo" });
+  }
+
+  /** Redo the last undone page operation. Resolves to null when there was nothing to redo. */
+  redo() {
+    return this.call<"redo">({ type: "redo" });
   }
 
   close() {

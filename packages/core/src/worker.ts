@@ -83,6 +83,28 @@ async function handle(req: WorkerRequest): Promise<WorkerSuccess> {
       return success(req.id, "search", engine.search(req.query));
     case "save":
       return success(req.id, "save", engine.save({ incremental: req.incremental }));
+    case "rotatePages":
+      return success(req.id, "rotatePages", engine.rotatePages(req.pages, req.degrees));
+    case "deletePages":
+      return success(req.id, "deletePages", engine.deletePages(req.pages));
+    case "movePages":
+      return success(req.id, "movePages", engine.movePages(req.pages, req.to));
+    case "insertBlankPages":
+      return success(
+        req.id,
+        "insertBlankPages",
+        engine.insertBlankPages(req.at, req.count, req.size),
+      );
+    case "insertPdfs":
+      return success(req.id, "insertPdfs", engine.insertPdfs(req.at, req.sources));
+    case "extractPages":
+      return success(req.id, "extractPages", engine.extractPages(req.pages));
+    case "splitPages":
+      return success(req.id, "splitPages", engine.splitPages(req.groups));
+    case "undo":
+      return success(req.id, "undo", engine.undo());
+    case "redo":
+      return success(req.id, "redo", engine.redo());
     case "close":
       engine.close();
       return success(req.id, "close", null);
@@ -92,7 +114,10 @@ async function handle(req: WorkerRequest): Promise<WorkerSuccess> {
 /** Large binary results are transferred, not copied, back to the UI thread. */
 function transferables(res: WorkerSuccess): Transferable[] {
   if (res.type === "render") return [res.result.pixels.buffer as ArrayBuffer];
-  if (res.type === "save") return [res.result.buffer as ArrayBuffer];
+  if (res.type === "save" || res.type === "extractPages") {
+    return [res.result.buffer as ArrayBuffer];
+  }
+  if (res.type === "splitPages") return res.result.map((b) => b.buffer as ArrayBuffer);
   return [];
 }
 

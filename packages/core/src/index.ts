@@ -4,9 +4,13 @@ export { PdfWorkerClient, type PdfWorkerClientOptions } from "./client";
 export type {
   DocumentInfo,
   DocumentMetadata,
+  EditResult,
+  HistoryState,
   OpenResult,
   PageSize,
+  PdfSource,
   RenderedPage,
+  RotationDelta,
   SearchHit,
 } from "./engine";
 export {
@@ -17,6 +21,7 @@ export {
   PasswordRequiredError,
   type PdfErrorCode,
 } from "./errors";
+export { describePages, parsePageRanges, splitEvery, splitSingle } from "./pageRanges";
 export type {
   LoadProgress,
   WorkerEvent,
