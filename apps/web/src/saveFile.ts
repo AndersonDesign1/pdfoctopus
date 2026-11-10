@@ -19,6 +19,7 @@ interface FileHandle extends WritableFile {
   readonly name: string;
 }
 interface DirectoryHandle {
+  /** Rejects with a "NotFoundError" DOMException when the file doesn't exist and !create. */
   getFileHandle(name: string, options: { create: boolean }): Promise<WritableFile>;
 }
 
@@ -137,17 +138,39 @@ export interface NamedFile {
 }
 
 /**
- * Save several PDFs (e.g. the parts of a split) into one folder the user picks. Browsers
- * without a folder picker download them one by one instead.
+ * A name not yet taken in a folder: "report (page-1).pdf", else "report (page-1) 2.pdf", and
+ * so on. `taken` also covers names chosen earlier in the same batch.
+ */
+export async function unusedName(
+  name: string,
+  exists: (candidate: string) => Promise<boolean>,
+  taken: ReadonlySet<string> = new Set(),
+): Promise<string> {
+  const stem = name.replace(/\.pdf$/i, "");
+  for (let n = 1; ; n++) {
+    const candidate = n === 1 ? name : `${stem} ${n}.pdf`;
+    if (!taken.has(candidate.toLowerCase()) && !(await exists(candidate))) return candidate;
+  }
+}
+
+/**
+ * Save several PDFs (e.g. the parts of a split) into one folder the user picks. Existing
+ * files are never replaced: a name already in use gets a number added. Browsers without a
+ * folder picker download them one by one instead (the browser then picks unused names).
  */
 export async function saveFiles(files: readonly NamedFile[]): Promise<SaveResult> {
   if (isTauri()) {
     const { open } = await import("@tauri-apps/plugin-dialog");
     const folder = await open({ directory: true, title: "Choose a folder for the new files" });
     if (typeof folder !== "string") return "cancelled";
+    const { exists } = await import("@tauri-apps/plugin-fs");
     const separator = folder.includes("\\") ? "\\" : "/";
+    const pathOf = (name: string) => `${folder.replace(/[\\/]$/, "")}${separator}${name}`;
+    const taken = new Set<string>();
     for (const file of files) {
-      await tauriWrite(`${folder.replace(/[\\/]$/, "")}${separator}${file.name}`, file.bytes);
+      const name = await unusedName(file.name, (n) => exists(pathOf(n)), taken);
+      taken.add(name.toLowerCase());
+      await tauriWrite(pathOf(name), file.bytes);
     }
     return "saved";
   }
@@ -162,8 +185,21 @@ export async function saveFiles(files: readonly NamedFile[]): Promise<SaveResult
       // Refused for another reason: fall back to downloads below.
     }
     if (folder) {
+      const dir = folder;
+      const exists = async (name: string) => {
+        try {
+          await dir.getFileHandle(name, { create: false });
+          return true;
+        } catch (err) {
+          if (err instanceof DOMException && err.name === "NotFoundError") return false;
+          throw err;
+        }
+      };
+      const taken = new Set<string>();
       for (const file of files) {
-        await handleWrite(await folder.getFileHandle(file.name, { create: true }), file.bytes);
+        const name = await unusedName(file.name, exists, taken);
+        taken.add(name.toLowerCase());
+        await handleWrite(await dir.getFileHandle(name, { create: true }), file.bytes);
       }
       return "saved";
     }

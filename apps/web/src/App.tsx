@@ -152,6 +152,9 @@ export function App() {
   const [history, setHistory] = useState<HistoryState>(NO_HISTORY);
   /** True when there are edits that haven't been saved. */
   const [dirty, setDirty] = useState(false);
+  /** The latest `dirty`, for callbacks from older renders (a drop, the desktop startup file). */
+  const dirtyRef = useRef(dirty);
+  dirtyRef.current = dirty;
   const [pageDialog, setPageDialog] = useState<PageDialog>();
   /** A page to scroll to once the viewer has the edited document. */
   const pendingScroll = useRef<number | null>(null);
@@ -260,6 +263,16 @@ export function App() {
     if (workingRef.current) return;
     if (!isPdfFile(file)) {
       setStatus(`${file.name} isn't a PDF.`);
+      return;
+    }
+    // Opening replaces the document and its undo history: never drop unsaved edits silently.
+    if (
+      dirtyRef.current &&
+      !window.confirm(
+        `You have unsaved changes to ${docRef.current?.fileName ?? "this PDF"}.\n\n` +
+          `Open ${file.name} anyway? Your changes will be lost.`,
+      )
+    ) {
       return;
     }
     workingRef.current = true;
