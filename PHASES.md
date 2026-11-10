@@ -42,11 +42,12 @@ green. Test major updates locally first, as was done for TypeScript 7.
 Page tools, undo/redo, the UI and saving are done (2026-11-10). What's left is a manual
 check that can't run in CI:
 
-- Open a PDF in the web app, use every page tool (rotate, delete, drag to reorder, blank
-  page, insert PDF, merge, extract, split, undo and redo), save it, and open the result in
-  **Adobe Reader** and in a **browser's PDF viewer** (Chrome or Edge, and Firefox). Also try
-  a signed fixture: the earlier signature should still show as valid in Adobe Reader.
+- Work through the checklist in [TESTING.md](./TESTING.md): every page tool, saving, and
+  opening the saved files in **Adobe Reader** and the **Chrome/Edge and Firefox** viewers.
+  Opening, scrolling and saving a file on the live site was checked on 2026-11-10.
 - Once that passes, tick the last Phase 1 exit criterion and mark Phase 1 ✅ Done.
+- Follow-up for later (not part of Phase 1): make the first Save write back to the opened
+  file. See "Follow-ups" in TESTING.md.
 
 What was built, for reference:
 
