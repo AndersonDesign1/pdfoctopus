@@ -16,7 +16,7 @@ tasks needed to finish it and the **exit criteria** that must be true before we 
 ## Next up
 
 Start here if you're picking the project up. Do these in order, and update this list in the
-same PR that changes it. Last updated: 2026-11-18, after editing and deleting annotations.
+same PR that changes it. Last updated: 2026-11-18, after text stamps.
 
 ### 0. Keep `main` green (2026-11-18)
 
@@ -169,7 +169,30 @@ undoable step.
   deleted), changing line width, and selecting several annotations at once. Signatures and
   other stamps PDFoctopus adds are marked "locked" for other apps, but PDFoctopus itself can
   still move and delete them.
-- **Next in Phase 2:** stamps (Approved, Draft, …) and images, then redaction and forms.
+
+### 7. Phase 2: stamps (2026-11-18)
+
+**Stamp**, next to Sign, Initials and Date, opens a dialog. Pick a stamp (Approved, Not
+approved, Draft, Confidential, Final, Reviewed, Paid, Received) or type your own words, pick a
+colour, and optionally add a second line: a date (one click for today's) or a name. Then
+place it like a signature: drag it, resize it, Apply. It can be selected, moved, resized and
+deleted afterwards like any annotation.
+
+- **Engine:** `addTextStamp` in `packages/core/src/engine.ts`, drawing in `textStamp.ts`, and
+  the limits, names and layout in `stampRules.ts` (no MuPDF there, so the app shares the
+  layout for its preview). A stamp is a Stamp annotation with its own appearance: a rounded
+  border and Helvetica Bold text, drawn as vector graphics, scaled to fit its box without
+  stretching, and turned upright on a rotated page. Stamps that say a standard name get it as
+  /Name (/Approved, /Draft, …) so other apps know what they are. MuPDF's `update()` resizes a
+  stamp's box to fit its stock "Draft" look, so the box is put back afterwards. Tests:
+  `textStamp.test.ts` (including that a stamp on a rotated page looks the same as on an
+  unrotated one), and the fixture sweep stamps every editable fixture.
+- **UI:** `apps/web/src/sign/StampDialog.tsx`, the preview in `textStampPreview.ts`.
+- **Checked:** in Chromium end to end, on a rotated page too, and the saved file in pdf.js.
+- **Limits:** the standard fonts have Latin letters only, so text in other scripts (or symbols
+  such as ✓) is refused with a message; embedding a font would lift that. Custom stamps aren't
+  remembered between sessions yet.
+- **Next in Phase 2:** images (overlay edits), then redaction and forms.
 
 ### Where things are
 
@@ -326,7 +349,7 @@ undoable step.
 - [x] Shapes (rectangle, ellipse, line, arrow)
 - [ ] Add text boxes and images (overlay edits). Text boxes are done; images are still to do
 - [x] White-out
-- [ ] Stamps (Approved, Draft, Confidential, custom)
+- [x] Stamps (Approved, Draft, Confidential, custom)
 - [x] Edit and delete existing annotations
 
 ### Redaction

@@ -38,6 +38,7 @@ import {
 import { clampRect, formatToday, initialRect, type PageRect, placementKey } from "./sign/ink";
 import { Placement } from "./sign/Placement";
 import { SignDialog } from "./sign/SignDialog";
+import { StampDialog } from "./sign/StampDialog";
 import { dateToStamp, type StampImage } from "./sign/stampImage";
 import {
   type ChosenPdf,
@@ -87,18 +88,22 @@ type PageDialog =
 
 /** A signature, initials or date being positioned on a page, before it's applied. */
 interface PendingStamp {
-  kind: Exclude<StampKind, "image">;
+  kind: Exclude<StampKind, "image"> | "stamp";
+  /** The picture shown while placing it (and, except for text stamps, what's added). */
   image: StampImage;
   page: number;
   rect: PageRect;
   /** What the stamp says, when it's text (the date). */
   text?: string;
+  /** For a text stamp: what it says, drawn by the engine as vector graphics. */
+  textStamp?: { text: string; detail: string; color: RgbColor };
 }
 
 const STAMP_NOUN: Record<PendingStamp["kind"], string> = {
   signature: "signature",
   initials: "initials",
   date: "date",
+  stamp: "stamp",
 };
 
 const NO_HISTORY: HistoryState = {
@@ -199,6 +204,8 @@ export function App() {
   const [pageDialog, setPageDialog] = useState<PageDialog>();
   /** Which dialog for making a signature is open, if any. */
   const [signDialog, setSignDialog] = useState<"signature" | "initials">();
+  /** True while the dialog for choosing a stamp ("APPROVED", …) is open. */
+  const [stampDialog, setStampDialog] = useState(false);
   /** A stamp being positioned. Page tools wait until it's applied or cancelled. */
   const [pending, setPending] = useState<PendingStamp>();
   /** The annotation tool picked, if any: dragging on a page then draws with it. */
@@ -266,6 +273,7 @@ export function App() {
     setDirty(false);
     setPageDialog(undefined);
     setSignDialog(undefined);
+    setStampDialog(false);
     setPending(undefined);
     setTool(undefined);
     setSelecting(false);
@@ -553,7 +561,12 @@ export function App() {
   // ---- Signatures, initials and dates ----
 
   /** Show a stamp on the current page, ready to be dragged into place. */
-  function startPlacing(kind: PendingStamp["kind"], image: StampImage, text?: string) {
+  function startPlacing(
+    kind: PendingStamp["kind"],
+    image: StampImage,
+    text?: string,
+    textStamp?: PendingStamp["textStamp"],
+  ) {
     const current = docRef.current;
     if (!current) return;
     const size = current.info.pages[page];
@@ -564,7 +577,7 @@ export function App() {
     setTool(undefined); // Placing a stamp and drawing don't mix.
     setSelecting(false);
     setSelectedAnnot(null);
-    setPending({ kind, image, text, page, rect });
+    setPending({ kind, image, text, textStamp, page, rect });
     setStatus(
       `Drag your ${STAMP_NOUN[kind]} into place, or click where it should go. ` +
         "Press Apply (or Enter) when it's right.",
@@ -591,14 +604,18 @@ export function App() {
     if (!stamp) return;
     const { left, top, width, height } = stamp.rect;
     void runTask(`add the ${STAMP_NOUN[stamp.kind]}`, async (pdf) => {
-      const result = await pdf.addImageStamp({
-        page: stamp.page,
-        rect: [left, top, left + width, top + height],
-        // A copy: the bytes are handed over to the worker, and a saved image may be reused.
-        image: stamp.image.png.slice(),
-        kind: stamp.kind,
-        text: stamp.text,
-      });
+      const rect: [number, number, number, number] = [left, top, left + width, top + height];
+      const result =
+        stamp.kind === "stamp" && stamp.textStamp
+          ? await pdf.addTextStamp({ page: stamp.page, rect, ...stamp.textStamp })
+          : await pdf.addImageStamp({
+              page: stamp.page,
+              rect,
+              // A copy: the bytes are handed over to the worker, and a saved image may be reused.
+              image: stamp.image.png.slice(),
+              kind: stamp.kind === "stamp" ? "image" : stamp.kind,
+              text: stamp.text,
+            });
       setPending(undefined);
       const where = `page ${stamp.page + 1}`;
       applyEdit(
@@ -900,7 +917,7 @@ export function App() {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.ctrlKey || e.metaKey;
       // No shortcuts while a dialog is open: it has the user's attention (and its own keys).
-      if (pageDialog || passwordPrompt || showProperties || signDialog) return;
+      if (pageDialog || passwordPrompt || showProperties || signDialog || stampDialog) return;
       if (mod && e.key.toLowerCase() === "o") {
         e.preventDefault();
         fileInput.current?.click();
@@ -1419,6 +1436,15 @@ export function App() {
             >
               Date
             </button>
+            <button
+              type="button"
+              className="tool"
+              disabled={locked}
+              onClick={() => setStampDialog(true)}
+              title="Add a stamp such as Approved or Draft"
+            >
+              Stamp
+            </button>
           </div>
         )}
         {doc && (
@@ -1684,6 +1710,19 @@ export function App() {
         />
       )}
 
+      {stampDialog && doc && (
+        <StampDialog
+          onPlace={(chosen) => {
+            setStampDialog(false);
+            startPlacing("stamp", chosen.image, undefined, {
+              text: chosen.text,
+              detail: chosen.detail,
+              color: chosen.color,
+            });
+          }}
+          onCancel={() => setStampDialog(false)}
+        />
+      )}
       {signDialog && doc && (
         <SignDialog
           // A fresh dialog for each kind, so a drawn signature isn't offered as initials.
