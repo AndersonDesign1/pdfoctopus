@@ -3,7 +3,7 @@
 import * as mupdf from "mupdf";
 import { afterEach, describe, expect, it } from "vitest";
 import { createBlankPdf, PdfEngine, type TextStamp } from "./engine";
-import { layoutStamp, stampName } from "./stampRules";
+import { cleanStampText, layoutStamp, stampName } from "./stampRules";
 
 type Rgb = [number, number, number];
 const RED: Rgb = [0.8, 0.1, 0.1];
@@ -90,6 +90,8 @@ describe("addTextStamp", () => {
     });
     expect(stampName("not  approved")).toBe("NotApproved");
     expect(stampName("Paid")).toBe("PDFoctopusStamp");
+    // Spaces are tidied the same way for the drawing, the name and the preview.
+    expect(cleanStampText("  A     B \n C ")).toBe("A B C");
   });
 
   it.each([90, 180, 270] as const)("reads the right way up on a page rotated %i°", (rotation) => {

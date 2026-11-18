@@ -29,7 +29,12 @@ const STANDARD_NAMES: Record<string, string> = {
 
 /** The /Name for a stamp that says `text`. */
 export function stampName(text: string): string {
-  return STANDARD_NAMES[text.trim().toUpperCase().replace(/\s+/g, " ")] ?? "PDFoctopusStamp";
+  return STANDARD_NAMES[cleanStampText(text).toUpperCase()] ?? "PDFoctopusStamp";
+}
+
+/** Stamp text as it's drawn: trimmed, with runs of spaces (and line breaks) made one space. */
+export function cleanStampText(text: string): string {
+  return text.trim().replace(/\s+/g, " ");
 }
 
 /**
@@ -37,7 +42,7 @@ export function stampName(text: string): string {
  * (printable Latin-1, which is the same in WinAnsi, the fonts' encoding).
  */
 export function checkStampText(text: string, max: number, what: string): string {
-  const t = text.trim().replace(/\s+/g, " ");
+  const t = cleanStampText(text);
   if (t.length > max) throw new Error(`The ${what} is too long (${max} characters at most)`);
   for (const ch of t) {
     const code = ch.codePointAt(0) as number;

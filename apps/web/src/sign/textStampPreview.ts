@@ -3,7 +3,13 @@
 // A picture of a text stamp ("APPROVED") for the dialog and for placing it. The engine draws
 // the real stamp as vector graphics with the same layout; this only has to look the same.
 
-import { layoutStamp, type RgbColor, STAMP_BORDER, STAMP_RADIUS } from "@pdfoctopus/core";
+import {
+  cleanStampText,
+  layoutStamp,
+  type RgbColor,
+  STAMP_BORDER,
+  STAMP_RADIUS,
+} from "@pdfoctopus/core";
 import { cssColor } from "../annotate/tools";
 import type { StampImage } from "./stampImage";
 
@@ -36,8 +42,9 @@ export const STAMP_COLOURS: { label: string; value: RgbColor }[] = [
 
 /** A picture of the stamp, or null when there's no text. */
 export function textStampPreview(text: string, detail: string, color: RgbColor): StampImage | null {
-  const main = text.trim();
-  const second = detail.trim();
+  // Cleaned up exactly as the engine does, so the stamp doesn't change on Apply.
+  const main = cleanStampText(text);
+  const second = cleanStampText(detail);
   if (!main) return null;
   const measure = document.createElement("canvas").getContext("2d");
   if (!measure) return null;

@@ -3,7 +3,7 @@
 // Choose a stamp ("APPROVED", "DRAFT", or your own words), its colour and an optional second
 // line such as today's date, then place it on the page like a signature.
 
-import { MAX_STAMP_DETAIL, MAX_STAMP_TEXT, type RgbColor } from "@pdfoctopus/core";
+import { cleanStampText, MAX_STAMP_DETAIL, MAX_STAMP_TEXT, type RgbColor } from "@pdfoctopus/core";
 import { useMemo, useState } from "react";
 import { cssColor } from "../annotate/tools";
 import { Modal } from "../ui/Dialogs";
@@ -49,7 +49,14 @@ export function StampDialog({
         className="pdfo-stamp-form"
         onSubmit={(e) => {
           e.preventDefault();
-          if (preview) onPlace({ text: text.trim(), detail: detail.trim(), color, image: preview });
+          if (preview) {
+            onPlace({
+              text: cleanStampText(text),
+              detail: cleanStampText(detail),
+              color,
+              image: preview,
+            });
+          }
         }}
       >
         <fieldset className="pdfo-fieldset">

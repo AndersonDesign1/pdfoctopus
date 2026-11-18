@@ -41,6 +41,7 @@ export type {
 } from "./protocol";
 export {
   BORDER as STAMP_BORDER,
+  cleanStampText,
   layoutStamp,
   MAX_STAMP_DETAIL,
   MAX_STAMP_TEXT,
