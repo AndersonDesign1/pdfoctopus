@@ -223,7 +223,7 @@ describe("addImageStamp", () => {
     const engine = open(createBlankPdf(1, 300, 400));
     const bomb = hugeBlankPng(5000, 5000);
     expect(bomb.byteLength).toBeLessThan(MAX_STAMP_IMAGE_BYTES);
-    expect(() => engine.addImageStamp(stamp({ image: bomb }))).toThrow("too large");
+    expect(() => engine.addImageStamp(stamp({ image: bomb }))).toThrow("too many pixels");
     expect(engine.history().canUndo).toBe(false);
   });
 

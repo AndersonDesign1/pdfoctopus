@@ -508,7 +508,9 @@ export class PdfEngine {
     }
     if (image.getWidth() * image.getHeight() > MAX_STAMP_IMAGE_PIXELS) {
       image.destroy();
-      throw new Error("The image is too large (4096 × 4096 pixels at most)");
+      throw new Error(
+        "The image has too many pixels (about 16.8 million at most, e.g. 4096 × 4096)",
+      );
     }
 
     let object: mupdf.PDFObject;
