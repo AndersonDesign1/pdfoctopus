@@ -197,8 +197,12 @@ export function App() {
   /** The colour chosen for each tool (until then, the tool's own default). */
   const [toolColors, setToolColors] = useState<Partial<Record<ToolId, RgbColor>>>({});
   const [lineWidth, setLineWidth] = useState(2);
-  /** True while a note or text box is being typed: other edits wait, so it stays on its page. */
-  const [drafting, setDrafting] = useState(false);
+  /**
+   * The page where a note or text box is being typed, if any. Other edits (and drawing on other
+   * pages, and saving) wait for it, and its page stays loaded even when scrolled away.
+   */
+  const [draftPage, setDraftPage] = useState<number | null>(null);
+  const drafting = draftPage !== null;
   /** Bumped on every edit, so the drawing layers start afresh on the edited pages. */
   const [editVersion, setEditVersion] = useState(0);
   /** A page to scroll to once the viewer has the edited document. */
@@ -846,7 +850,8 @@ export function App() {
       const key = e.key.toLowerCase();
       if (mod && key === "s") {
         e.preventDefault();
-        if (!pending) void onSave(e.shiftKey);
+        // Not while placing a stamp or typing a note: what's on screen isn't in the file yet.
+        if (!pending && !drafting) void onSave(e.shiftKey);
       } else if (mod && !typingInField(e.target) && (key === "z" || key === "y")) {
         e.preventDefault();
         // Undo while placing a stamp means "never mind the stamp" (unless it's being applied).
@@ -1431,6 +1436,7 @@ export function App() {
               hits={hits}
               currentHit={currentHit}
               onPageClick={pending && !busy ? movePendingTo : undefined}
+              keepPage={draftPage ?? undefined}
               renderPageOverlay={(index, viewScale) => {
                 const size = doc.info.pages[index] ?? { width: 1, height: 1 };
                 if (pending) {
@@ -1464,7 +1470,8 @@ export function App() {
                     busy={busy}
                     selectText={(from, to) => getClient().selectText(index, from, to)}
                     onCommit={addAnnotation}
-                    onDraftChange={setDrafting}
+                    onDraftChange={setDraftPage}
+                    blocked={drafting && draftPage !== index}
                   />
                 );
               }}

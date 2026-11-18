@@ -35,8 +35,13 @@ export interface AnnotateLayerProps {
   /** The text a drag from `from` to `to` would mark, as quads in page points. */
   selectText(from: PagePoint, to: PagePoint): Promise<number[][]>;
   onCommit(spec: AnnotationSpec): void;
-  /** Told when a note or text box editor opens or closes, so other edits can wait for it. */
-  onDraftChange?(open: boolean): void;
+  /**
+   * Told which page has a note or text box being typed (or null once it's added or
+   * cancelled), so other edits wait for it and its page stays loaded.
+   */
+  onDraftChange?(page: number | null): void;
+  /** True while another page has a draft open: this page then ignores new drawing. */
+  blocked?: boolean;
 }
 
 type Drag = { start: PagePoint; current: PagePoint; points: PagePoint[]; pointer: number };
@@ -56,6 +61,7 @@ export function AnnotateLayer({
   selectText,
   onCommit,
   onDraftChange,
+  blocked = false,
 }: AnnotateLayerProps) {
   const layerRef = useRef<HTMLDivElement>(null);
   const [drag, setDrag] = useState<Drag | null>(null);
@@ -81,9 +87,9 @@ export function AnnotateLayer({
   const draftOpen = editor !== null;
   useEffect(() => {
     if (!draftOpen) return;
-    onDraftChange?.(true);
-    return () => onDraftChange?.(false);
-  }, [draftOpen, onDraftChange]);
+    onDraftChange?.(pageIndex);
+    return () => onDraftChange?.(null);
+  }, [draftOpen, onDraftChange, pageIndex]);
 
   // Text selection preview: one request at a time, always for the latest drag. A reply that
   // comes back after its drag has ended is dropped, so no stale selection stays on the page.
@@ -116,7 +122,7 @@ export function AnnotateLayer({
   }
 
   function down(e: ReactPointerEvent) {
-    if (e.button !== 0 || busy || drag || editor) return;
+    if (e.button !== 0 || busy || blocked || drag || editor) return;
     e.preventDefault();
     e.currentTarget.setPointerCapture(e.pointerId);
     const p = point(e);
