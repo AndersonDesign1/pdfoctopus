@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import {
+  type AnnotationSpec,
   type DocumentInfo,
   describePages,
   type EditResult,
@@ -12,6 +13,7 @@ import {
   type LoadProgress,
   PasswordRequiredError,
   PdfWorkerClient,
+  type RgbColor,
   type RotationDelta,
   type SearchHit,
   type StampKind,
@@ -19,6 +21,8 @@ import {
 import { Footer } from "@pdfoctopus/ui";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { AnnotateLayer } from "./annotate/AnnotateLayer";
+import { cssColor, PALETTE, TOOLS, type ToolId, toolById, WIDTHS } from "./annotate/tools";
 import {
   chooseDestination,
   chooseFolder,
@@ -188,6 +192,19 @@ export function App() {
   const [signDialog, setSignDialog] = useState<"signature" | "initials">();
   /** A stamp being positioned. Page tools wait until it's applied or cancelled. */
   const [pending, setPending] = useState<PendingStamp>();
+  /** The annotation tool picked, if any: dragging on a page then draws with it. */
+  const [tool, setTool] = useState<ToolId>();
+  /** The colour chosen for each tool (until then, the tool's own default). */
+  const [toolColors, setToolColors] = useState<Partial<Record<ToolId, RgbColor>>>({});
+  const [lineWidth, setLineWidth] = useState(2);
+  /**
+   * The page where a note or text box is being typed, if any. Other edits (and drawing on other
+   * pages, and saving) wait for it, and its page stays loaded even when scrolled away.
+   */
+  const [draftPage, setDraftPage] = useState<number | null>(null);
+  const drafting = draftPage !== null;
+  /** Bumped on every edit, so the drawing layers start afresh on the edited pages. */
+  const [editVersion, setEditVersion] = useState(0);
   /** A page to scroll to once the viewer has the edited document. */
   const pendingScroll = useRef<number | null>(null);
   const [busy, setBusy] = useState(false);
@@ -234,6 +251,7 @@ export function App() {
     setPageDialog(undefined);
     setSignDialog(undefined);
     setPending(undefined);
+    setTool(undefined);
   }, []);
 
   /** Start a fresh worker and begin loading MuPDF in the background. */
@@ -423,6 +441,7 @@ export function App() {
     const renderer = new PageRenderer(getClient());
     current.renderer.dispose();
     const next = { ...current, info: result.info, renderer };
+    setEditVersion((v) => v + 1);
     docRef.current = next;
     setDoc(next);
     setHistory(result.history);
@@ -464,7 +483,7 @@ export function App() {
 
   const targets = targetPages(selection, page);
   /** Page tools and saving wait while a stamp is being placed. */
-  const locked = busy || pending !== undefined;
+  const locked = busy || pending !== undefined || drafting;
 
   function rotate(degrees: RotationDelta) {
     const pages = targets;
@@ -515,6 +534,7 @@ export function App() {
     // In the middle of what's on screen, not of the whole page, which may be mostly scrolled away.
     const centre = viewer.current?.visibleCentre(page) ?? undefined;
     const rect = initialRect(size, image.width / image.height, kind, centre);
+    setTool(undefined); // Placing a stamp and drawing don't mix.
     setPending({ kind, image, text, page, rect });
     setStatus(
       `Drag your ${STAMP_NOUN[kind]} into place, or click where it should go. ` +
@@ -564,6 +584,27 @@ export function App() {
   function cancelPending() {
     setPending(undefined);
     setStatus("");
+  }
+
+  // ---- Annotations ----
+
+  /** Pick a tool, or put it down if it's already picked. */
+  function pickTool(id: ToolId) {
+    if (tool === id) {
+      setTool(undefined);
+      setStatus("");
+      return;
+    }
+    setTool(id);
+    setStatus(`${toolById(id).hint}. Press Escape when you're done.`);
+  }
+
+  function addAnnotation(spec: AnnotationSpec) {
+    const { noun } = toolById(spec.kind);
+    void runTask(`add ${noun}`, async (pdf) => {
+      const result = await pdf.addAnnotation(spec);
+      applyEdit(result, `Added ${noun} to page ${spec.page + 1}.`);
+    });
   }
 
   function undoOrRedo(which: "undo" | "redo") {
@@ -786,6 +827,11 @@ export function App() {
         return;
       }
       if (!doc) return;
+      if (tool && !drafting && e.key === "Escape" && !typingInField(e.target)) {
+        setTool(undefined);
+        setStatus("");
+        return;
+      }
       // While a stamp is being placed, its keys work wherever the focus is, even when its page
       // has scrolled out of view. Enter on a button is that button's own click.
       if (pending && !mod && !e.altKey && !typingInField(e.target)) {
@@ -804,13 +850,14 @@ export function App() {
       const key = e.key.toLowerCase();
       if (mod && key === "s") {
         e.preventDefault();
-        if (!pending) void onSave(e.shiftKey);
+        // Not while placing a stamp or typing a note: what's on screen isn't in the file yet.
+        if (!pending && !drafting) void onSave(e.shiftKey);
       } else if (mod && !typingInField(e.target) && (key === "z" || key === "y")) {
         e.preventDefault();
         // Undo while placing a stamp means "never mind the stamp" (unless it's being applied).
         if (pending) {
           if (!busy) cancelPending();
-        } else undoOrRedo(key === "y" || e.shiftKey ? "redo" : "undo");
+        } else if (!drafting) undoOrRedo(key === "y" || e.shiftKey ? "redo" : "undo");
       } else if (mod && e.key.toLowerCase() === "f") {
         e.preventDefault();
         searchInput.current?.focus();
@@ -1265,6 +1312,61 @@ export function App() {
             </button>
           </div>
         )}
+        {doc && (
+          <div className="toolbar annotate-tools" role="toolbar" aria-label="Annotate">
+            <span className="toolbar-label">Annotate</span>
+            {TOOLS.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                className="tool icon"
+                disabled={locked}
+                aria-pressed={tool === t.id}
+                aria-label={t.label}
+                title={t.label}
+                onClick={() => pickTool(t.id)}
+              >
+                <span aria-hidden="true">{t.icon}</span>
+              </button>
+            ))}
+            {tool && tool !== "whiteout" && (
+              <>
+                <span className="divider" />
+                <fieldset className="pdfo-fieldset pdfo-colours">
+                  <legend className="visually-hidden">Colour</legend>
+                  {PALETTE.map((c) => {
+                    const current = toolColors[tool] ?? toolById(tool).defaultColor;
+                    return (
+                      <label key={c.label} className="pdfo-colour" title={c.label}>
+                        <input
+                          type="radio"
+                          name="annotation-colour"
+                          checked={current.join() === c.value.join()}
+                          onChange={() => setToolColors((m) => ({ ...m, [tool]: c.value }))}
+                        />
+                        <span className="pdfo-swatch" style={{ background: cssColor(c.value) }} />
+                        <span className="visually-hidden">{c.label}</span>
+                      </label>
+                    );
+                  })}
+                </fieldset>
+              </>
+            )}
+            {tool && toolById(tool).hasWidth && (
+              <select
+                aria-label="Line width"
+                value={lineWidth}
+                onChange={(e) => setLineWidth(Number(e.target.value))}
+              >
+                {WIDTHS.map((w) => (
+                  <option key={w.value} value={w.value}>
+                    {w.label}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+        )}
       </header>
 
       {(engine.status !== "ready" || status) && (
@@ -1334,13 +1436,14 @@ export function App() {
               hits={hits}
               currentHit={currentHit}
               onPageClick={pending && !busy ? movePendingTo : undefined}
-              overlay={
-                pending && {
-                  page: pending.page,
-                  render: (viewScale) => (
+              keepPage={draftPage ?? undefined}
+              renderPageOverlay={(index, viewScale) => {
+                const size = doc.info.pages[index] ?? { width: 1, height: 1 };
+                if (pending) {
+                  return pending.page === index ? (
                     <Placement
                       rect={pending.rect}
-                      page={doc.info.pages[pending.page] ?? { width: 1, height: 1 }}
+                      page={size}
                       scale={viewScale}
                       imageUrl={pending.image.dataUrl}
                       noun={STAMP_NOUN[pending.kind]}
@@ -1349,9 +1452,29 @@ export function App() {
                       onApply={applyPending}
                       onCancel={cancelPending}
                     />
-                  ),
+                  ) : null;
                 }
-              }
+                if (!tool) return null;
+                const picked = toolById(tool);
+                return (
+                  <AnnotateLayer
+                    // A fresh layer after every edit, so nothing half-done carries over to
+                    // whatever page now has this index.
+                    key={`${editVersion}:${index}`}
+                    pageIndex={index}
+                    page={size}
+                    scale={viewScale}
+                    tool={picked}
+                    color={toolColors[tool] ?? picked.defaultColor}
+                    width={lineWidth}
+                    busy={busy}
+                    selectText={(from, to) => getClient().selectText(index, from, to)}
+                    onCommit={addAnnotation}
+                    onDraftChange={setDraftPage}
+                    blocked={drafting && draftPage !== index}
+                  />
+                );
+              }}
             />
           </div>
         ) : (

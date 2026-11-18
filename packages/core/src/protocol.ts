@@ -3,10 +3,12 @@
 // Messages exchanged between the UI thread and the PDF worker.
 
 import type {
+  AnnotationSpec,
   DocumentInfo,
   EditResult,
   ImageStamp,
   OpenResult,
+  PagePoint,
   PageSize,
   PdfSource,
   RenderedPage,
@@ -30,6 +32,8 @@ export type WorkerRequest =
   | { id: number; type: "extractPages"; pages: number[] }
   | { id: number; type: "splitPages"; groups: number[][] }
   | { id: number; type: "addImageStamp"; stamp: ImageStamp }
+  | { id: number; type: "addAnnotation"; spec: AnnotationSpec }
+  | { id: number; type: "selectText"; page: number; from: PagePoint; to: PagePoint }
   | { id: number; type: "undo" }
   | { id: number; type: "redo" }
   | { id: number; type: "close" };
@@ -51,6 +55,8 @@ export interface WorkerResults {
   extractPages: Uint8Array;
   splitPages: Uint8Array[];
   addImageStamp: EditResult;
+  addAnnotation: EditResult;
+  selectText: number[][];
   undo: EditResult | null;
   redo: EditResult | null;
   close: null;

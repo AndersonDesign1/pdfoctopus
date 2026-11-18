@@ -2,7 +2,14 @@
 //
 // Promise-based client for the PDF worker. Use this from the UI thread.
 
-import type { ImageStamp, PageSize, PdfSource, RotationDelta } from "./engine";
+import type {
+  AnnotationSpec,
+  ImageStamp,
+  PagePoint,
+  PageSize,
+  PdfSource,
+  RotationDelta,
+} from "./engine";
 import { EngineCrashedError, errorFromCode, isFatalEngineError } from "./errors";
 import type {
   LoadProgress,
@@ -221,6 +228,16 @@ export class PdfWorkerClient {
       { type: "addImageStamp", stamp: { ...stamp, image: bytes } },
       [bytes.buffer as ArrayBuffer],
     );
+  }
+
+  /** Add a highlight, drawing, shape, note, text box or white-out, as one undoable step. */
+  addAnnotation(spec: AnnotationSpec) {
+    return this.call<"addAnnotation">({ type: "addAnnotation", spec });
+  }
+
+  /** The text a highlight from `from` to `to` would cover, as quads in page points. */
+  selectText(page: number, from: PagePoint, to: PagePoint) {
+    return this.call<"selectText">({ type: "selectText", page, from, to });
   }
 
   /** Undo the last page operation. Resolves to null when there was nothing to undo. */

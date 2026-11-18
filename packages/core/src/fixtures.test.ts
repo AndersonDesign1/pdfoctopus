@@ -96,7 +96,7 @@ describe("fixtures", () => {
 });
 
 /**
- * Run every page tool on a file, save it and reopen the result. Saves incrementally when
+ * Run every page tool on a file, add a stamp and annotations, save it and reopen the result. Saves incrementally when
  * the file allows it (checking the original bytes are untouched), and rewrites it otherwise.
  */
 function runPageTools(name: string, path: string): void {
@@ -130,6 +130,21 @@ function runPageTools(name: string, path: string): void {
       (height + h) / 2,
     ];
     engine.addImageStamp({ page: 0, rect: stampRect, image: tinyPng(), kind: "signature" });
+    // And a rectangle and a sticky note in the same place.
+    engine.addAnnotation({
+      kind: "rectangle",
+      page: 0,
+      rect: stampRect,
+      color: [1, 0, 0],
+      width: 1,
+    });
+    engine.addAnnotation({
+      kind: "note",
+      page: 0,
+      at: [stampRect[0], stampRect[1]],
+      text: "Checked",
+      color: [1, 0.8, 0],
+    });
     const extracted = engine.extractPages([0, engine.pageCount - 1]);
     expect(reopenedPageCount(extracted, password)).toBe(2);
     const split = engine.splitPages([[0], [engine.pageCount - 1, 0]]);
@@ -145,6 +160,10 @@ function runPageTools(name: string, path: string): void {
     try {
       saved = engine.save();
       expect(saved.slice(0, original.length)).toEqual(original);
+      // Saving again (Save twice, or Save then Save as) must give a valid file too.
+      const again = engine.save();
+      expect(again.slice(0, original.length)).toEqual(original);
+      expect(needsRepair(again, password)).toBe(false);
     } catch (err) {
       if (!(err instanceof IncrementalSaveError)) throw err;
       saved = engine.save({ incremental: false });
@@ -157,11 +176,47 @@ function runPageTools(name: string, path: string): void {
       expect(info?.pageCount).toBe(count + 1);
       expect(check.renderPage(0, 0.1).width).toBeGreaterThan(0);
       expect(hasSignatureStamp(saved, password)).toBe(true);
+      expect(annotationsOnFirstPage(saved, password)).toEqual(
+        expect.arrayContaining(["Square", "Text:Checked"]),
+      );
     } finally {
       check.close();
     }
   } finally {
     engine.close();
+  }
+}
+
+/** The first page's annotations, as their subtype (and the text of notes). */
+function annotationsOnFirstPage(bytes: Uint8Array, password?: string): string[] {
+  const doc = mupdf.Document.openDocument(bytes, "application/pdf");
+  try {
+    if (doc.needsPassword()) doc.authenticatePassword(password ?? "");
+    const annots = doc.asPDF()?.findPage(0).get("Annots");
+    const out: string[] = [];
+    if (annots?.isArray()) {
+      for (let i = 0; i < annots.length; i++) {
+        const a = annots.get(i).resolve();
+        const type = a.get("Subtype").asName();
+        out.push(type === "Text" ? `Text:${a.get("Contents").asString()}` : type);
+      }
+    }
+    return out;
+  } finally {
+    doc.destroy();
+  }
+}
+
+/** True when MuPDF has to repair a saved file to open it. */
+function needsRepair(bytes: Uint8Array, password?: string): boolean {
+  const doc = mupdf.Document.openDocument(bytes, "application/pdf");
+  try {
+    if (doc.needsPassword()) doc.authenticatePassword(password ?? "");
+    const pdf = doc.asPDF() as mupdf.PDFDocument;
+    pdf.countPages();
+    return pdf.wasRepaired();
+  } finally {
+    doc.destroy();
   }
 }
 

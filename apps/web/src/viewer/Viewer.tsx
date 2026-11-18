@@ -64,8 +64,10 @@ export interface ViewerProps {
   onCurrentPageChange(index: number): void;
   hits: SearchHit[];
   currentHit: number;
-  /** Something drawn on top of one page, such as a signature being placed. */
-  overlay?: { page: number; render(scale: number): ReactNode };
+  /** Drawn on top of each page shown, such as a signature being placed or a drawing layer. */
+  renderPageOverlay?(index: number, scale: number): ReactNode;
+  /** A page to keep loaded even when it's scrolled out of view (one with unsaved typing). */
+  keepPage?: number;
   /** Called with the point clicked on a page, in points from its top-left corner. */
   onPageClick?(index: number, point: { x: number; y: number }): void;
 }
@@ -106,7 +108,8 @@ export const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
     onCurrentPageChange,
     hits,
     currentHit,
-    overlay,
+    renderPageOverlay,
+    keepPage,
     onPageClick,
   },
   ref,
@@ -389,7 +392,17 @@ export const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
 
   const contentWidth = Math.max(layout.totalWidth, viewport.width);
   const pageViews = [];
-  for (let i = first; i <= last; i++) {
+  const shown: number[] = [];
+  for (let i = first; i <= last; i++) shown.push(i);
+  if (
+    keepPage !== undefined &&
+    keepPage >= 0 &&
+    keepPage < pages.length &&
+    !shown.includes(keepPage)
+  ) {
+    shown.push(keepPage);
+  }
+  for (const i of shown) {
     const width = layout.widths[i] as number;
     const height = layout.heights[i] as number;
     const page = pages[i] as PageSize;
@@ -434,7 +447,7 @@ export const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
             />
           )),
         )}
-        {overlay?.page === i && overlay.render(scale)}
+        {renderPageOverlay?.(i, scale)}
       </div>,
     );
   }

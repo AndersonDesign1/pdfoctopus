@@ -81,6 +81,54 @@ export type RotationDelta = 90 | 180 | 270 | -90;
 /** What an image stamp is, for its undo label and the text that describes it to readers. */
 export type StampKind = "signature" | "initials" | "date" | "image";
 
+/** A point on a page, in points from its top-left corner as shown. */
+export type PagePoint = [number, number];
+/** A colour as red, green and blue from 0 to 1. */
+export type RgbColor = [number, number, number];
+
+/**
+ * A markup annotation to add. Positions are in points from the page's top-left corner as it
+ * is shown (after its own rotation), like ImageStamp.rect.
+ */
+export type AnnotationSpec =
+  | {
+      /** Text markup over the text between two points, like selecting it. */
+      kind: "highlight" | "underline" | "strikeout";
+      page: number;
+      from: PagePoint;
+      to: PagePoint;
+      color: RgbColor;
+    }
+  | { kind: "ink"; page: number; strokes: PagePoint[][]; color: RgbColor; width: number }
+  | {
+      kind: "rectangle" | "ellipse";
+      page: number;
+      rect: [number, number, number, number];
+      color: RgbColor;
+      width: number;
+    }
+  | {
+      kind: "line" | "arrow";
+      page: number;
+      from: PagePoint;
+      to: PagePoint;
+      color: RgbColor;
+      width: number;
+    }
+  | { kind: "note"; page: number; at: PagePoint; text: string; color: RgbColor }
+  | {
+      kind: "text";
+      page: number;
+      rect: [number, number, number, number];
+      text: string;
+      color: RgbColor;
+      size: number;
+    }
+  /** A white box over part of the page. It covers, but doesn't remove (see redaction). */
+  | { kind: "whiteout"; page: number; rect: [number, number, number, number] };
+
+export type AnnotationKind = AnnotationSpec["kind"];
+
 /** An image to put on a page, such as a signature. */
 export interface ImageStamp {
   /** 0-based page. */
@@ -125,6 +173,28 @@ export const MAX_STAMP_IMAGE_PIXELS = 4096 * 4096;
 const ANNOT_FLAG_PRINT = 4;
 const ANNOT_FLAG_LOCKED = 128;
 
+/** Undo labels for annotations, e.g. "Add highlight". */
+const ANNOTATION_LABELS: Record<AnnotationKind, string> = {
+  highlight: "Add highlight",
+  underline: "Add underline",
+  strikeout: "Add strikethrough",
+  ink: "Add drawing",
+  rectangle: "Add rectangle",
+  ellipse: "Add ellipse",
+  line: "Add line",
+  arrow: "Add arrow",
+  note: "Add note",
+  text: "Add text box",
+  whiteout: "Add white-out",
+};
+
+/** How many pages' text layouts are kept for selecting text. */
+const TEXT_CACHE_PAGES = 8;
+
+/** Upper bounds that keep a single annotation reasonable. */
+const MAX_INK_POINTS = 20_000;
+const MAX_ANNOTATION_TEXT = 10_000;
+
 const STAMP_LABELS: Record<StampKind, { undo: string; contents: string }> = {
   signature: { undo: "Add signature", contents: "Signature" },
   initials: { undo: "Add initials", contents: "Initials" },
@@ -136,8 +206,18 @@ export class PdfEngine {
   private doc: mupdf.Document | null = null;
   /** MuPDF's needsPassword() stays true after a successful unlock, so track it here. */
   private locked = false;
+  /**
+   * The opened file's size and where its last cross-reference section starts. Every
+   * incremental save is these bytes plus one update, whose trailer must point back here.
+   */
+  private base: { length: number; startxref: number | null } | null = null;
   private undoStack: Step[] = [];
   private redoStack: Step[] = [];
+  /**
+   * Text layout of recently used pages, for selecting text; dropped whenever the document
+   * changes. Only a few pages are kept, least recently used dropped first.
+   */
+  private textCache = new Map<number, mupdf.StructuredText>();
 
   /**
    * Open a PDF. If it needs a password, nothing else can be read until `authenticate`
@@ -146,6 +226,7 @@ export class PdfEngine {
   open(bytes: Uint8Array): OpenResult {
     this.close();
     this.doc = mupdf.Document.openDocument(bytes, "application/pdf");
+    this.base = { length: bytes.byteLength, startxref: lastStartxref(bytes) };
     this.locked = this.doc.needsPassword();
     if (this.locked) return { needsPassword: true };
     return { needsPassword: false, ...this.info() };
@@ -297,16 +378,26 @@ export class PdfEngine {
     // as raw pixels, which would make a signed file several megabytes bigger. In an
     // incremental save it only applies to the objects being appended, never to the original.
     const buffer = pdf.saveToBuffer(incremental ? "incremental,compress" : "garbage,compress");
+    let bytes: Uint8Array;
     try {
-      return buffer.asUint8Array().slice();
+      bytes = buffer.asUint8Array().slice();
     } finally {
       buffer.destroy();
     }
+    if (incremental && this.base?.startxref != null) {
+      // After a first save, MuPDF writes later updates as if the earlier one had been appended
+      // to the original file, so their trailer points (/Prev) at a section that isn't there.
+      // Each save is the original bytes plus one update, so point it back at the original's.
+      bytes = fixUpdatePrev(bytes, this.base.length, this.base.startxref);
+    }
+    return bytes;
   }
 
   close(): void {
+    this.clearTextCache();
     this.doc?.destroy();
     this.doc = null;
+    this.base = null;
     this.locked = false;
     this.undoStack = [];
     this.redoStack = [];
@@ -549,21 +640,183 @@ export class PdfEngine {
       image.destroy();
     }
 
-    // The annotation is on the page now. Undo takes it off the page and redo puts the same
-    // object back, so undoing and redoing doesn't add copies of the image to the file.
+    return this.annotationStep(labels.undo, index, [object]);
+  }
+
+  // ---------------------------------------------------------------------------------------
+  // Annotations: highlights, drawings, shapes, notes and text boxes, each one undoable step.
+
+  /**
+   * The text between two points on a page, as quads in points from the page's top-left
+   * corner as shown: what a highlight from `from` to `to` would cover. Empty if there's no
+   * text there (e.g. a scanned page).
+   */
+  selectText(pageIndex: number, from: PagePoint, to: PagePoint): number[][] {
+    const [index] = this.checkPages([pageIndex]) as [number];
+    const [x0, y0] = this.pageOrigin(index);
+    return this.textQuads(index, from, to).map((q) => q.map((v, i) => v - (i % 2 === 0 ? x0 : y0)));
+  }
+
+  /** Add a markup annotation as one undoable step. */
+  addAnnotation(spec: AnnotationSpec): EditResult {
+    const pdf = this.requirePdf();
+    const [index] = this.checkPages([spec.page]) as [number];
+    const label = ANNOTATION_LABELS[spec.kind];
+    if (!label)
+      throw new Error(`Unknown annotation kind: ${String((spec as { kind: unknown }).kind)}`);
+    const [ox, oy] = this.pageOrigin(index);
+    const pt = (p: PagePoint): mupdf.Point => {
+      checkPoint(p);
+      return [p[0] + ox, p[1] + oy];
+    };
+    const rect = (r: readonly number[]): mupdf.Rect => {
+      const [x0, y0, x1, y1] = checkRect(r);
+      return [x0 + ox, y0 + oy, x1 + ox, y1 + oy];
+    };
+
+    // Text markup needs text: find it before creating anything.
+    let quads: mupdf.Quad[] = [];
+    if (spec.kind === "highlight" || spec.kind === "underline" || spec.kind === "strikeout") {
+      checkPoint(spec.from);
+      checkPoint(spec.to);
+      quads = this.textQuads(index, spec.from, spec.to);
+      if (quads.length === 0) throw new Error("There's no text there to mark");
+    }
+
+    // Check everything before anything is created, so bad input leaves the page untouched.
+    validateAnnotation(spec);
+
+    let objects: mupdf.PDFObject[];
+    const page = pdf.loadPage(index);
+    let annot: mupdf.PDFAnnotation | undefined;
+    try {
+      switch (spec.kind) {
+        case "highlight":
+        case "underline":
+        case "strikeout": {
+          const type = {
+            highlight: "Highlight",
+            underline: "Underline",
+            strikeout: "StrikeOut",
+          } as const;
+          annot = page.createAnnotation(type[spec.kind]);
+          annot.setColor(checkColor(spec.color));
+          annot.setQuadPoints(quads);
+          break;
+        }
+        case "ink": {
+          const strokes = spec.strokes.filter((s) => s.length > 0);
+          const count = strokes.reduce((n, s) => n + s.length, 0);
+          if (count === 0) throw new Error("There's nothing drawn");
+          if (count > MAX_INK_POINTS) throw new Error("The drawing has too many points");
+          annot = page.createAnnotation("Ink");
+          annot.setColor(checkColor(spec.color));
+          annot.setBorderWidth(checkWidth(spec.width));
+          annot.setInkList(strokes.map((s) => s.map(pt)));
+          break;
+        }
+        case "rectangle":
+        case "ellipse": {
+          annot = page.createAnnotation(spec.kind === "rectangle" ? "Square" : "Circle");
+          annot.setRect(rect(spec.rect));
+          annot.setColor(checkColor(spec.color));
+          annot.setBorderWidth(checkWidth(spec.width));
+          break;
+        }
+        case "line":
+        case "arrow": {
+          const a = pt(spec.from);
+          const b = pt(spec.to);
+          if (Math.hypot(b[0] - a[0], b[1] - a[1]) < 1) throw new Error("The line is too short");
+          annot = page.createAnnotation("Line");
+          annot.setLine(a, b);
+          annot.setColor(checkColor(spec.color));
+          annot.setBorderWidth(checkWidth(spec.width));
+          if (spec.kind === "arrow") annot.setLineEndingStyles("None", "ClosedArrow");
+          break;
+        }
+        case "note": {
+          const [x, y] = pt(spec.at);
+          annot = page.createAnnotation("Text");
+          annot.setRect([x, y, x + 20, y + 20]);
+          annot.setIcon("Comment");
+          annot.setColor(checkColor(spec.color));
+          annot.setContents(checkText(spec.text));
+          break;
+        }
+        case "text": {
+          if (!(spec.size >= 4 && spec.size <= 144)) throw new Error("Text size must be 4 to 144");
+          annot = page.createAnnotation("FreeText");
+          annot.setRect(rect(spec.rect));
+          annot.setDefaultAppearance("Helv", spec.size, checkColor(spec.color));
+          annot.setContents(checkText(spec.text));
+          break;
+        }
+        case "whiteout": {
+          annot = page.createAnnotation("Square");
+          annot.setRect(rect(spec.rect));
+          annot.setColor([]);
+          annot.setInteriorColor([1, 1, 1]);
+          annot.setBorderWidth(0);
+          annot.setContents("White-out");
+          break;
+        }
+      }
+      annot.setFlags(ANNOT_FLAG_PRINT);
+      annot.update();
+      const object = annot.getObject();
+      // MuPDF gives a sticky note a pop-up window annotation: it comes and goes with the note.
+      const popup = object.get("Popup");
+      objects = popup.isIndirect() ? [object, popup] : [object];
+    } catch (err) {
+      if (annot) page.deleteAnnotation(annot);
+      throw err;
+    } finally {
+      page.destroy();
+    }
+    return this.annotationStep(label, index, objects);
+  }
+
+  /**
+   * Record an annotation that is already on the page as one undoable step. Undo takes it off
+   * the page and redo puts the same object back, so the file doesn't collect copies.
+   */
+  private annotationStep(label: string, index: number, objects: mupdf.PDFObject[]): EditResult {
+    const pdf = this.requirePdf();
     let attached = true;
     return this.run({
-      label: labels.undo,
+      label,
       redo: () => {
         if (attached) return;
-        attachAnnotation(pdf, index, object);
+        for (const object of objects) attachAnnotation(pdf, index, object);
         attached = true;
       },
       undo: () => {
-        detachAnnotation(pdf, index, object);
+        for (const object of objects) detachAnnotation(pdf, index, object);
         attached = false;
       },
     });
+  }
+
+  /** Quads of the text between two points, in MuPDF's page coordinates. */
+  private textQuads(index: number, from: PagePoint, to: PagePoint): mupdf.Quad[] {
+    const [x0, y0] = this.pageOrigin(index);
+    return this.pageText(index).highlight(
+      [from[0] + x0, from[1] + y0],
+      [to[0] + x0, to[1] + y0],
+      2000,
+    );
+  }
+
+  /** Where the page's visible top-left corner is, in MuPDF's page coordinates. */
+  private pageOrigin(index: number): [number, number] {
+    const page = this.requireDoc().loadPage(index);
+    try {
+      const [x0, y0] = page.getBounds();
+      return [x0, y0];
+    } finally {
+      page.destroy();
+    }
   }
 
   /** Undo the last page operation. Returns null when there is nothing to undo. */
@@ -617,7 +870,38 @@ export class PdfEngine {
   }
 
   private editResult(): EditResult {
+    this.clearTextCache(); // Pages may have moved, gone or changed.
     return { info: this.info(), history: this.history() };
+  }
+
+  private clearTextCache(): void {
+    for (const text of this.textCache.values()) text.destroy();
+    this.textCache.clear();
+  }
+
+  private pageText(index: number): mupdf.StructuredText {
+    let text = this.textCache.get(index);
+    if (text) {
+      // Most recently used goes last (a Map keeps insertion order).
+      this.textCache.delete(index);
+    } else {
+      const page = this.requireDoc().loadPage(index);
+      try {
+        text = page.toStructuredText("preserve-whitespace");
+      } finally {
+        page.destroy();
+      }
+      while (this.textCache.size >= TEXT_CACHE_PAGES) {
+        const [oldest, layout] = this.textCache.entries().next().value as [
+          number,
+          mupdf.StructuredText,
+        ];
+        layout.destroy();
+        this.textCache.delete(oldest);
+      }
+    }
+    this.textCache.set(index, text);
+    return text;
   }
 
   /**
@@ -729,15 +1013,97 @@ function flattenInherited(page: mupdf.PDFObject): void {
   }
 }
 
+/** Where the last cross-reference section of a PDF starts (its final `startxref`), or null. */
+export function lastStartxref(bytes: Uint8Array): number | null {
+  // It's within the last few hundred bytes of a well-formed file; allow some junk after it.
+  const tail = new TextDecoder("latin1").decode(bytes.subarray(Math.max(0, bytes.length - 4096)));
+  const matches = [...tail.matchAll(/startxref\s+(\d+)/g)];
+  const last = matches[matches.length - 1];
+  return last ? Number(last[1]) : null;
+}
+
+/**
+ * Make the update appended to `base` original bytes point back (/Prev) at the original's last
+ * cross-reference section. Only the update is touched, so the original bytes stay identical.
+ * Changing the number's length is safe: the trailer comes after everything its offsets point to.
+ */
+export function fixUpdatePrev(bytes: Uint8Array, baseLength: number, prev: number): Uint8Array {
+  const latin1 = new TextDecoder("latin1");
+  const update = latin1.decode(bytes.subarray(baseLength));
+  const trailer = update.lastIndexOf("trailer");
+  // MuPDF writes a classic trailer for the update; anything else is left alone.
+  if (trailer < 0) return bytes;
+  const match = /\/Prev\s+(\d+)/.exec(update.slice(trailer));
+  if (!match || Number(match[1]) === prev) return bytes;
+  const at = baseLength + trailer + match.index;
+  const replacement = new TextEncoder().encode(`/Prev ${prev}`);
+  const out = new Uint8Array(bytes.length - match[0].length + replacement.length);
+  out.set(bytes.subarray(0, at), 0);
+  out.set(replacement, at);
+  out.set(bytes.subarray(at + match[0].length), at + replacement.length);
+  return out;
+}
+
 /** Check a [left, top, right, bottom] rectangle: finite numbers, at least 1 point each way. */
 function checkRect(rect: readonly number[]): [number, number, number, number] {
   const [x0, y0, x1, y1] = rect;
   if (rect.length !== 4 || ![x0, y0, x1, y1].every((v) => Number.isFinite(v))) {
-    throw new Error("The stamp's position isn't valid");
+    throw new Error("The position isn't valid");
   }
   const r = [x0, y0, x1, y1] as [number, number, number, number];
-  if (r[2] - r[0] < 1 || r[3] - r[1] < 1) throw new Error("The stamp is too small");
+  if (r[2] - r[0] < 1 || r[3] - r[1] < 1) throw new Error("It's too small");
   return r;
+}
+
+/** Check an annotation's values (all but the page and the text under markup). */
+function validateAnnotation(spec: AnnotationSpec): void {
+  if ("color" in spec) checkColor(spec.color);
+  if ("width" in spec) checkWidth(spec.width);
+  if ("rect" in spec) checkRect(spec.rect);
+  if ("text" in spec) checkText(spec.text);
+  if ("from" in spec) checkPoint(spec.from);
+  if ("to" in spec) checkPoint(spec.to);
+  if ("at" in spec) checkPoint(spec.at);
+  if (spec.kind === "text" && !(spec.size >= 4 && spec.size <= 144)) {
+    throw new Error("Text size must be 4 to 144");
+  }
+  if (spec.kind === "ink") {
+    const count = spec.strokes.reduce((n, s) => n + s.length, 0);
+    if (count === 0) throw new Error("There's nothing drawn");
+    if (count > MAX_INK_POINTS) throw new Error("The drawing has too many points");
+    for (const stroke of spec.strokes) for (const p of stroke) checkPoint(p);
+  }
+  if (spec.kind === "line" || spec.kind === "arrow") {
+    if (Math.hypot(spec.to[0] - spec.from[0], spec.to[1] - spec.from[1]) < 1) {
+      throw new Error("The line is too short");
+    }
+  }
+}
+
+function checkPoint(p: readonly number[]): void {
+  if (p.length !== 2 || !p.every((v) => Number.isFinite(v))) {
+    throw new Error("A position isn't valid");
+  }
+}
+
+function checkColor(c: readonly number[]): [number, number, number] {
+  if (c.length !== 3 || !c.every((v) => Number.isFinite(v) && v >= 0 && v <= 1)) {
+    throw new Error("A colour isn't valid");
+  }
+  return [c[0], c[1], c[2]] as [number, number, number];
+}
+
+function checkWidth(w: number): number {
+  if (!(Number.isFinite(w) && w > 0 && w <= 50))
+    throw new Error("Line width must be 0 to 50 points");
+  return w;
+}
+
+function checkText(text: string): string {
+  const t = text.trim();
+  if (!t) throw new Error("Type some text first");
+  if (t.length > MAX_ANNOTATION_TEXT) throw new Error("The text is too long");
+  return t;
 }
 
 /** The page's /Annots array, created if the page has none. */

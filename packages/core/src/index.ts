@@ -2,15 +2,19 @@
 
 export { PdfWorkerClient, type PdfWorkerClientOptions } from "./client";
 export type {
+  AnnotationKind,
+  AnnotationSpec,
   DocumentInfo,
   DocumentMetadata,
   EditResult,
   HistoryState,
   ImageStamp,
   OpenResult,
+  PagePoint,
   PageSize,
   PdfSource,
   RenderedPage,
+  RgbColor,
   RotationDelta,
   SearchHit,
   StampKind,
