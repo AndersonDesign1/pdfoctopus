@@ -173,14 +173,24 @@ export function readColor(object: mupdf.PDFObject): [number, number, number] | n
   return null;
 }
 
-/** The last fill colour set in a default appearance string ("/Helv 12 Tf 1 0 0 rg"). */
+/**
+ * The fill colour a default appearance string ("/Helv 12 Tf 1 0 0 rg") ends up with: the last
+ * `rg` (RGB) or `g` (grey) operator, read token by token as a PDF reader would.
+ */
 export function textColor(da: string): [number, number, number] | null {
-  const n = String.raw`(-?\d*\.?\d+)`;
-  const rgb = [...da.matchAll(new RegExp(String.raw`${n}\s+${n}\s+${n}\s+rg\b`, "g"))].pop();
-  if (rgb) return [Number(rgb[1]), Number(rgb[2]), Number(rgb[3])];
-  const gray = [...da.matchAll(new RegExp(String.raw`${n}\s+g\b`, "g"))].pop();
-  if (gray) return [Number(gray[1]), Number(gray[1]), Number(gray[1])];
-  return null;
+  const tokens = da.trim().split(/\s+/);
+  const num = (t: string | undefined) => (t !== undefined && t !== "" ? Number(t) : Number.NaN);
+  let color: [number, number, number] | null = null;
+  tokens.forEach((token, i) => {
+    if (token === "rg") {
+      const [r, g, b] = [num(tokens[i - 3]), num(tokens[i - 2]), num(tokens[i - 1])];
+      if ([r, g, b].every(Number.isFinite)) color = [r, g, b];
+    } else if (token === "g") {
+      const v = num(tokens[i - 1]);
+      if (Number.isFinite(v)) color = [v, v, v];
+    }
+  });
+  return color;
 }
 
 /** The annotation's /Rect, normalised to [x0, y0, x1, y1] with x0 ≤ x1, y0 ≤ y1. */
