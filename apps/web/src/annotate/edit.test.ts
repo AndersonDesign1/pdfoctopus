@@ -47,6 +47,13 @@ describe("moveBox", () => {
     expect(moveBox([10, 10, 30, 20], -50, 500, page)).toEqual([0, 90, 20, 100]);
     expect(moveBox([10, 10, 30, 20], 500, -50, page)).toEqual([180, 0, 200, 10]);
   });
+
+  it("lets a box bigger than the page move while it still covers the page", () => {
+    // 300 wide on a 200-wide page: its left edge can go from -100 to 0.
+    expect(moveBox([-50, 10, 250, 20], -20, 0, page)).toEqual([-70, 10, 230, 20]);
+    expect(moveBox([-50, 10, 250, 20], -500, 0, page)).toEqual([-100, 10, 200, 20]);
+    expect(moveBox([-50, 10, 250, 20], 500, 0, page)).toEqual([0, 10, 300, 20]);
+  });
 });
 
 describe("resizeBox", () => {
@@ -67,10 +74,8 @@ describe("resizeBox", () => {
   it("keeps proportions when asked", () => {
     const box = resizeBox([10, 10, 50, 30], [90, 0], page, true); // 2:1
     expect(box).toEqual([10, 10, 90, 50]);
-    // Limited by the page's height: 90 tall at most, so 180 wide, but only 190 fits anyway.
-    const big = resizeBox([10, 10, 50, 30], [999, 999], page, true);
-    expect(big[3]).toBeLessThanOrEqual(100);
-    expect((big[2] - big[0]) / (big[3] - big[1])).toBeCloseTo(2);
+    // Limited by the page's height: 90 tall at most, so 180 wide (190 would fit across).
+    expect(resizeBox([10, 10, 50, 30], [999, 999], page, true)).toEqual([10, 10, 190, 100]);
   });
 });
 

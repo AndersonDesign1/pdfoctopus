@@ -156,13 +156,30 @@ export function canEditText(object: mupdf.PDFObject): boolean {
   return TEXT_TYPES.has(subtype(object));
 }
 
-/** The annotation's colour as RGB from 0 to 1, or null if it has none (or isn't RGB). */
+/**
+ * The annotation's colour as RGB from 0 to 1, or null if it has none (or isn't RGB). For a text
+ * box that's its text colour, from /DA: its /C is the box's background.
+ */
 export function readColor(object: mupdf.PDFObject): [number, number, number] | null {
+  if (subtype(object) === "FreeText") {
+    const da = object.get("DA");
+    return da.isString() ? textColor(da.asString()) : null;
+  }
   const c = object.get("C");
   if (!c.isArray()) return null;
   const v = Array.from({ length: c.length }, (_, i) => c.get(i).asNumber());
   if (v.length === 3) return [v[0] as number, v[1] as number, v[2] as number];
   if (v.length === 1) return [v[0] as number, v[0] as number, v[0] as number];
+  return null;
+}
+
+/** The last fill colour set in a default appearance string ("/Helv 12 Tf 1 0 0 rg"). */
+export function textColor(da: string): [number, number, number] | null {
+  const n = String.raw`(-?\d*\.?\d+)`;
+  const rgb = [...da.matchAll(new RegExp(String.raw`${n}\s+${n}\s+${n}\s+rg\b`, "g"))].pop();
+  if (rgb) return [Number(rgb[1]), Number(rgb[2]), Number(rgb[3])];
+  const gray = [...da.matchAll(new RegExp(String.raw`${n}\s+g\b`, "g"))].pop();
+  if (gray) return [Number(gray[1]), Number(gray[1]), Number(gray[1])];
   return null;
 }
 

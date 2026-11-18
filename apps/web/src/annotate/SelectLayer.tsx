@@ -107,7 +107,7 @@ export function SelectLayer({
     return () => onDraftChange?.(null);
   }, [editingText, onDraftChange, pageIndex]);
 
-  function point(e: ReactPointerEvent): PagePoint {
+  function point(e: { clientX: number; clientY: number }): PagePoint {
     const box = (layerRef.current as HTMLDivElement).getBoundingClientRect();
     return clampPoint([(e.clientX - box.left) / scale, (e.clientY - box.top) / scale], page);
   }
@@ -173,7 +173,8 @@ export function SelectLayer({
     } else if (e.key === "Escape") {
       onSelect(null);
     } else if (e.key === "Enter" && selected.canEditText) {
-      setEditingText(true);
+      // Not while a change is being made: the layer is replaced when it's done.
+      if (!busy) setEditingText(true);
     } else {
       handled = false;
     }
@@ -194,6 +195,7 @@ export function SelectLayer({
     .join(" ");
 
   return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: double-click is a shortcut; Enter on the focused selection and its Edit text button do the same
     <div
       ref={layerRef}
       className={`pdfo-select-layer${hovering || drag ? " over" : ""}`}
@@ -202,6 +204,11 @@ export function SelectLayer({
       onPointerUp={up}
       onPointerCancel={cancel}
       onPointerLeave={() => setHovering(false)}
+      // On the layer: a press on the selection captures the pointer here, so clicks land here.
+      onDoubleClick={(e) => {
+        if (!selected?.canEditText || busy || blocked) return;
+        if (hitTest([selected], point(e)) !== null) setEditingText(true);
+      }}
     >
       {selected && shown && (
         <div
@@ -225,9 +232,6 @@ export function SelectLayer({
             onPointerDown={(e) => {
               if (e.button !== 0 || busy || blocked || editingText) return;
               startDrag(e, selected, "move");
-            }}
-            onDoubleClick={() => {
-              if (selected.canEditText && !busy) setEditingText(true);
             }}
             onKeyDown={key}
           >

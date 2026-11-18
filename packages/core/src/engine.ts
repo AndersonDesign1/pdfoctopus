@@ -896,11 +896,11 @@ export class PdfEngine {
     let resizeTo: [number, number, number, number] | null = null;
     if (change.rect) {
       const target = checkRect(change.rect);
-      this.checkOnPage(index, target, "The annotation must stay on the page");
       const current = transformRect(shown, readRect(object));
       const sameSize =
         Math.abs(target[2] - target[0] - (current[2] - current[0])) < 0.01 &&
         Math.abs(target[3] - target[1] - (current[3] - current[1])) < 0.01;
+      this.checkOnPage(index, target, "The annotation must stay on the page", sameSize);
       if (sameSize) {
         const dx = target[0] - current[0];
         const dy = target[1] - current[1];
@@ -1040,20 +1040,22 @@ export class PdfEngine {
     }
   }
 
-  /** Throw unless a rect (in points as shown) is on the page, give or take rounding. */
-  private checkOnPage(index: number, [x0, y0, x1, y1]: readonly number[], message: string) {
+  /**
+   * Throw unless a rect (in points as shown) is on the page, give or take rounding. With
+   * `allowCover`, a rect bigger than the page one way (some apps make those) may instead cover
+   * the page that way, so it can still be moved.
+   */
+  private checkOnPage(index: number, rect: readonly number[], message: string, allowCover = false) {
     const page = this.requireDoc().loadPage(index);
     try {
       const [bx0, by0, bx1, by1] = page.getBounds();
+      const [x0, y0, x1, y1] = rect as [number, number, number, number];
       const slack = 0.5;
-      if (
-        (x0 as number) < -slack ||
-        (y0 as number) < -slack ||
-        (x1 as number) > bx1 - bx0 + slack ||
-        (y1 as number) > by1 - by0 + slack
-      ) {
-        throw new Error(message);
-      }
+      const fits = (start: number, end: number, size: number) => {
+        if (start >= -slack && end <= size + slack) return true;
+        return allowCover && end - start > size && start <= slack && end >= size - slack;
+      };
+      if (!fits(x0, x1, bx1 - bx0) || !fits(y0, y1, by1 - by0)) throw new Error(message);
     } finally {
       page.destroy();
     }

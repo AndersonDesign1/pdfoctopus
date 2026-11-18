@@ -32,12 +32,22 @@ export function hitTest(
   return null;
 }
 
-/** A box moved by (dx, dy), kept on the page (a box bigger than the page keeps its corner). */
+/**
+ * Where a box's start edge can go along one side of the page: inside the page, or, for a box
+ * bigger than the page (some apps make those), anywhere it still covers the whole page.
+ */
+function clampEdge(start: number, size: number, pageSize: number): number {
+  return size <= pageSize
+    ? Math.max(0, Math.min(start, pageSize - size))
+    : Math.min(0, Math.max(start, pageSize - size));
+}
+
+/** A box moved by (dx, dy), kept on the page as `clampEdge` describes. */
 export function moveBox([x0, y0, x1, y1]: Box, dx: number, dy: number, page: PageSize): Box {
   const w = x1 - x0;
   const h = y1 - y0;
-  const left = Math.max(0, Math.min(x0 + dx, page.width - w));
-  const top = Math.max(0, Math.min(y0 + dy, page.height - h));
+  const left = clampEdge(x0 + dx, w, page.width);
+  const top = clampEdge(y0 + dy, h, page.height);
   return [left, top, left + w, top + h];
 }
 

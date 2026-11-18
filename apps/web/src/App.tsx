@@ -453,9 +453,18 @@ export function App() {
    * Show the edited document. The renderer is replaced, because its cached bitmaps show the
    * pages as they were. The document keeps its id, so the view and its scroll position stay.
    */
-  function applyEdit(result: EditResult, message: string, select?: Selection, scrollTo?: number) {
+  function applyEdit(
+    result: EditResult,
+    message: string,
+    select?: Selection,
+    scrollTo?: number,
+    keepAnnotation = false,
+  ) {
     const current = docRef.current;
     if (!current) return;
+    // A selected annotation may have moved or gone (undo, page edits): let go of it, unless it's
+    // the selection's own change, after which its layer reports where it is now.
+    if (!keepAnnotation) setSelectedAnnot(null);
     const renderer = new PageRenderer(getClient());
     current.renderer.dispose();
     const next = { ...current, info: result.info, renderer };
@@ -657,7 +666,7 @@ export function App() {
             : (result.history.undoLabel ?? "").startsWith("Resize")
               ? `Resized ${noun}.`
               : `Moved ${noun}.`;
-      applyEdit(result, `${done} Undo with Ctrl+Z.`);
+      applyEdit(result, `${done} Undo with Ctrl+Z.`, undefined, undefined, true);
     });
   }
 
@@ -1548,7 +1557,8 @@ export function App() {
               hits={hits}
               currentHit={currentHit}
               onPageClick={pending && !busy ? movePendingTo : undefined}
-              keepPage={draftPage ?? undefined}
+              // A draft, or the selection (so it stays up to date), keeps its page loaded.
+              keepPage={draftPage ?? selectedAnnot?.page}
               renderPageOverlay={(index, viewScale) => {
                 const size = doc.info.pages[index] ?? { width: 1, height: 1 };
                 if (pending) {

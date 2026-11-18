@@ -137,6 +137,7 @@ describe("listAnnotations", () => {
     const byLabel = Object.fromEntries(list.map((a) => [a.label, a]));
     expect(byLabel.note?.text).toBe("Check");
     expect(byLabel["text box"]?.text).toBe("Hello");
+    expect(byLabel["text box"]?.color).toEqual(BLUE);
     expect(byLabel.rectangle?.text).toBeNull();
     expect(byLabel.rectangle?.color).toEqual(RED);
     // The box is where it was drawn, give or take the border.
@@ -230,6 +231,26 @@ describe("moving", () => {
     }
   });
 
+  it("moves an annotation bigger than its page, as long as it still covers the page", () => {
+    const engine = open(createBlankPdf(1, 400, 300));
+    // Wider than the page, as some apps make them.
+    engine.addAnnotation({
+      kind: "rectangle",
+      page: 0,
+      rect: [-50, 20, 450, 60],
+      color: RED,
+      width: 1,
+    });
+    const a = only(engine);
+    engine.editAnnotation(0, a.id, { rect: shifted(a.rect, -10, 30) });
+    expectRect(only(engine).rect, shifted(a.rect, -10, 30));
+    // Moving it so it no longer covers the page's width is refused.
+    const now = only(engine);
+    expect(() => engine.editAnnotation(0, now.id, { rect: shifted(now.rect, 200, 0) })).toThrow(
+      /stay on the page/,
+    );
+  });
+
   it("keeps a signature's own appearance when it's moved or resized", () => {
     const engine = open(createBlankPdf(1, 400, 300));
     engine.addImageStamp({ page: 0, rect: [20, 20, 60, 60], image: redPng(), kind: "signature" });
@@ -295,6 +316,37 @@ describe("resizing, recolouring and editing text", () => {
       if ((pixels[i] as number) > 200 && (pixels[i + 1] as number) < 80) reddish++;
     }
     expect(reddish).toBeGreaterThan(50);
+  });
+
+  it("treats a text box's colour as its text colour, not its background", () => {
+    const engine = open(createBlankPdf(1, 400, 300));
+    engine.addAnnotation({
+      kind: "text",
+      page: 0,
+      rect: [20, 20, 380, 80],
+      text: "Hello",
+      color: RED,
+      size: 12,
+    });
+    const { id } = only(engine);
+    expect(only(engine).color).toEqual(RED);
+    // Give it a black background, as another app might.
+    const saved = engine.save();
+    const doc = mupdf.Document.openDocument(saved, "application/pdf");
+    const pdf = doc.asPDF() as mupdf.PDFDocument;
+    const annot = pdf.findPage(0).get("Annots").get(0);
+    const black = pdf.newArray();
+    for (const v of [0, 0, 0]) black.push(v);
+    annot.put("C", black);
+    const withBackground = pdf.saveToBuffer("incremental").asUint8Array().slice();
+    doc.destroy();
+
+    const imported = open(withBackground);
+    expect(only(imported).color).toEqual(RED);
+    // Black text is a real change, not a no-op because the background is already black.
+    imported.editAnnotation(0, id, { color: [0, 0, 0] });
+    expect(imported.history().undoLabel).toBe("Recolour text box");
+    expect(only(imported).color).toEqual([0, 0, 0]);
   });
 
   it("changes a note's and a text box's text", () => {

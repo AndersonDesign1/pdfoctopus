@@ -142,18 +142,21 @@ annotation is one undoable step.
 
 ### 6. Phase 2: editing and deleting annotations (2026-11-18)
 
-The **Select** tool, first in the Annotate row, selects any annotation on a page, including
-ones made in other apps and signatures saved in an earlier session. Drag it to move it, drag
+The **Select** tool, first in the Annotate row, selects markup annotations (highlights,
+drawings, shapes, notes, text boxes, stamps and the like), including ones made in other apps
+and signatures saved in an earlier session. Links, form fields, hidden annotations and note
+pop-ups aren't listed. Drag it to move it, drag
 its corner to resize it, pick a colour, edit a note's or text box's text, or delete it (the
 Delete button or key). Arrow keys move it by a point, or ten with Shift. Each change is one
 undoable step.
 
 - **Engine:** `listAnnotations`, `editAnnotation` and `deleteAnnotation` in
-  `packages/core/src/engine.ts`, helpers in `annotationObjects.ts`. Moving shifts every
-  coordinate in the annotation's dictionary and keeps its appearance, so anything moves
-  unchanged, even what MuPDF can't draw. Resizing scales a stamp's appearance and has MuPDF
-  redraw shapes and text boxes. Recolouring and text edits delete the appearance first, so
-  MuPDF draws a new stream instead of overwriting the old one in place (which it does, and
+  `packages/core/src/engine.ts`, helpers in `annotationObjects.ts`. Moving shifts the
+  annotation's geometry (/Rect, /QuadPoints, /InkList, /L, /Vertices, /CL, and a note pop-up's
+  /Rect) and keeps its appearance, so it looks the same afterwards, even when MuPDF couldn't
+  draw it. Resizing scales a stamp's appearance and has MuPDF
+  redraw shapes and text boxes. Recolouring and text-box edits delete the appearance first,
+  so MuPDF draws a new stream instead of overwriting the old one in place (which it does, and
   which would break undo). Undo restores a copy of the changed dictionary entries. Deleting a
   note takes its pop-up too, and undo puts them back in the same place in the stacking order.
   Tests: `annotationEdit.test.ts`, and the fixture sweep moves, recolours, edits and deletes on

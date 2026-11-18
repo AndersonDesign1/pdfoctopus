@@ -196,6 +196,14 @@ function runPageTools(name: string, path: string): void {
         expect.arrayContaining(["Square", "Text:Checked"]),
       );
       expect(annotationsOnFirstPage(saved, password)).not.toContain("Circle");
+      // The edits survived saving: the signature at the left edge, the rectangle blue.
+      const listed = check.listAnnotations(0);
+      const movedSignature = listed.find(
+        (a) => a.label === "signature" && Math.abs(a.rect[0]) < 0.5,
+      );
+      expect(movedSignature?.rect[1]).toBeCloseTo(signature.rect[1], 1);
+      // (Matched by colour: a full rewrite, for files that can't be appended to, renumbers.)
+      expect(listed.some((a) => a.label === "rectangle" && a.color?.join() === "0,0,1")).toBe(true);
     } finally {
       check.close();
     }
