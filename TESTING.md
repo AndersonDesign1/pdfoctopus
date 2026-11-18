@@ -104,7 +104,8 @@ Open `fixtures/generated/contract-libreoffice.pdf`, then use each tool in the **
 - [ ] **White-out:** covers what's underneath (it doesn't delete it)
 - [ ] **Rotated page:** rotate a page, then use a few tools on it; everything lands where drawn
       and the text box reads the right way up
-- [ ] **Undo / redo** each one; Escape puts the tool down
+- [ ] **Undo / redo** each one. Escape closes an open note or text box editor; Escape again
+      puts the tool down
 - [ ] **Saved file in Adobe Acrobat Reader:** all annotations show in the comments list, the
       note opens with its text, everything prints. Also in **Chrome/Edge** and **Firefox**
 

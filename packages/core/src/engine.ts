@@ -188,6 +188,9 @@ const ANNOTATION_LABELS: Record<AnnotationKind, string> = {
   whiteout: "Add white-out",
 };
 
+/** How many pages' text layouts are kept for selecting text. */
+const TEXT_CACHE_PAGES = 8;
+
 /** Upper bounds that keep a single annotation reasonable. */
 const MAX_INK_POINTS = 20_000;
 const MAX_ANNOTATION_TEXT = 10_000;
@@ -210,7 +213,10 @@ export class PdfEngine {
   private base: { length: number; startxref: number | null } | null = null;
   private undoStack: Step[] = [];
   private redoStack: Step[] = [];
-  /** Text layout of pages, for selecting text; dropped whenever the document changes. */
+  /**
+   * Text layout of recently used pages, for selecting text; dropped whenever the document
+   * changes. Only a few pages are kept, least recently used dropped first.
+   */
   private textCache = new Map<number, mupdf.StructuredText>();
 
   /**
@@ -875,15 +881,26 @@ export class PdfEngine {
 
   private pageText(index: number): mupdf.StructuredText {
     let text = this.textCache.get(index);
-    if (!text) {
+    if (text) {
+      // Most recently used goes last (a Map keeps insertion order).
+      this.textCache.delete(index);
+    } else {
       const page = this.requireDoc().loadPage(index);
       try {
         text = page.toStructuredText("preserve-whitespace");
       } finally {
         page.destroy();
       }
-      this.textCache.set(index, text);
+      while (this.textCache.size >= TEXT_CACHE_PAGES) {
+        const [oldest, layout] = this.textCache.entries().next().value as [
+          number,
+          mupdf.StructuredText,
+        ];
+        layout.destroy();
+        this.textCache.delete(oldest);
+      }
     }
+    this.textCache.set(index, text);
     return text;
   }
 

@@ -230,7 +230,7 @@ export class PdfWorkerClient {
     );
   }
 
-  /** Add a highlight, drawing, shape, note or text box, as one undoable step. */
+  /** Add a highlight, drawing, shape, note, text box or white-out, as one undoable step. */
   addAnnotation(spec: AnnotationSpec) {
     return this.call<"addAnnotation">({ type: "addAnnotation", spec });
   }

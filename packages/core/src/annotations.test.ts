@@ -171,7 +171,18 @@ describe("addAnnotation", () => {
       { kind: "arrow", page: 0, from: [200, 150], to: [350, 200], color: RED, width: 2 },
     ];
     for (const spec of specs) engine.addAnnotation(spec);
-    expect(subtypes(engine.save())).toEqual(["Ink", "Square", "Circle", "Line", "Line"]);
+    const saved = engine.save();
+    expect(subtypes(saved)).toEqual(["Ink", "Square", "Circle", "Line", "Line"]);
+    // The arrow is a line with an arrowhead at its end; the plain line has none.
+    const doc = mupdf.Document.openDocument(saved, "application/pdf");
+    const annots = doc.asPDF()?.findPage(0).get("Annots");
+    const endings = (i: number) => {
+      const le = annots?.get(i).get("LE");
+      return le?.isArray() ? [le.get(0).asName(), le.get(1).asName()] : [];
+    };
+    expect(endings(3)).not.toContain("ClosedArrow");
+    expect(endings(4)).toEqual(["None", "ClosedArrow"]);
+    doc.destroy();
     // The rectangle's left edge is blue, its middle still white.
     expect(pixel(engine, 0, 120, 50)).toEqual([0, 0, 255]);
     expect(pixel(engine, 0, 160, 50)).toEqual([255, 255, 255]);
@@ -314,6 +325,38 @@ describe("addAnnotation", () => {
     // And again, to be sure the second save is still a good file.
     const reopened = open(engine.save());
     expect(reopened.pageCount).toBe(1);
+  });
+
+  it.each([90, 180, 270] as const)(
+    "keeps a text box upright on a page rotated %i°, for every viewer",
+    (rotation) => {
+      const engine = open(createBlankPdf(1, 300, 200));
+      engine.rotatePages([0], rotation);
+      engine.addAnnotation({
+        kind: "text",
+        page: 0,
+        rect: [20, 20, 220, 60],
+        text: "Upright",
+        color: [0, 0, 0],
+        size: 14,
+      });
+      // The text box carries the page's rotation (/Rotate), which tells viewers to turn it back
+      // upright as the page is shown. MuPDF and pdf.js both draw it that way.
+      const doc = mupdf.Document.openDocument(engine.save(), "application/pdf");
+      const annot = doc.asPDF()?.findPage(0).get("Annots").get(0);
+      expect(annot?.get("Rotate").asNumber()).toBe(rotation);
+      doc.destroy();
+    },
+  );
+
+  it("selects text correctly on many pages, beyond the few whose layout is kept", () => {
+    const engine = open(textPdf(Array.from({ length: 12 }, () => 0 as const)));
+    for (let round = 0; round < 2; round++) {
+      for (let p = 0; p < 12; p++) {
+        const { from, to } = span(engine, p, `p${p}.`);
+        expect(engine.selectText(p, from, to)).toHaveLength(1);
+      }
+    }
   });
 
   it("refuses bad input without changing the document", () => {

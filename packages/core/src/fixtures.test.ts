@@ -176,11 +176,34 @@ function runPageTools(name: string, path: string): void {
       expect(info?.pageCount).toBe(count + 1);
       expect(check.renderPage(0, 0.1).width).toBeGreaterThan(0);
       expect(hasSignatureStamp(saved, password)).toBe(true);
+      expect(annotationsOnFirstPage(saved, password)).toEqual(
+        expect.arrayContaining(["Square", "Text:Checked"]),
+      );
     } finally {
       check.close();
     }
   } finally {
     engine.close();
+  }
+}
+
+/** The first page's annotations, as their subtype (and the text of notes). */
+function annotationsOnFirstPage(bytes: Uint8Array, password?: string): string[] {
+  const doc = mupdf.Document.openDocument(bytes, "application/pdf");
+  try {
+    if (doc.needsPassword()) doc.authenticatePassword(password ?? "");
+    const annots = doc.asPDF()?.findPage(0).get("Annots");
+    const out: string[] = [];
+    if (annots?.isArray()) {
+      for (let i = 0; i < annots.length; i++) {
+        const a = annots.get(i).resolve();
+        const type = a.get("Subtype").asName();
+        out.push(type === "Text" ? `Text:${a.get("Contents").asString()}` : type);
+      }
+    }
+    return out;
+  } finally {
+    doc.destroy();
   }
 }
 

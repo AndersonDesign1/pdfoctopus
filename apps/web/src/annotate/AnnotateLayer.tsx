@@ -35,6 +35,8 @@ export interface AnnotateLayerProps {
   /** The text a drag from `from` to `to` would mark, as quads in page points. */
   selectText(from: PagePoint, to: PagePoint): Promise<number[][]>;
   onCommit(spec: AnnotationSpec): void;
+  /** Told when a note or text box editor opens or closes, so other edits can wait for it. */
+  onDraftChange?(open: boolean): void;
 }
 
 type Drag = { start: PagePoint; current: PagePoint; points: PagePoint[]; pointer: number };
@@ -53,6 +55,7 @@ export function AnnotateLayer({
   busy,
   selectText,
   onCommit,
+  onDraftChange,
 }: AnnotateLayerProps) {
   const layerRef = useRef<HTMLDivElement>(null);
   const [drag, setDrag] = useState<Drag | null>(null);
@@ -61,30 +64,46 @@ export function AnnotateLayer({
   // Each page has its own layer, so the arrowhead needs an id of its own.
   const markerId = `pdfo-arrow-${useId().replace(/[^a-zA-Z0-9]/g, "")}`;
 
+  /** Bumped whenever a gesture starts or ends, so replies for an older one are ignored. */
+  const gesture = useRef(0);
+
   // A different tool starts afresh.
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset whenever the tool changes
   useEffect(() => {
+    gesture.current++;
     setDrag(null);
     setQuads([]);
     setEditor(null);
   }, [tool.id]);
 
-  // Text selection preview: one request at a time, always for the latest drag.
-  const want = useRef<{ from: PagePoint; to: PagePoint } | null>(null);
+  // Let the app know while a note or text box is being typed here. Only the layer with an open
+  // editor reports, so another page's layer appearing doesn't clear it.
+  const draftOpen = editor !== null;
+  useEffect(() => {
+    if (!draftOpen) return;
+    onDraftChange?.(true);
+    return () => onDraftChange?.(false);
+  }, [draftOpen, onDraftChange]);
+
+  // Text selection preview: one request at a time, always for the latest drag. A reply that
+  // comes back after its drag has ended is dropped, so no stale selection stays on the page.
+  const want = useRef<{ from: PagePoint; to: PagePoint; gesture: number } | null>(null);
   const asking = useRef(false);
   function previewText(from: PagePoint, to: PagePoint) {
-    want.current = { from, to };
+    want.current = { from, to, gesture: gesture.current };
     if (asking.current) return;
     asking.current = true;
     const ask = async () => {
       while (want.current) {
         const next = want.current;
         want.current = null;
+        let quads: number[][] = [];
         try {
-          setQuads(await selectText(next.from, next.to));
+          quads = await selectText(next.from, next.to);
         } catch {
-          setQuads([]);
+          // No preview this time; the drag still works.
         }
+        if (next.gesture === gesture.current) setQuads(quads);
       }
       asking.current = false;
     };
@@ -101,6 +120,7 @@ export function AnnotateLayer({
     e.preventDefault();
     e.currentTarget.setPointerCapture(e.pointerId);
     const p = point(e);
+    gesture.current++;
     setDrag({ start: p, current: p, points: [p], pointer: e.pointerId });
     setQuads([]);
   }
@@ -131,6 +151,7 @@ export function AnnotateLayer({
     const end = point(e);
     const { start } = drag;
     const click = isClick(start, end);
+    gesture.current++;
     setDrag(null);
     want.current = null;
     setQuads([]);
@@ -176,13 +197,15 @@ export function AnnotateLayer({
         }
         break;
       case "point":
-        setEditor({ kind: "note", at: start });
+        // A note goes where you click; a drag isn't a click.
+        if (click) setEditor({ kind: "note", at: start });
         break;
     }
   }
 
   function cancel(e: ReactPointerEvent) {
     if (drag && e.pointerId === drag.pointer) {
+      gesture.current++;
       setDrag(null);
       setQuads([]);
     }
@@ -367,7 +390,8 @@ function TextEditor({
             onCancel();
           } else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
             e.preventDefault();
-            if (text.trim()) onDone(text);
+            // Like the Add button: wait while something else is being done.
+            if (text.trim() && !busy) onDone(text);
           }
         }}
       />

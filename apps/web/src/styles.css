@@ -415,6 +415,8 @@ input {
 .pdfo-page-error {
   position: absolute;
   inset: 0;
+  /* Above the annotation layer, so "Try again" can be clicked while a tool is picked. */
+  z-index: 3;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -487,6 +489,11 @@ input {
   .divider,
   .tool[aria-pressed] {
     display: none;
+  }
+
+  /* The annotation tools are toggle buttons too, but they're the only way to annotate. */
+  .annotate-tools .tool[aria-pressed] {
+    display: inline-flex;
   }
 
   .brand {

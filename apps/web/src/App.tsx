@@ -197,6 +197,10 @@ export function App() {
   /** The colour chosen for each tool (until then, the tool's own default). */
   const [toolColors, setToolColors] = useState<Partial<Record<ToolId, RgbColor>>>({});
   const [lineWidth, setLineWidth] = useState(2);
+  /** True while a note or text box is being typed: other edits wait, so it stays on its page. */
+  const [drafting, setDrafting] = useState(false);
+  /** Bumped on every edit, so the drawing layers start afresh on the edited pages. */
+  const [editVersion, setEditVersion] = useState(0);
   /** A page to scroll to once the viewer has the edited document. */
   const pendingScroll = useRef<number | null>(null);
   const [busy, setBusy] = useState(false);
@@ -433,6 +437,7 @@ export function App() {
     const renderer = new PageRenderer(getClient());
     current.renderer.dispose();
     const next = { ...current, info: result.info, renderer };
+    setEditVersion((v) => v + 1);
     docRef.current = next;
     setDoc(next);
     setHistory(result.history);
@@ -474,7 +479,7 @@ export function App() {
 
   const targets = targetPages(selection, page);
   /** Page tools and saving wait while a stamp is being placed. */
-  const locked = busy || pending !== undefined;
+  const locked = busy || pending !== undefined || drafting;
 
   function rotate(degrees: RotationDelta) {
     const pages = targets;
@@ -818,7 +823,7 @@ export function App() {
         return;
       }
       if (!doc) return;
-      if (tool && e.key === "Escape" && !typingInField(e.target)) {
+      if (tool && !drafting && e.key === "Escape" && !typingInField(e.target)) {
         setTool(undefined);
         setStatus("");
         return;
@@ -847,7 +852,7 @@ export function App() {
         // Undo while placing a stamp means "never mind the stamp" (unless it's being applied).
         if (pending) {
           if (!busy) cancelPending();
-        } else undoOrRedo(key === "y" || e.shiftKey ? "redo" : "undo");
+        } else if (!drafting) undoOrRedo(key === "y" || e.shiftKey ? "redo" : "undo");
       } else if (mod && e.key.toLowerCase() === "f") {
         e.preventDefault();
         searchInput.current?.focus();
@@ -1447,6 +1452,9 @@ export function App() {
                 const picked = toolById(tool);
                 return (
                   <AnnotateLayer
+                    // A fresh layer after every edit, so nothing half-done carries over to
+                    // whatever page now has this index.
+                    key={`${editVersion}:${index}`}
                     pageIndex={index}
                     page={size}
                     scale={viewScale}
@@ -1456,6 +1464,7 @@ export function App() {
                     busy={busy}
                     selectText={(from, to) => getClient().selectText(index, from, to)}
                     onCommit={addAnnotation}
+                    onDraftChange={setDrafting}
                   />
                 );
               }}
