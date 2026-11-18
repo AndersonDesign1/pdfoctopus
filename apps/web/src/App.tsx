@@ -146,6 +146,14 @@ function messageOf(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+/**
+ * Whether a file looks like a picture to place: by its type, or by its name when the browser
+ * doesn't know the type. pictureToImage checks what's really inside.
+ */
+function isPictureFile(file: File): boolean {
+  return file.type.startsWith("image/") || /\.(png|jpe?g|webp|gif|bmp|avif)$/i.test(file.name);
+}
+
 function isPdfFile(file: File): boolean {
   return file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
 }
@@ -589,14 +597,26 @@ export function App() {
 
   /** Read a picture and start placing it on the current page. */
   async function placePicture(file: File) {
-    if (!docRef.current || workingRef.current) return;
+    const startedWith = docRef.current;
+    if (!startedWith || workingRef.current) return;
+    // Everything else waits while the picture is read (a big photo takes a moment), so no
+    // note, stamp or edit can start and then be swept away when it's ready.
+    workingRef.current = true;
+    setBusy(true);
     setStatus(`Reading ${file.name}…`);
+    let image: StampImage;
     try {
-      const image = await pictureToImage(file);
-      startPlacing("image", image, file.name);
+      image = await pictureToImage(file);
     } catch (err) {
       setStatus(err instanceof Error ? err.message : `${file.name} couldn't be read.`);
+      return;
+    } finally {
+      workingRef.current = false;
+      setBusy(false);
     }
+    // The document was closed or replaced meanwhile: the picture isn't for this one.
+    if (docRef.current !== startedWith) return;
+    startPlacing("image", image, file.name);
   }
 
   function addDate() {
@@ -1070,7 +1090,7 @@ export function App() {
       setDragging(false);
       const files = Array.from(e.dataTransfer?.files ?? []);
       const pdf = files.find(isPdfFile);
-      const picture = files.find((f) => f.type.startsWith("image/"));
+      const picture = files.find(isPictureFile);
       // A picture dropped on an open document goes on the page; anything else is opened.
       if (!pdf && picture && dropPictureRef.current) dropPictureRef.current(picture);
       else if (pdf ?? files[0]) void openFileRef.current((pdf ?? files[0]) as File);
