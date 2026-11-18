@@ -16,7 +16,17 @@ tasks needed to finish it and the **exit criteria** that must be true before we 
 ## Next up
 
 Start here if you're picking the project up. Do these in order, and update this list in the
-same PR that changes it. Last updated: 2026-11-10, after the page tools and saving work.
+same PR that changes it. Last updated: 2026-11-18, after fixing the red `main`.
+
+### 0. Keep `main` green (2026-11-18)
+
+A docs commit pushed straight to `main` on 2026-11-10 failed the formatting check, so `main`
+and every PR based on it (including Dependabot #11) were red for a week. Fixed, and to stop it
+happening again: `CLAUDE.md` and CONTRIBUTING.md now say every change goes through a PR and
+is merged only with green CI, and `bun install` sets up a pre-push hook that refuses pushes
+to `main` and runs lint and typecheck. **For the repo owner:** in the `main` branch
+protection settings, turn on "Do not allow bypassing the above settings" and require the
+`web`, `desktop` and `signatures` checks, so admins can't skip them either.
 
 ### 1. Dependabot PRs: done (2026-11-07)
 

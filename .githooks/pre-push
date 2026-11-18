@@ -1,0 +1,19 @@
+#!/bin/sh
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Runs before every `git push`. Installed by `bun install` (see "prepare" in package.json).
+# Skip once in an emergency with `git push --no-verify`.
+
+# 1. Never push straight to main: every change goes through a pull request so CI runs first.
+while read -r _local_ref _local_sha remote_ref _remote_sha; do
+  if [ "$remote_ref" = "refs/heads/main" ]; then
+    echo "pre-push: refusing to push to main. Push a branch and open a pull request instead." >&2
+    exit 1
+  fi
+done
+
+# 2. The fast CI checks. Tests and the build run in CI.
+echo "pre-push: running lint and typecheck..."
+bun run lint && bun run typecheck || {
+  echo "pre-push: fix the errors above (\`bun run format\` fixes formatting), then push again." >&2
+  exit 1
+}

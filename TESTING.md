@@ -20,26 +20,26 @@ These close the last Phase 1 exit criterion in [PHASES.md](./PHASES.md).
 Open `fixtures/generated/contract-libreoffice.pdf` (or any PDF with a few pages), then:
 
 - [ ] **Select:** click a thumbnail, Ctrl-click (Cmd on a Mac) another, Shift-click a range,
-      Ctrl+A for all, Escape to clear
+  Ctrl+A for all, Escape to clear
 - [ ] **Rotate** left and right: the page and its thumbnail both turn
 - [ ] **Delete** a page with the button, and with the Delete key in the page list
 - [ ] **Drag to reorder:** drag a page (and a selection of pages) to a new place; the purple
-      line shows where they'll land
+  line shows where they'll land
 - [ ] **Blank page:** inserted after the current page, the same size as its neighbour
 - [ ] **Insert PDF:** add pages from another PDF after the current page
 - [ ] **Merge:** add two PDFs at the end, reordering them in the dialog first. Include
-      `fixtures/generated/encrypted-aes256.pdf` (password `open-sesame`): it should ask for
-      the password
+  `fixtures/generated/encrypted-aes256.pdf` (password `open-sesame`): it should ask for
+  the password
 - [ ] **Extract:** select two pages and extract them; the new file has just those pages
 - [ ] **Split:** try "Pages" (e.g. `1-2, 3`), "Every 2 pages" and "Every page"; each part
-      opens and has the right pages. Run the same split twice into the same folder: the second
-      run adds numbered files instead of replacing the first ones
+  opens and has the right pages. Run the same split twice into the same folder: the second
+  run adds numbered files instead of replacing the first ones
 - [ ] **Undo / redo** every tool above, with the buttons and with Ctrl+Z / Ctrl+Y
 
 ### Saving
 
 - [ ] **Save** after editing: the first time it asks where to save; the next Save writes to
-      the same file without asking (Chrome/Edge)
+  the same file without asking (Chrome/Edge)
 - [ ] **Save as** always asks
 - [ ] The dot next to Save appears after an edit and goes away after saving
 - [ ] Opening another PDF with unsaved edits asks first; Cancel keeps your edits
@@ -53,10 +53,10 @@ Take a file you edited with several tools above and saved, and open it in:
 - [ ] **Chrome or Edge** PDF viewer
 - [ ] **Firefox** PDF viewer
 - [ ] **Signed file:** open `fixtures/generated/signed.pdf`, rotate a page, save, and open it
-      in Adobe Reader's signature panel. The original signature should still be listed (the
-      save only adds to the end of the file). Write down exactly what Reader says about it:
-      changing a signed file can be reported as "modified after signing", and that wording
-      tells us how Phase 5 should handle it
+  in Adobe Reader's signature panel. The original signature should still be listed (the
+  save only adds to the end of the file). Write down exactly what Reader says about it:
+  changing a signed file can be reported as "modified after signing", and that wording
+  tells us how Phase 5 should handle it
 
 ### Desktop app (Windows)
 

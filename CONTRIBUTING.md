@@ -48,6 +48,12 @@ The project is licensed under **AGPL-3.0-or-later**. Start every new source file
 
 ## Pull requests
 
+- Every change goes through a pull request. Never push straight to `main`, not even a
+  docs-only fix: CI only checks a change before it lands if it's in a PR.
 - Keep each PR focused on one change.
 - `bun run check` must pass.
+- Merge only when every CI job (`web`, `desktop`, `signatures`) is green. If `main` itself is
+  red, fixing it comes before anything else.
+- `bun install` sets up a pre-push hook (`.githooks/pre-push`) that refuses pushes to `main`
+  and runs lint and typecheck first. `bun run format` fixes formatting errors.
 - If your change completes a task in [PHASES.md](./PHASES.md), tick its box in the same PR.
