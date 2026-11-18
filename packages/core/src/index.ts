@@ -6,12 +6,14 @@ export type {
   DocumentMetadata,
   EditResult,
   HistoryState,
+  ImageStamp,
   OpenResult,
   PageSize,
   PdfSource,
   RenderedPage,
   RotationDelta,
   SearchHit,
+  StampKind,
 } from "./engine";
 export {
   EngineCrashedError,

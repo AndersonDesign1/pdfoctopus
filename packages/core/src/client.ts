@@ -2,7 +2,7 @@
 //
 // Promise-based client for the PDF worker. Use this from the UI thread.
 
-import type { PageSize, PdfSource, RotationDelta } from "./engine";
+import type { ImageStamp, PageSize, PdfSource, RotationDelta } from "./engine";
 import { EngineCrashedError, errorFromCode, isFatalEngineError } from "./errors";
 import type {
   LoadProgress,
@@ -204,6 +204,16 @@ export class PdfWorkerClient {
   /** Split into one new PDF per group of pages. The open document is unchanged. */
   splitPages(groups: number[][]) {
     return this.call<"splitPages">({ type: "splitPages", groups });
+  }
+
+  /**
+   * Put an image (a signature, initials, a date) on a page, as one undoable step. The image
+   * bytes are transferred to the worker, so `stamp.image` is unusable afterwards.
+   */
+  addImageStamp(stamp: ImageStamp) {
+    return this.call<"addImageStamp">({ type: "addImageStamp", stamp }, [
+      stamp.image.buffer as ArrayBuffer,
+    ]);
   }
 
   /** Undo the last page operation. Resolves to null when there was nothing to undo. */

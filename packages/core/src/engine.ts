@@ -78,6 +78,25 @@ export interface PdfSource {
 /** A clockwise rotation in degrees. */
 export type RotationDelta = 90 | 180 | 270 | -90;
 
+/** What an image stamp is, for its undo label and the text that describes it to readers. */
+export type StampKind = "signature" | "initials" | "date" | "image";
+
+/** An image to put on a page, such as a signature. */
+export interface ImageStamp {
+  /** 0-based page. */
+  page: number;
+  /**
+   * Where to put it: [left, top, right, bottom] in points, measured from the top-left corner
+   * of the page as it is shown (after the page's own rotation).
+   */
+  rect: [number, number, number, number];
+  /** PNG or JPEG bytes. Transparency in a PNG is kept. */
+  image: Uint8Array;
+  kind: StampKind;
+  /** Text describing the stamp (e.g. the date written in it), stored as its description. */
+  text?: string;
+}
+
 /** One undoable step. Each step knows how to reverse itself, so no copies are kept. */
 interface Step {
   label: string;
@@ -93,6 +112,20 @@ export const MAX_HISTORY = 200;
 
 /** Upper bound on search hits returned at once, so a common word can't flood the UI. */
 export const MAX_SEARCH_HITS = 5000;
+
+/** Upper bound on a stamp image's size, so a huge photo can't bloat the PDF. */
+export const MAX_STAMP_IMAGE_BYTES = 10 * 1024 * 1024;
+
+/** Annotation flags (PDF 1.7, 12.5.3): shown when printed, and can't be moved or changed. */
+const ANNOT_FLAG_PRINT = 4;
+const ANNOT_FLAG_LOCKED = 128;
+
+const STAMP_LABELS: Record<StampKind, { undo: string; contents: string }> = {
+  signature: { undo: "Add signature", contents: "Signature" },
+  initials: { undo: "Add initials", contents: "Initials" },
+  date: { undo: "Add date", contents: "Date" },
+  image: { undo: "Add image", contents: "Image" },
+};
 
 export class PdfEngine {
   private doc: mupdf.Document | null = null;
@@ -255,7 +288,10 @@ export class PdfEngine {
     if (incremental && !pdf.canBeSavedIncrementally()) {
       throw new IncrementalSaveError();
     }
-    const buffer = pdf.saveToBuffer(incremental ? "incremental" : "garbage");
+    // "compress" deflates streams that are written uncompressed. MuPDF stores a stamp's image
+    // as raw pixels, which would make a signed file several megabytes bigger. In an
+    // incremental save it only applies to the objects being appended, never to the original.
+    const buffer = pdf.saveToBuffer(incremental ? "incremental,compress" : "garbage,compress");
     try {
       return buffer.asUint8Array().slice();
     } finally {
@@ -441,6 +477,84 @@ export class PdfEngine {
     return groups.map((group) => this.extractPages(group));
   }
 
+  // ---------------------------------------------------------------------------------------
+  // Stamps (signatures, initials, dates). Each is added as a stamp annotation on top of the
+  // page, so the page's own content is never touched and saving only appends to the file.
+
+  /**
+   * Put an image (a signature, initials, a date) on a page as one undoable step. The image
+   * is shown upright as the page is displayed, even on rotated pages, and prints.
+   */
+  addImageStamp(stamp: ImageStamp): EditResult {
+    const pdf = this.requirePdf();
+    const [index] = this.checkPages([stamp.page]) as [number];
+    const labels = STAMP_LABELS[stamp.kind];
+    if (!labels) throw new Error(`Unknown stamp kind: ${String(stamp.kind)}`);
+    const [x0, y0, x1, y1] = checkRect(stamp.rect);
+    if (stamp.image.byteLength === 0) throw new Error("The image is empty");
+    if (stamp.image.byteLength > MAX_STAMP_IMAGE_BYTES) {
+      throw new Error("The image is too large (10 MB at most)");
+    }
+    let image: mupdf.Image;
+    try {
+      image = new mupdf.Image(stamp.image);
+    } catch {
+      throw new Error("The image couldn't be read. Use a PNG or JPEG file.");
+    }
+
+    let object: mupdf.PDFObject;
+    const page = pdf.loadPage(index);
+    try {
+      const [bx0, by0, bx1, by1] = page.getBounds();
+      const slack = 0.5; // Rounding in the UI can put an edge a fraction of a point outside.
+      if (x0 < -slack || y0 < -slack || x1 > bx1 - bx0 + slack || y1 > by1 - by0 + slack) {
+        throw new Error("The stamp must be inside the page");
+      }
+      const annot = page.createAnnotation("Stamp");
+      annot.setRect([bx0 + x0, by0 + y0, bx0 + x1, by0 + y1]);
+      annot.setStampImage(image);
+      annot.setFlags(ANNOT_FLAG_PRINT | ANNOT_FLAG_LOCKED);
+      annot.setContents(stamp.text?.trim() || labels.contents);
+      annot.update();
+      object = annot.getObject();
+      // Not one of the standard stamp names (MuPDF defaults to "Draft"), so no viewer draws
+      // a stock "DRAFT" stamp in its place; and no border colour, which an image doesn't use.
+      object.put("Name", pdf.newName(`PDFoctopus${capitalise(stamp.kind)}`));
+      object.delete("C");
+      // MuPDF draws the image upright for an unrotated page. On a rotated page, turn the
+      // appearance back by the page's rotation so it's upright as the page is shown. This is
+      // set after update(), which would otherwise rebuild the appearance without it.
+      const rotation = readRotation(pdf.findPage(index));
+      if (rotation !== 0) {
+        const t = (rotation * Math.PI) / 180;
+        const c = Math.round(Math.cos(t));
+        const s = Math.round(Math.sin(t));
+        const matrix = pdf.newArray();
+        for (const v of [c, s, -s, c, 0, 0]) matrix.push(v);
+        object.get("AP").get("N").put("Matrix", matrix);
+      }
+    } finally {
+      page.destroy();
+      image.destroy();
+    }
+
+    // The annotation is on the page now. Undo takes it off the page and redo puts the same
+    // object back, so undoing and redoing doesn't add copies of the image to the file.
+    let attached = true;
+    return this.run({
+      label: labels.undo,
+      redo: () => {
+        if (attached) return;
+        attachAnnotation(pdf, index, object);
+        attached = true;
+      },
+      undo: () => {
+        detachAnnotation(pdf, index, object);
+        attached = false;
+      },
+    });
+  }
+
   /** Undo the last page operation. Returns null when there is nothing to undo. */
   undo(): EditResult | null {
     this.requirePdf();
@@ -602,6 +716,47 @@ function flattenInherited(page: mupdf.PDFObject): void {
     const inherited = page.getInheritable(key);
     if (!inherited.isNull()) page.put(key, inherited);
   }
+}
+
+/** Check a [left, top, right, bottom] rectangle: finite numbers, at least 1 point each way. */
+function checkRect(rect: readonly number[]): [number, number, number, number] {
+  const [x0, y0, x1, y1] = rect;
+  if (rect.length !== 4 || ![x0, y0, x1, y1].every((v) => Number.isFinite(v))) {
+    throw new Error("The stamp's position isn't valid");
+  }
+  const r = [x0, y0, x1, y1] as [number, number, number, number];
+  if (r[2] - r[0] < 1 || r[3] - r[1] < 1) throw new Error("The stamp is too small");
+  return r;
+}
+
+/** The page's /Annots array, created if the page has none. */
+function annotsOf(pdf: mupdf.PDFDocument, pageIndex: number): mupdf.PDFObject {
+  const page = pdf.findPage(pageIndex);
+  let annots = page.get("Annots");
+  if (!annots.isArray()) {
+    annots = pdf.newArray();
+    page.put("Annots", annots);
+  }
+  return annots;
+}
+
+function attachAnnotation(pdf: mupdf.PDFDocument, pageIndex: number, object: mupdf.PDFObject) {
+  annotsOf(pdf, pageIndex).push(object);
+}
+
+function detachAnnotation(pdf: mupdf.PDFDocument, pageIndex: number, object: mupdf.PDFObject) {
+  const annots = annotsOf(pdf, pageIndex);
+  const num = object.asIndirect();
+  for (let i = annots.length - 1; i >= 0; i--) {
+    if (annots.get(i).asIndirect() === num) {
+      annots.delete(i);
+      return;
+    }
+  }
+}
+
+function capitalise(word: string): string {
+  return word.charAt(0).toUpperCase() + word.slice(1);
 }
 
 /** "1 page", "3 pages". */

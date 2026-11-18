@@ -64,6 +64,31 @@ Take a file you edited with several tools above and saved, and open it in:
 - [ ] "Open with" PDFoctopus on a PDF opens it
 - [ ] Save writes the file; Split asks for a folder and writes the parts there
 
+## Phase 2: signatures
+
+Open `fixtures/generated/contract-libreoffice.pdf`, then:
+
+- [ ] **Draw:** Sign → Draw with a mouse; on a touch screen or tablet with a finger; with a
+  pen (strokes get thicker when you press harder). Undo stroke and Clear work
+- [ ] **Type:** your name in each of the three styles, in black and in blue
+- [ ] **Upload:** a phone photo of a signature on paper. With "Remove the paper background"
+  the paper disappears and the ink stays; without it, the photo is placed as it is
+- [ ] **Remember on this device:** the signature is offered under "Saved" next time, also
+  after reloading the page; ✕ forgets it. Initials are saved separately from signatures
+- [ ] **Initials** and **Date** (today's date, written the way your system writes dates)
+- [ ] **Place:** the stamp appears in the middle of what's on screen; drag it, resize it from
+  the corner (it keeps its shape), click another spot or another page to move it there;
+  arrow keys move it (Shift for bigger steps), + and − resize, Enter applies, Escape cancels
+- [ ] **Rotated page:** rotate a page, then sign it: the signature is upright as you see it
+- [ ] **Undo / redo** a signature with the buttons and Ctrl+Z / Ctrl+Y
+- [ ] **Saved file in Adobe Acrobat Reader:** signature, initials and date show in the right
+  places, upright on rotated pages, with see-through backgrounds, and **print**. Reader lists
+  them as stamps in the comments panel; they shouldn't be movable there (they're locked)
+- [ ] **Saved file in Chrome/Edge** and **Firefox** PDF viewers
+- [ ] **File size:** signing adds tens of kilobytes, not megabytes
+- [ ] **Signed file:** sign `fixtures/generated/signed.pdf` and check Reader's signature panel
+  still lists the original certificate signature (it will say the file changed after signing)
+
 ## Problems found
 
 _None yet._

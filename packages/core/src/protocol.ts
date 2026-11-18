@@ -5,6 +5,7 @@
 import type {
   DocumentInfo,
   EditResult,
+  ImageStamp,
   OpenResult,
   PageSize,
   PdfSource,
@@ -28,6 +29,7 @@ export type WorkerRequest =
   | { id: number; type: "insertPdfs"; at: number; sources: PdfSource[] }
   | { id: number; type: "extractPages"; pages: number[] }
   | { id: number; type: "splitPages"; groups: number[][] }
+  | { id: number; type: "addImageStamp"; stamp: ImageStamp }
   | { id: number; type: "undo" }
   | { id: number; type: "redo" }
   | { id: number; type: "close" };
@@ -48,6 +50,7 @@ export interface WorkerResults {
   insertPdfs: EditResult;
   extractPages: Uint8Array;
   splitPages: Uint8Array[];
+  addImageStamp: EditResult;
   undo: EditResult | null;
   redo: EditResult | null;
   close: null;

@@ -16,7 +16,7 @@ tasks needed to finish it and the **exit criteria** that must be true before we 
 ## Next up
 
 Start here if you're picking the project up. Do these in order, and update this list in the
-same PR that changes it. Last updated: 2026-11-18, after fixing the red `main`.
+same PR that changes it. Last updated: 2026-11-18, after the simple signatures work.
 
 ### 0. Keep `main` green (2026-11-18)
 
@@ -39,11 +39,13 @@ require the `web`, `desktop` and `signatures` checks, so admins can't skip them 
 - #6 (`@types/node` 22 → 26) was closed. `.github/dependabot.yml` now ignores major updates
   to `@types/node`: the types must match the Node version we run (22), so bump them together
   with Node.
-- **Open question for the repo owner:** the Cloudflare **Workers Builds** check fails
-  instantly on every Dependabot branch, without running the build, while it passes on our own
-  branches and on `main`. It's only the preview check and isn't required, but check the
-  build's log in the Cloudflare dashboard (Workers & Pages → pdfoctopus → Builds) to see why.
-  It may be the setting for which branches get preview builds.
+- **Cloudflare preview builds fail on every branch (cause found 2026-11-18).** The build log
+  shows the dashboard's _build command_ is `npx wrangler deploy`, so nothing is built and
+  wrangler stops because `apps/web/dist` doesn't exist. **For the repo owner**, in Workers &
+  Pages → pdfoctopus → Settings → Build: set the build command to `bun run build`, keep the
+  deploy command `npx wrangler deploy`, and set the non-production branch deploy command to
+  `npx wrangler versions upload`, so branches get previews and can never deploy to the live
+  site.
 
 From now on, Dependabot opens a few PRs each week. Merge minor and patch updates once CI is
 green. Test major updates locally first, as was done for TypeScript 7.
@@ -86,6 +88,29 @@ The domain, SignPath, Oracle Cloud and the trademark check (see
 [Phase 0](#phase-0-foundations)). Also confirm the exit criteria on a real Windows machine:
 `bun run desktop`, and "Open with" for PDFs, which has only been compiled so far.
 
+### 4. Phase 2: simple signatures done (2026-11-18)
+
+Sign, Initials and Date are on the page tools toolbar. Signatures can be drawn (smoothed,
+with pen pressure), typed in one of three handwriting fonts, or uploaded as a photo or scan
+with the paper removed. They can be remembered on the device. Each one is placed as a box you
+drag and resize (or move with the arrow keys), then applied as one undoable step.
+
+- **Engine:** `addImageStamp` in `packages/core/src/engine.ts` adds a stamp annotation with
+  the image, so the page's own content isn't touched and saving only appends. On rotated
+  pages the appearance is turned back so it's upright as shown. Undo takes the annotation off
+  the page and redo puts the same object back. Saves now use MuPDF's `compress` option,
+  because MuPDF stores stamp images as raw pixels (a signature added ~1.7 MB before).
+  Tests: `stamps.test.ts`, and the fixture sweep stamps every file.
+- **UI:** `apps/web/src/sign/` (dialog, drawing pad, placement box, and the pure helpers in
+  `ink.ts`, which are unit-tested). Fonts come from `@fontsource` (SIL OFL), Latin subsets only.
+- **Checked:** in Chromium end to end (draw, type, upload, place, apply, undo, save), and the
+  saved files render correctly in pdf.js (Firefox's viewer), on a rotated page too.
+- **Still to check by hand:** see the Phase 2 list in [TESTING.md](./TESTING.md), mainly how
+  the signed files look and print in Adobe Reader.
+- **Next in Phase 2:** annotations (highlight, notes, drawing, shapes, text boxes), then
+  editing and deleting existing ones, which also covers removing a misplaced signature after
+  it has been saved.
+
 ### Where things are
 
 - **Engine:** `packages/core` (MuPDF in a Web Worker, plus a promise-based client). Tests:
@@ -106,7 +131,7 @@ The domain, SignPath, Oracle Cloud and the trademark check (see
 | --- | ----------------------------------------------------------------- | -------- | -------------- |
 | 0   | [Foundations](#phase-0-foundations)                               | 1–2 wks  | 🟨 In progress |
 | 1   | [Core viewer + page tools](#phase-1-core-viewer--page-tools)      | 2–3 wks  | 🟨 In progress |
-| 2   | [Sign, annotate & forms](#phase-2-sign-annotate--forms)           | 3–4 wks  | ⬜ Not started |
+| 2   | [Sign, annotate & forms](#phase-2-sign-annotate--forms)           | 3–4 wks  | 🟨 In progress |
 | 3   | [Security, compress & create](#phase-3-security-compress--create) | 2–3 wks  | ⬜ Not started |
 | 4   | [Conversion](#phase-4-conversion)                                 | 2–3 wks  | ⬜ Not started |
 | 5   | [Certificate signatures](#phase-5-certificate-signatures-pades)   | 2–3 wks  | ⬜ Not started |
@@ -225,13 +250,13 @@ The domain, SignPath, Oracle Cloud and the trademark check (see
 
 ### Simple signatures
 
-- [ ] Draw a signature (mouse, pen, touch) with smoothing
-- [ ] Type a signature with a choice of handwriting fonts
-- [ ] Upload a signature image
-- [ ] Automatic background removal for photos of paper signatures
-- [ ] Save signatures and initials for reuse (stored locally)
-- [ ] Date stamps
-- [ ] Place, resize and move signatures on the page
+- [x] Draw a signature (mouse, pen, touch) with smoothing
+- [x] Type a signature with a choice of handwriting fonts
+- [x] Upload a signature image
+- [x] Automatic background removal for photos of paper signatures
+- [x] Save signatures and initials for reuse (stored locally)
+- [x] Date stamps
+- [x] Place, resize and move signatures on the page
 
 ### Annotations
 

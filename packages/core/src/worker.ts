@@ -101,6 +101,8 @@ async function handle(req: WorkerRequest): Promise<WorkerSuccess> {
       return success(req.id, "extractPages", engine.extractPages(req.pages));
     case "splitPages":
       return success(req.id, "splitPages", engine.splitPages(req.groups));
+    case "addImageStamp":
+      return success(req.id, "addImageStamp", engine.addImageStamp(req.stamp));
     case "undo":
       return success(req.id, "undo", engine.undo());
     case "redo":
