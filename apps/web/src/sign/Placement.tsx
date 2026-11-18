@@ -4,7 +4,7 @@
 // drag its corner to resize it, then apply. Nothing changes in the PDF until Apply.
 
 import { type PointerEvent as ReactPointerEvent, useEffect, useRef } from "react";
-import { clampRect, type PageRect, resizeRect } from "./ink";
+import { clampRect, type PageRect, placementKey, resizeRect } from "./ink";
 
 export interface PlacementProps {
   rect: PageRect;
@@ -38,10 +38,12 @@ export function Placement({
   const boxRef = useRef<HTMLButtonElement>(null);
   const drag = useRef<Drag | null>(null);
 
-  // Put the keyboard on the stamp as soon as it appears, so Enter and Escape work at once.
+  // Put the keyboard on the stamp when it appears, and again whenever it moves (clicking the
+  // page to move it would otherwise leave the focus on the page), so its keys keep working.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-run whenever the stamp moves
   useEffect(() => {
     boxRef.current?.focus({ preventScroll: true });
-  }, []);
+  }, [rect.left, rect.top]);
 
   function begin(e: ReactPointerEvent, mode: Drag["mode"]) {
     if (e.button !== 0 || busy) return;
@@ -98,35 +100,14 @@ export function Placement({
         onPointerUp={end}
         onPointerCancel={end}
         onKeyDown={(e) => {
-          const step = e.shiftKey ? 10 : 1;
-          const nudge: Record<string, [number, number]> = {
-            ArrowLeft: [-step, 0],
-            ArrowRight: [step, 0],
-            ArrowUp: [0, -step],
-            ArrowDown: [0, step],
-          };
-          const delta = nudge[e.key];
-          let handled = true;
-          if (delta) {
-            onChange(
-              clampRect({ ...rect, left: rect.left + delta[0], top: rect.top + delta[1] }, page),
-            );
-          } else if (e.key === "+" || e.key === "=") {
-            onChange(resizeRect(rect, rect.width * 1.1, page));
-          } else if (e.key === "-") {
-            onChange(resizeRect(rect, rect.width / 1.1, page));
-          } else if (e.key === "Enter" && !busy) {
-            onApply();
-          } else if (e.key === "Escape") {
-            onCancel();
-          } else {
-            handled = false;
-          }
-          // Keep these keys from also scrolling the page or changing page.
-          if (handled) {
-            e.preventDefault();
-            e.stopPropagation();
-          }
+          const action = placementKey(e.key, e.shiftKey, rect, page);
+          if (!action) return;
+          // Keep these keys from also scrolling the view or changing page.
+          e.preventDefault();
+          e.stopPropagation();
+          if (action.type === "change") onChange(action.rect);
+          else if (action.type === "apply" && !busy) onApply();
+          else if (action.type === "cancel") onCancel();
         }}
       >
         <img src={imageUrl} alt="" draggable={false} />

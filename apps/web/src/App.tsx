@@ -27,7 +27,7 @@ import {
   writeFiles,
   writeToDestination,
 } from "./saveFile";
-import { clampRect, formatToday, initialRect, type PageRect } from "./sign/ink";
+import { clampRect, formatToday, initialRect, type PageRect, placementKey } from "./sign/ink";
 import { Placement } from "./sign/Placement";
 import { SignDialog } from "./sign/SignDialog";
 import { dateToStamp, type StampImage } from "./sign/stampImage";
@@ -786,6 +786,21 @@ export function App() {
         return;
       }
       if (!doc) return;
+      // While a stamp is being placed, its keys work wherever the focus is, even when its page
+      // has scrolled out of view. Enter on a button is that button's own click.
+      if (pending && !mod && !e.altKey && !typingInField(e.target)) {
+        const size = doc.info.pages[pending.page];
+        const enterOnButton = e.key === "Enter" && e.target instanceof HTMLButtonElement;
+        const action =
+          size && !enterOnButton ? placementKey(e.key, e.shiftKey, pending.rect, size) : null;
+        if (action) {
+          e.preventDefault();
+          if (action.type === "change") setPending({ ...pending, rect: action.rect });
+          else if (action.type === "apply" && !busy) applyPending();
+          else if (action.type === "cancel") cancelPending();
+          return;
+        }
+      }
       const key = e.key.toLowerCase();
       if (mod && key === "s") {
         e.preventDefault();

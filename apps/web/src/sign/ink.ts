@@ -226,6 +226,43 @@ export function resizeRect(
   return { ...rect, width: w, height: w / aspect };
 }
 
+/** What a key does to a stamp being placed. */
+export type PlacementKeyAction =
+  | { type: "change"; rect: PageRect }
+  | { type: "apply" }
+  | { type: "cancel" }
+  | null;
+
+/**
+ * The keyboard controls for a stamp being placed: arrows move it (Shift for 10-point steps),
+ * + and − resize it, Enter applies and Escape cancels. Null for any other key.
+ */
+export function placementKey(
+  key: string,
+  shift: boolean,
+  rect: PageRect,
+  page: { width: number; height: number },
+): PlacementKeyAction {
+  const step = shift ? 10 : 1;
+  const moves: Record<string, [number, number]> = {
+    ArrowLeft: [-step, 0],
+    ArrowRight: [step, 0],
+    ArrowUp: [0, -step],
+    ArrowDown: [0, step],
+  };
+  const move = moves[key];
+  if (move) {
+    const moved = { ...rect, left: rect.left + move[0], top: rect.top + move[1] };
+    return { type: "change", rect: clampRect(moved, page) };
+  }
+  if (key === "+" || key === "=")
+    return { type: "change", rect: resizeRect(rect, rect.width * 1.1, page) };
+  if (key === "-") return { type: "change", rect: resizeRect(rect, rect.width / 1.1, page) };
+  if (key === "Enter") return { type: "apply" };
+  if (key === "Escape") return { type: "cancel" };
+  return null;
+}
+
 /** Today's date as people write it here, e.g. "18 Nov 2026" or "Nov 18, 2026". */
 export function formatToday(date = new Date(), locale?: string): string {
   return new Intl.DateTimeFormat(locale, { dateStyle: "medium" }).format(date);

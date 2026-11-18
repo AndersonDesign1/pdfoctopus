@@ -9,6 +9,7 @@ import {
   initialRect,
   MIN_STAMP_SIZE,
   padBox,
+  placementKey,
   removeBackground,
   resizeRect,
   smoothStroke,
@@ -155,5 +156,33 @@ describe("placing a stamp", () => {
   it("scales down but never up", () => {
     expect(fitWithin(100, 50, 400, 400)).toEqual({ width: 100, height: 50 });
     expect(fitWithin(800, 400, 400, 400)).toEqual({ width: 400, height: 200 });
+  });
+});
+
+describe("placementKey", () => {
+  const page = { width: 595, height: 842 };
+  const rect = { left: 100, top: 100, width: 60, height: 20 };
+
+  it("moves with the arrows, further with Shift, and never off the page", () => {
+    expect(placementKey("ArrowRight", false, rect, page)).toEqual({
+      type: "change",
+      rect: { ...rect, left: 101 },
+    });
+    expect(placementKey("ArrowUp", true, rect, page)).toEqual({
+      type: "change",
+      rect: { ...rect, top: 90 },
+    });
+    const atEdge = { ...rect, left: 0 };
+    expect(placementKey("ArrowLeft", true, atEdge, page)).toEqual({ type: "change", rect: atEdge });
+  });
+
+  it("resizes with + and -, applies with Enter, cancels with Escape, and ignores the rest", () => {
+    const bigger = placementKey("+", false, rect, page);
+    expect(bigger?.type === "change" && bigger.rect.width).toBeCloseTo(66);
+    const smaller = placementKey("-", false, rect, page);
+    expect(smaller?.type === "change" && smaller.rect.height).toBeLessThan(20);
+    expect(placementKey("Enter", false, rect, page)).toEqual({ type: "apply" });
+    expect(placementKey("Escape", false, rect, page)).toEqual({ type: "cancel" });
+    expect(placementKey("a", false, rect, page)).toBeNull();
   });
 });

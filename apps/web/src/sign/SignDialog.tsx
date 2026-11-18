@@ -82,6 +82,8 @@ export function SignDialog({
     }
     let current = true;
     setError(undefined);
+    // The previous result is for another picture or setting: never place it by mistake.
+    setUploaded(null);
     pictureToStamp(picture, removePaper).then(
       (img) => {
         if (!current) return;
@@ -104,6 +106,16 @@ export function SignDialog({
     (tab === "type" && typed.trim() !== "") ||
     (tab === "upload" && uploaded !== null);
 
+  // A typed signature waits for its font, and the dialog can be closed meanwhile. Once it's
+  // closed, the result must be dropped: not remembered, and not placed.
+  const open = useRef(true);
+  useEffect(
+    () => () => {
+      open.current = false;
+    },
+    [],
+  );
+
   async function use() {
     setError(undefined);
     setWorking(true);
@@ -112,6 +124,7 @@ export function SignDialog({
       if (tab === "draw") image = strokesToStamp(strokes, PAD, colour, PEN_WIDTH[kind]);
       else if (tab === "type") image = await textToStamp(typed, font, colour);
       else if (tab === "upload") image = uploaded;
+      if (!open.current) return;
       if (!image) {
         setError(`There's no ${noun} to use yet.`);
         return;
@@ -124,7 +137,7 @@ export function SignDialog({
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setWorking(false);
+      if (open.current) setWorking(false);
     }
   }
 
