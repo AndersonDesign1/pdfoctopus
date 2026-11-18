@@ -89,6 +89,25 @@ Open `fixtures/generated/contract-libreoffice.pdf`, then:
 - [ ] **Signed file:** sign `fixtures/generated/signed.pdf` and check Reader's signature panel
   still lists the original certificate signature (it will say the file changed after signing)
 
+## Phase 2: annotations
+
+Open `fixtures/generated/contract-libreoffice.pdf`, then use each tool in the **Annotate** row:
+
+- [ ] **Highlight, Underline, Strikethrough:** drag across a few words, and across two lines;
+  the preview follows the text. On a scanned page (`fixtures/generated/scanned-invoice.pdf`)
+  it says there's no text to mark
+- [ ] **Pen:** draw with a mouse, a finger and a pen
+- [ ] **Rectangle, Ellipse, Line, Arrow:** drag in each direction; try each colour and width
+- [ ] **Note:** click, type, then Add (or Ctrl+Enter); Escape cancels. Near the page's right
+  and bottom edges the editor stays on the page
+- [ ] **Text box:** drag a box (or just click) and type
+- [ ] **White-out:** covers what's underneath (it doesn't delete it)
+- [ ] **Rotated page:** rotate a page, then use a few tools on it; everything lands where drawn
+  and the text box reads the right way up
+- [ ] **Undo / redo** each one; Escape puts the tool down
+- [ ] **Saved file in Adobe Acrobat Reader:** all annotations show in the comments list, the
+  note opens with its text, everything prints. Also in **Chrome/Edge** and **Firefox**
+
 ## Problems found
 
 _None yet._

@@ -96,7 +96,7 @@ describe("fixtures", () => {
 });
 
 /**
- * Run every page tool on a file, save it and reopen the result. Saves incrementally when
+ * Run every page tool on a file, add a stamp and annotations, save it and reopen the result. Saves incrementally when
  * the file allows it (checking the original bytes are untouched), and rewrites it otherwise.
  */
 function runPageTools(name: string, path: string): void {
@@ -130,6 +130,21 @@ function runPageTools(name: string, path: string): void {
       (height + h) / 2,
     ];
     engine.addImageStamp({ page: 0, rect: stampRect, image: tinyPng(), kind: "signature" });
+    // And a rectangle and a sticky note in the same place.
+    engine.addAnnotation({
+      kind: "rectangle",
+      page: 0,
+      rect: stampRect,
+      color: [1, 0, 0],
+      width: 1,
+    });
+    engine.addAnnotation({
+      kind: "note",
+      page: 0,
+      at: [stampRect[0], stampRect[1]],
+      text: "Checked",
+      color: [1, 0.8, 0],
+    });
     const extracted = engine.extractPages([0, engine.pageCount - 1]);
     expect(reopenedPageCount(extracted, password)).toBe(2);
     const split = engine.splitPages([[0], [engine.pageCount - 1, 0]]);

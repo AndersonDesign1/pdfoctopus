@@ -16,7 +16,7 @@ tasks needed to finish it and the **exit criteria** that must be true before we 
 ## Next up
 
 Start here if you're picking the project up. Do these in order, and update this list in the
-same PR that changes it. Last updated: 2026-11-18, after the simple signatures work.
+same PR that changes it. Last updated: 2026-11-18, after the first annotation tools.
 
 ### 0. Keep `main` green (2026-11-18)
 
@@ -106,9 +106,27 @@ drag and resize (or move with the arrow keys), then applied as one undoable step
   saved files render correctly in pdf.js (Firefox's viewer), on a rotated page too.
 - **Still to check by hand:** see the Phase 2 list in [TESTING.md](./TESTING.md), mainly how
   the signed files look and print in Adobe Reader.
-- **Next in Phase 2:** annotations (highlight, notes, drawing, shapes, text boxes), then
-  editing and deleting existing ones, which also covers removing a misplaced signature after
-  it has been saved.
+
+### 5. Phase 2: annotation tools (2026-11-18)
+
+An **Annotate** toolbar row has Highlight, Underline, Strikethrough, Pen, Rectangle, Ellipse,
+Line, Arrow, Note, Text box and White-out, with a colour and a line width. Pick a tool, then
+drag (or click, for notes and text boxes) on the page; Escape puts the tool down. Each
+annotation is one undoable step.
+
+- **Engine:** `addAnnotation` and `selectText` in `packages/core/src/engine.ts`. Text markup
+  uses MuPDF's text layout, so a drag selects text the way a cursor would; it's cached per page
+  and dropped on every edit. Bad input is checked before anything is created. A sticky note's
+  pop-up annotation comes and goes with it on undo/redo. Tests: `annotations.test.ts`, and the
+  fixture sweep adds a rectangle and a note to every editable fixture.
+- **UI:** `apps/web/src/annotate/` (`tools.ts` with the unit-tested geometry, and
+  `AnnotateLayer.tsx`, drawn over each page while a tool is picked, with live previews).
+- **Checked:** every tool end to end in Chromium, and the saved file in pdf.js.
+- **White-out only covers.** The text underneath is still in the file. True removal is
+  redaction, further down Phase 2.
+- **Next in Phase 2:** edit and delete existing annotations (which also covers removing a
+  misplaced signature after saving), then stamps (Approved, Draft, …) and images, then
+  redaction and forms.
 
 ### Where things are
 
@@ -259,12 +277,12 @@ drag and resize (or move with the arrow keys), then applied as one undoable step
 
 ### Annotations
 
-- [ ] Highlight, underline, strikethrough
-- [ ] Sticky-note comments
-- [ ] Freehand drawing
-- [ ] Shapes (rectangle, ellipse, line, arrow)
-- [ ] Add text boxes and images (overlay edits)
-- [ ] White-out
+- [x] Highlight, underline, strikethrough
+- [x] Sticky-note comments
+- [x] Freehand drawing
+- [x] Shapes (rectangle, ellipse, line, arrow)
+- [ ] Add text boxes and images (overlay edits). Text boxes are done; images are still to do
+- [x] White-out
 - [ ] Stamps (Approved, Draft, Confidential, custom)
 - [ ] Edit and delete existing annotations
 

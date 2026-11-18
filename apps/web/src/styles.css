@@ -866,3 +866,91 @@ input {
 .pdfo-placement-actions .button.secondary {
   background: var(--surface);
 }
+
+/* ---- Annotations ---- */
+
+.annotate-tools {
+  flex-basis: 100%;
+}
+
+.toolbar-label {
+  color: var(--muted);
+  font-size: 0.9em;
+  padding: 0 4px;
+}
+
+.annotate-tools .tool.icon {
+  font-size: 1.05em;
+}
+
+.annotate-tools select {
+  margin-left: 4px;
+}
+
+/* Drawn over each page while a tool is picked: it takes the pointer, so the page doesn't scroll
+   or select under a drag. */
+.pdfo-annotate-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  touch-action: none;
+  cursor: crosshair;
+}
+
+.pdfo-annotate-layer.gesture-text {
+  cursor: text;
+}
+
+.pdfo-annotate-layer.gesture-point {
+  cursor: copy;
+}
+
+.pdfo-annotate-preview {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.pdfo-annotate-editor {
+  position: absolute;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.18);
+  cursor: auto;
+}
+
+.pdfo-annotate-editor textarea {
+  width: 100%;
+  min-height: 2.5em;
+  resize: vertical;
+  font: inherit;
+  color: #111111;
+  background: #ffffff;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 6px;
+}
+
+.pdfo-annotate-editor-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pdfo-annotate-editor-actions .pdfo-hint {
+  flex: 1;
+  margin: 0;
+}
+
+.pdfo-annotate-editor-actions .button {
+  padding: 4px 12px;
+}
