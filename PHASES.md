@@ -43,9 +43,8 @@ require the `web`, `desktop` and `signatures` checks, so admins can't skip them 
   shows the dashboard's _build command_ is `npx wrangler deploy`, so nothing is built and
   wrangler stops because `apps/web/dist` doesn't exist. **For the repo owner**, in Workers &
   Pages → pdfoctopus → Settings → Build: set the build command to `bun run build`, keep the
-  deploy command `npx wrangler deploy`, and set the non-production branch deploy command to
-  `npx wrangler versions upload`, so branches get previews and can never deploy to the live
-  site.
+  deploy command `npx wrangler deploy`, and leave the Preview command at its default,
+  `npx wrangler preview`, so branches get previews and can never deploy to the live site.
 
 From now on, Dependabot opens a few PRs each week. Merge minor and patch updates once CI is
 green. Test major updates locally first, as was done for TypeScript 7.

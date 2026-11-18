@@ -115,6 +115,11 @@ export const MAX_SEARCH_HITS = 5000;
 
 /** Upper bound on a stamp image's size, so a huge photo can't bloat the PDF. */
 export const MAX_STAMP_IMAGE_BYTES = 10 * 1024 * 1024;
+/**
+ * Upper bound on a stamp image's pixels. A small file can still decode to an enormous image
+ * (it compresses well), which would use a lot of memory and make the PDF much bigger.
+ */
+export const MAX_STAMP_IMAGE_PIXELS = 4096 * 4096;
 
 /** Annotation flags (PDF 1.7, 12.5.3): shown when printed, and can't be moved or changed. */
 const ANNOT_FLAG_PRINT = 4;
@@ -500,6 +505,10 @@ export class PdfEngine {
       image = new mupdf.Image(stamp.image);
     } catch {
       throw new Error("The image couldn't be read. Use a PNG or JPEG file.");
+    }
+    if (image.getWidth() * image.getHeight() > MAX_STAMP_IMAGE_PIXELS) {
+      image.destroy();
+      throw new Error("The image is too large (4096 × 4096 pixels at most)");
     }
 
     let object: mupdf.PDFObject;

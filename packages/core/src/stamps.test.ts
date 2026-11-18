@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+import zlib from "node:zlib";
 import * as mupdf from "mupdf";
 import { describe, expect, it } from "vitest";
-import { createBlankPdf, type ImageStamp, PdfEngine } from "./engine";
+import { createBlankPdf, type ImageStamp, MAX_STAMP_IMAGE_BYTES, PdfEngine } from "./engine";
 
 type Rgb = [number, number, number];
 const RED: Rgb = [255, 0, 0];
@@ -50,18 +51,79 @@ function stamp(overrides: Partial<ImageStamp> = {}): ImageStamp {
   return { page: 0, rect: [40, 40, 160, 100], image: markerPng(), kind: "signature", ...overrides };
 }
 
-/** The stamp annotations on a page of a saved file. */
-function stampsIn(bytes: Uint8Array, page = 0): mupdf.PDFObject[] {
+interface SavedStamp {
+  name: string;
+  flags: number;
+  contents: string;
+}
+
+/** The stamp annotations on a page of a saved file, read and then closed again. */
+function stampsIn(bytes: Uint8Array, page = 0): SavedStamp[] {
   const doc = mupdf.Document.openDocument(bytes, "application/pdf");
-  const annots = doc.asPDF()?.findPage(page).get("Annots");
-  const out: mupdf.PDFObject[] = [];
-  if (annots?.isArray()) {
-    for (let i = 0; i < annots.length; i++) {
-      const a = annots.get(i).resolve();
-      if (a.get("Subtype").asName() === "Stamp") out.push(a);
+  try {
+    const annots = doc.asPDF()?.findPage(page).get("Annots");
+    const out: SavedStamp[] = [];
+    if (annots?.isArray()) {
+      for (let i = 0; i < annots.length; i++) {
+        const a = annots.get(i).resolve();
+        if (a.get("Subtype").asName() !== "Stamp") continue;
+        out.push({
+          name: a.get("Name").asName(),
+          flags: a.get("F").asNumber(),
+          contents: a.get("Contents").asString(),
+        });
+      }
     }
+    return out;
+  } finally {
+    doc.destroy();
   }
-  return out;
+}
+
+/** Seeded pseudo-random bytes (mulberry32), so tests are repeatable. */
+function randomBytes(seed: number) {
+  let t = seed >>> 0;
+  return () => {
+    t = (t + 0x6d2b79f5) >>> 0;
+    let r = Math.imul(t ^ (t >>> 15), 1 | t);
+    r = (r + Math.imul(r ^ (r >>> 7), 61 | r)) ^ r;
+    return ((r ^ (r >>> 14)) >>> 0) & 0xff;
+  };
+}
+
+/**
+ * A valid PNG header claiming `width` × `height` greyscale pixels, all zero. It compresses to
+ * a few kilobytes however large it claims to be, like a "decompression bomb".
+ */
+function hugeBlankPng(width: number, height: number): Uint8Array {
+  const chunk = (type: string, data: Uint8Array) => {
+    const out = new Uint8Array(12 + data.length);
+    const view = new DataView(out.buffer);
+    view.setUint32(0, data.length);
+    out.set(new TextEncoder().encode(type), 4);
+    out.set(data, 8);
+    view.setUint32(8 + data.length, zlib.crc32(out.subarray(4, 8 + data.length)));
+    return out;
+  };
+  const ihdr = new Uint8Array(13);
+  const v = new DataView(ihdr.buffer);
+  v.setUint32(0, width);
+  v.setUint32(4, height);
+  ihdr.set([1, 0, 0, 0, 0], 8); // 1-bit greyscale
+  const raw = new Uint8Array((1 + Math.ceil(width / 8)) * height);
+  const parts = [
+    new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk("IHDR", ihdr),
+    chunk("IDAT", zlib.deflateSync(raw)),
+    chunk("IEND", new Uint8Array()),
+  ];
+  const png = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let o = 0;
+  for (const p of parts) {
+    png.set(p, o);
+    o += p.length;
+  }
+  return png;
 }
 
 describe("addImageStamp", () => {
@@ -126,28 +188,36 @@ describe("addImageStamp", () => {
     const saved = engine.save();
     expect(saved.subarray(0, original.byteLength)).toEqual(original);
     expect(stampsIn(saved, 0)).toHaveLength(0);
-    const [annot] = stampsIn(saved, 1);
-    expect(annot?.get("F").asNumber()).toBe(4 | 128);
-    expect(annot?.get("Contents").asString()).toBe("18 Nov 2026");
-    expect(annot?.get("Name").asName()).toBe("PDFoctopusDate");
+    expect(stampsIn(saved, 1)).toEqual([
+      { name: "PDFoctopusDate", flags: 4 | 128, contents: "18 Nov 2026" },
+    ]);
   });
 
   it("stores the image compressed, so a signature doesn't bloat the file", () => {
     const original = createBlankPdf(1, 300, 400);
-    // A large, detailed image (noise doesn't compress, so this is a worst case for size).
-    const w = 900;
-    const h = 300;
+    // A large image of random noise: it can't be compressed, so the PNG is about as big as
+    // its pixels, and storing those raw would at least double the size again.
+    const w = 600;
+    const h = 200;
     const pix = new mupdf.Pixmap(mupdf.ColorSpace.DeviceRGB, [0, 0, w, h], true);
     const px = pix.getPixels();
-    for (let i = 0; i < px.length; i += 4) px.set([0, 0, (i * 7) % 256, (i * 13) % 256], i);
+    const next = randomBytes(42);
+    for (let i = 0; i < px.length; i++) px[i] = next();
     const png = pix.asPNG();
     pix.destroy();
     const engine = open(original.slice());
     engine.addImageStamp(stamp({ image: png }));
     const added = engine.save().byteLength - original.byteLength;
     // Raw, the pixels alone would be w*h*4 bytes.
-    expect(added).toBeLessThan(png.byteLength + 4096); // the image, plus the annotation itself
-    expect(added).toBeLessThan(w * h * 4 * 0.5);
+    expect(added).toBeLessThan(png.byteLength * 1.1 + 4096); // the image, plus the annotation
+  });
+
+  it("refuses an image that decodes to too many pixels, however small the file", () => {
+    const engine = open(createBlankPdf(1, 300, 400));
+    const bomb = hugeBlankPng(5000, 5000);
+    expect(bomb.byteLength).toBeLessThan(MAX_STAMP_IMAGE_BYTES);
+    expect(() => engine.addImageStamp(stamp({ image: bomb }))).toThrow("too large");
+    expect(engine.history().canUndo).toBe(false);
   });
 
   it("keeps the stamp with its page when pages are moved afterwards", () => {

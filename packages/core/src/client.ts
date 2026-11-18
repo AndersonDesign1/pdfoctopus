@@ -208,12 +208,19 @@ export class PdfWorkerClient {
 
   /**
    * Put an image (a signature, initials, a date) on a page, as one undoable step. The image
-   * bytes are transferred to the worker, so `stamp.image` is unusable afterwards.
+   * bytes are transferred to the worker, so `stamp.image` is unusable afterwards (unless it
+   * was a view on part of a larger buffer, in which case a copy is sent).
    */
   addImageStamp(stamp: ImageStamp) {
-    return this.call<"addImageStamp">({ type: "addImageStamp", stamp }, [
-      stamp.image.buffer as ArrayBuffer,
-    ]);
+    // Transferring detaches the whole underlying buffer. If `image` is only part of it,
+    // send a copy, so other views on that buffer keep working.
+    const { image } = stamp;
+    const whole = image.byteOffset === 0 && image.byteLength === image.buffer.byteLength;
+    const bytes = whole ? image : image.slice();
+    return this.call<"addImageStamp">(
+      { type: "addImageStamp", stamp: { ...stamp, image: bytes } },
+      [bytes.buffer as ArrayBuffer],
+    );
   }
 
   /** Undo the last page operation. Resolves to null when there was nothing to undo. */

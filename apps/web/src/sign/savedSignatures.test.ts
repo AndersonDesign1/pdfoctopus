@@ -59,6 +59,22 @@ describe("saved signatures", () => {
     expect(list.map((s) => s.savedAt)).toEqual([1]);
   });
 
+  it("forgets the oldest ones when storage is full, to make room for the new one", () => {
+    const store = memoryStore();
+    for (let i = 0; i < 4; i++) addSaved(item(), store, i);
+    // Storage that only fits three entries from now on.
+    const limited: KeyValueStore = {
+      getItem: store.getItem,
+      setItem: (k, v) => {
+        if ((JSON.parse(v) as unknown[]).length > 3) throw new Error("QuotaExceededError");
+        store.setItem(k, v);
+      },
+    };
+    const list = addSaved(item("initials"), limited, 10);
+    expect(list?.map((s) => s.savedAt)).toEqual([10, 3, 2]);
+    expect(loadSaved(store).map((s) => s.savedAt)).toEqual([10, 3, 2]);
+  });
+
   it("copes with no storage, full storage and damaged data", () => {
     expect(loadSaved(null)).toEqual([]);
     expect(addSaved(item(), null)).toBeNull();
@@ -80,5 +96,10 @@ describe("saved signatures", () => {
       JSON.stringify([{ ...item(), dataUrl: "javascript:alert(1)", id: "x", savedAt: 1 }]),
     );
     expect(loadSaved(store)).toEqual([]);
+    // A damaged payload, or one that isn't really a PNG, is ignored rather than offered.
+    for (const dataUrl of ["data:image/png;base64,%%%", "data:image/png;base64,R0lGODlh"]) {
+      store.data.set(STORAGE_KEY, JSON.stringify([{ ...item(), dataUrl, id: "x", savedAt: 1 }]));
+      expect(loadSaved(store)).toEqual([]);
+    }
   });
 });

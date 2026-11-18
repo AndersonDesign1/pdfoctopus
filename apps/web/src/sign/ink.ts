@@ -15,7 +15,7 @@ export interface CurveSegment {
   from: { x: number; y: number };
   control: { x: number; y: number };
   to: { x: number; y: number };
-  /** Average pressure along the segment, for its line width. */
+  /** Pen pressure at the segment's control point, for its line width. */
   pressure: number;
 }
 
@@ -111,17 +111,18 @@ const luminance = (r: number, g: number, b: number) => 0.299 * r + 0.587 * g + 0
 /**
  * Make the paper behind a photographed or scanned signature transparent, in place.
  *
- * The paper's brightness is taken from the image's border (the median, so a pen stroke that
+ * The paper's colour is taken from the image's border (the median, so a pen stroke that
  * touches the edge doesn't skew it). Pixels close to it become transparent, and pixels much
  * darker stay opaque, with a soft ramp in between so strokes keep smooth edges. Each kept
  * pixel's colour is un-mixed from the paper, so edges don't keep a pale halo.
  */
 export function removeBackground(rgba: Uint8ClampedArray, width: number, height: number): void {
   if (width === 0 || height === 0) return;
-  const border: number[] = [];
+  // The paper's colour, channel by channel, from the border (so tinted paper un-mixes right).
+  const border: [number[], number[], number[]] = [[], [], []];
   const sample = (x: number, y: number) => {
     const i = (y * width + x) * 4;
-    border.push(luminance(rgba[i] as number, rgba[i + 1] as number, rgba[i + 2] as number));
+    for (let c = 0; c < 3; c++) border[c]?.push(rgba[i + c] as number);
   };
   for (let x = 0; x < width; x++) {
     sample(x, 0);
@@ -131,8 +132,12 @@ export function removeBackground(rgba: Uint8ClampedArray, width: number, height:
     sample(0, y);
     sample(width - 1, y);
   }
-  border.sort((a, b) => a - b);
-  const paper = border[Math.floor(border.length / 2)] as number;
+  const median = (values: number[]) => {
+    values.sort((a, b) => a - b);
+    return values[Math.floor(values.length / 2)] as number;
+  };
+  const paperRgb = border.map(median) as [number, number, number];
+  const paper = luminance(...paperRgb);
   // Darker than the paper by less than `low`: paper (shadows, grain). More than `high`: ink.
   const low = Math.max(12, paper * 0.12);
   const high = Math.max(low + 20, paper * 0.4);
@@ -144,10 +149,11 @@ export function removeBackground(rgba: Uint8ClampedArray, width: number, height:
     const alpha = Math.min(1, Math.max(0, (darkness - low) / (high - low)));
     if (alpha < 1 && alpha > 0) {
       // Seen over the paper, this pixel is paper*(1-a) + ink*a; solve for the ink.
-      const unmix = (c: number) => Math.min(255, Math.max(0, (c - paper * (1 - alpha)) / alpha));
-      rgba[i] = unmix(r);
-      rgba[i + 1] = unmix(g);
-      rgba[i + 2] = unmix(b);
+      const unmix = (value: number, p: number) =>
+        Math.min(255, Math.max(0, (value - p * (1 - alpha)) / alpha));
+      rgba[i] = unmix(r, paperRgb[0]);
+      rgba[i + 1] = unmix(g, paperRgb[1]);
+      rgba[i + 2] = unmix(b, paperRgb[2]);
     }
     rgba[i + 3] = Math.round(alpha * (rgba[i + 3] as number));
   }

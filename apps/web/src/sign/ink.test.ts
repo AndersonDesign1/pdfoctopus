@@ -102,6 +102,22 @@ describe("removeBackground", () => {
     expect(data[i] as number).toBeLessThan(180);
   });
 
+  it("takes the paper's tint out of edge pixels, not just its brightness", () => {
+    const w = 10;
+    const paper = [250, 235, 190, 255]; // yellowish paper
+    const data = image(w, 3, paper);
+    // An edge pixel: a little black ink over that paper (paper × 0.75).
+    setPixel(data, w, 5, 1, [187, 176, 142, 255]);
+    removeBackground(data, w, 3);
+    const i = (1 * w + 5) * 4;
+    expect(data[i + 3]).toBeGreaterThan(0);
+    expect(data[i + 3]).toBeLessThan(255);
+    const [r, g, b] = [data[i] as number, data[i + 1] as number, data[i + 2] as number];
+    // The ink comes out close to neutral grey. Un-mixing with the paper's brightness alone
+    // (the same value for all three channels) leaves it strongly yellow: a spread of ~97.
+    expect(Math.max(r, g, b) - Math.min(r, g, b)).toBeLessThan(40);
+  });
+
   it("knows when an image already has no background", () => {
     expect(hasTransparency(image(2, 2))).toBe(false);
     expect(hasTransparency(image(2, 2, [0, 0, 0, 0]))).toBe(true);

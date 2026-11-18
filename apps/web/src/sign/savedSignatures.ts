@@ -37,6 +37,21 @@ function defaultStore(): KeyValueStore | null {
   }
 }
 
+const PNG_PREFIX = "data:image/png;base64,";
+const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+
+/** True for a data: URL whose payload decodes and starts like a PNG file. */
+function isPngDataUrl(url: string): boolean {
+  if (!url.startsWith(PNG_PREFIX)) return false;
+  try {
+    // Decoding all of it also catches a payload that was cut off or damaged.
+    const binary = atob(url.slice(PNG_PREFIX.length));
+    return PNG_SIGNATURE.every((byte, i) => binary.charCodeAt(i) === byte);
+  } catch {
+    return false;
+  }
+}
+
 function isSaved(value: unknown): value is SavedSignature {
   const v = value as Partial<SavedSignature> | null;
   return (
@@ -44,7 +59,7 @@ function isSaved(value: unknown): value is SavedSignature {
     typeof v.id === "string" &&
     (v.kind === "signature" || v.kind === "initials") &&
     typeof v.dataUrl === "string" &&
-    v.dataUrl.startsWith("data:image/png;base64,") &&
+    isPngDataUrl(v.dataUrl) &&
     typeof v.width === "number" &&
     typeof v.height === "number" &&
     typeof v.savedAt === "number"
@@ -77,7 +92,8 @@ function write(list: SavedSignature[], store: KeyValueStore | null): boolean {
 
 /**
  * Remember a signature or initials. The oldest of that kind are dropped beyond
- * MAX_PER_KIND. Returns the new list, or null if it couldn't be stored.
+ * MAX_PER_KIND, and the oldest of any kind if storage is full. Returns the new list, or
+ * null if even the new one alone couldn't be stored.
  */
 export function addSaved(
   item: Omit<SavedSignature, "id" | "savedAt">,
@@ -94,7 +110,13 @@ export function addSaved(
       counts[s.kind]++;
     }
   }
-  return write(kept, store) ? kept : null;
+  // If storage is full, forget the oldest ones until the new one fits.
+  while (kept.length > 0) {
+    if (write(kept, store)) return kept;
+    if (kept.length === 1) break;
+    kept.pop();
+  }
+  return null;
 }
 
 /** Forget one. Returns the new list (unchanged if storage couldn't be written). */

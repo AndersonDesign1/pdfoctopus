@@ -404,6 +404,8 @@ export const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
         onClick={
           onPageClick
             ? (e) => {
+                // A button on the page (such as "Try again") does its own thing.
+                if ((e.target as HTMLElement).closest("button")) return;
                 const box = e.currentTarget.getBoundingClientRect();
                 onPageClick(i, {
                   x: (e.clientX - box.left) / scale,
