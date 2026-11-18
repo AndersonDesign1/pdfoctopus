@@ -28,6 +28,18 @@ describe("readPictureHeader", () => {
     });
     const bmp = bytes("BM", new Array(16).fill(0), le32(800), le32(-600), [1, 0, 24, 0]);
     expect(readPictureHeader(bmp)).toEqual({ format: "bmp", width: 800, height: 600 });
+    // The old OS/2 layout: a 12-byte header with 16-bit sizes.
+    const os2 = bytes(
+      "BM",
+      new Array(12).fill(0),
+      le32(12),
+      le16(1),
+      le16(1),
+      le16(1),
+      le16(24),
+      [0, 0],
+    );
+    expect(readPictureHeader(os2)).toEqual({ format: "bmp", width: 1, height: 1 });
   });
 
   it("finds a JPEG's size after its camera data", () => {

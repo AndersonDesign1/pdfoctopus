@@ -191,8 +191,9 @@ const MAX_PICTURE_SIDE = 2400;
 const MAX_PICTURE_BYTES = 9.5 * 1024 * 1024;
 /**
  * Pictures with more pixels than this aren't decoded at all: a small file can claim billions
- * of pixels, and decoding it would exhaust the browser's memory. 100 megapixels covers any
- * camera's photos.
+ * of pixels, and decoding it would exhaust the browser's memory (100 megapixels already takes
+ * 400 MB). That covers ordinary phone and camera photos; the largest (some phones' 200 MP mode,
+ * medium-format cameras) are refused with a message asking for a smaller copy.
  */
 const MAX_PICTURE_PIXELS = 100_000_000;
 
@@ -211,7 +212,7 @@ export async function pictureToImage(file: Blob): Promise<StampImage> {
   if (header?.width && header.height && header.width * header.height > MAX_PICTURE_PIXELS) {
     throw new Error(
       `That picture is too big to place (${header.width} × ${header.height} pixels; ` +
-        "100 megapixels at most).",
+        "100 megapixels at most). Try a smaller copy of it.",
     );
   }
   // PNG and GIF (screenshots, drawings) stay PNG, judged by the contents, since a dropped

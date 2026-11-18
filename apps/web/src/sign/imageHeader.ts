@@ -31,6 +31,10 @@ export function readPictureHeader(b: Uint8Array): PictureHeader | null {
     return { format: "gif", width: view.getUint16(6, true), height: view.getUint16(8, true) };
   }
   if (has(26) && ascii(b, 0, "BM")) {
+    // The old OS/2 header (12 bytes) has 16-bit sizes; every later one has 32-bit sizes.
+    if (view.getUint32(14, true) === 12) {
+      return { format: "bmp", width: view.getUint16(18, true), height: view.getUint16(20, true) };
+    }
     return {
       format: "bmp",
       width: Math.abs(view.getInt32(18, true)),
