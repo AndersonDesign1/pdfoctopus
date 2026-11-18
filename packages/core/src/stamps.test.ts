@@ -205,17 +205,21 @@ describe("addImageStamp", () => {
     const w = 1200;
     const h = 900;
     const pix = new mupdf.Pixmap(mupdf.ColorSpace.DeviceRGB, [0, 0, w, h], false);
-    const px = pix.getPixels();
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        const i = (y * w + x) * 3;
-        px[i] = (x * 255) / w;
-        px[i + 1] = (y * 255) / h;
-        px[i + 2] = 128;
+    let jpeg: Uint8Array;
+    try {
+      const px = pix.getPixels();
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const i = (y * w + x) * 3;
+          px[i] = (x * 255) / w;
+          px[i + 1] = (y * 255) / h;
+          px[i + 2] = 128;
+        }
       }
+      jpeg = pix.asJPEG(85);
+    } finally {
+      pix.destroy();
     }
-    const jpeg = pix.asJPEG(85);
-    pix.destroy();
     const original = createBlankPdf(1, 600, 800);
     const engine = open(original.slice());
     engine.addImageStamp(stamp({ kind: "image", rect: [100, 100, 500, 400], image: jpeg }));

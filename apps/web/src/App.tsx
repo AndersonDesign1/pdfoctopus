@@ -616,7 +616,8 @@ export function App() {
     }
     // The document was closed or replaced meanwhile: the picture isn't for this one.
     if (docRef.current !== startedWith) return;
-    startPlacing("image", image, file.name);
+    // No description from the file: its name could say more than the reader should see.
+    startPlacing("image", image);
   }
 
   function addDate() {
@@ -1724,7 +1725,7 @@ export function App() {
 
       {dragging && (
         <div className="drop-overlay" aria-hidden="true">
-          {doc
+          {dropPictureRef.current
             ? "Drop a PDF to open it, or a picture to put it on the page"
             : "Drop a PDF to open it"}
         </div>

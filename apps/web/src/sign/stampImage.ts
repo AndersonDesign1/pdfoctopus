@@ -9,6 +9,7 @@ import "@fontsource/dancing-script/latin-400.css";
 import "@fontsource/dancing-script/latin-ext-400.css";
 import "@fontsource/great-vibes/latin-400.css";
 import "@fontsource/great-vibes/latin-ext-400.css";
+import { HEADER_BYTES, readPictureHeader } from "./imageHeader";
 import {
   contentBounds,
   fitWithin,
@@ -188,6 +189,12 @@ export function dateToStamp(text: string, colour: string): StampImage | null {
 const MAX_PICTURE_SIDE = 2400;
 /** The engine takes images up to 10 MB; stay a little under. */
 const MAX_PICTURE_BYTES = 9.5 * 1024 * 1024;
+/**
+ * Pictures with more pixels than this aren't decoded at all: a small file can claim billions
+ * of pixels, and decoding it would exhaust the browser's memory. 100 megapixels covers any
+ * camera's photos.
+ */
+const MAX_PICTURE_PIXELS = 100_000_000;
 
 /**
  * A picture (a logo, a photo, a screenshot) to place on a page, as it is: no background
@@ -199,6 +206,19 @@ export async function pictureToImage(file: Blob): Promise<StampImage> {
   if (file.size > MAX_UPLOAD_BYTES) {
     throw new Error("That picture is too large (25 MB at most).");
   }
+  // Check the size in the file's header before decoding anything.
+  const header = readPictureHeader(new Uint8Array(await file.slice(0, HEADER_BYTES).arrayBuffer()));
+  if (header?.width && header.height && header.width * header.height > MAX_PICTURE_PIXELS) {
+    throw new Error(
+      `That picture is too big to place (${header.width} × ${header.height} pixels; ` +
+        "100 megapixels at most).",
+    );
+  }
+  // PNG and GIF (screenshots, drawings) stay PNG, judged by the contents, since a dropped
+  // file's type can be missing.
+  const losslessSource = header
+    ? header.format === "png" || header.format === "gif"
+    : file.type === "image/png" || file.type === "image/gif";
   let bitmap: ImageBitmap;
   try {
     bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
@@ -220,7 +240,7 @@ export async function pictureToImage(file: Blob): Promise<StampImage> {
           break;
         }
       }
-      const keepPng = transparent || file.type === "image/png" || file.type === "image/gif";
+      const keepPng = transparent || losslessSource;
       let dataUrl = canvas.toDataURL(keepPng ? "image/png" : "image/jpeg", 0.9);
       // A big opaque PNG (a detailed screenshot) can be too large: a JPEG is far smaller.
       if (dataUrl.length * 0.75 > MAX_PICTURE_BYTES && !transparent) {
