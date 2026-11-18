@@ -184,7 +184,8 @@ function hasSignatureStamp(bytes: Uint8Array, password?: string): boolean {
     const annots = doc.asPDF()?.findPage(0).get("Annots");
     if (!annots?.isArray()) return false;
     for (let i = 0; i < annots.length; i++) {
-      if (annots.get(i).get("Name").asName() === "PDFoctopusSignature") return true;
+      const name = annots.get(i).resolve().get("Name");
+      if (name.isName() && name.asName() === "PDFoctopusSignature") return true;
     }
     return false;
   } finally {

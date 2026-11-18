@@ -2,7 +2,7 @@
 
 import zlib from "node:zlib";
 import * as mupdf from "mupdf";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { createBlankPdf, type ImageStamp, MAX_STAMP_IMAGE_BYTES, PdfEngine } from "./engine";
 
 type Rgb = [number, number, number];
@@ -34,8 +34,15 @@ function markerPng(): Uint8Array {
   }
 }
 
+/** Engines opened by the current test, closed after it so MuPDF's memory is freed. */
+const opened: PdfEngine[] = [];
+afterEach(() => {
+  for (const engine of opened.splice(0)) engine.close();
+});
+
 function open(bytes: Uint8Array): PdfEngine {
   const engine = new PdfEngine();
+  opened.push(engine);
   engine.open(bytes);
   return engine;
 }

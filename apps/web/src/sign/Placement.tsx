@@ -100,6 +100,8 @@ export function Placement({
         onPointerUp={end}
         onPointerCancel={end}
         onKeyDown={(e) => {
+          // Ctrl/Cmd/Alt combinations are the browser's and the app's (zoom, undo), not the stamp's.
+          if (e.ctrlKey || e.metaKey || e.altKey) return;
           const action = placementKey(e.key, e.shiftKey, rect, page);
           if (!action) return;
           // Keep these keys from also scrolling the view or changing page.
@@ -107,7 +109,7 @@ export function Placement({
           e.stopPropagation();
           if (action.type === "change") onChange(action.rect);
           else if (action.type === "apply" && !busy) onApply();
-          else if (action.type === "cancel") onCancel();
+          else if (action.type === "cancel" && !busy) onCancel();
         }}
       >
         <img src={imageUrl} alt="" draggable={false} />
@@ -124,7 +126,8 @@ export function Placement({
         <button type="button" className="button" disabled={busy} onClick={onApply}>
           Apply
         </button>
-        <button type="button" className="button secondary" onClick={onCancel}>
+        {/* While applying, the stamp is being written and can't be called back. */}
+        <button type="button" className="button secondary" disabled={busy} onClick={onCancel}>
           Cancel
         </button>
       </div>

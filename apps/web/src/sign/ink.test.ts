@@ -5,7 +5,6 @@ import {
   clampRect,
   contentBounds,
   fitWithin,
-  hasTransparency,
   initialRect,
   MIN_STAMP_SIZE,
   padBox,
@@ -14,6 +13,7 @@ import {
   resizeRect,
   smoothStroke,
   strokeWidth,
+  transparentShare,
 } from "./ink";
 
 const pt = (x: number, y: number, pressure = 0.5) => ({ x, y, pressure });
@@ -21,8 +21,9 @@ const pt = (x: number, y: number, pressure = 0.5) => ({ x, y, pressure });
 describe("smoothStroke", () => {
   it("gives nothing for no points, and a dot for one", () => {
     expect(smoothStroke([])).toEqual([]);
-    const [dot] = smoothStroke([pt(3, 4)]);
-    expect(dot?.from).toEqual(dot?.to);
+    const segments = smoothStroke([pt(3, 4)]);
+    expect(segments).toHaveLength(1);
+    expect(segments[0]?.from).toEqual(segments[0]?.to);
   });
 
   it("starts and ends where the pen did, and joins its curves end to end", () => {
@@ -118,9 +119,23 @@ describe("removeBackground", () => {
     expect(Math.max(r, g, b) - Math.min(r, g, b)).toBeLessThan(40);
   });
 
-  it("knows when an image already has no background", () => {
-    expect(hasTransparency(image(2, 2))).toBe(false);
-    expect(hasTransparency(image(2, 2, [0, 0, 0, 0]))).toBe(true);
+  it("measures how much of an image is already see-through", () => {
+    expect(transparentShare(image(2, 2))).toBe(0);
+    expect(transparentShare(image(2, 2, [0, 0, 0, 0]))).toBe(1);
+    const half = image(2, 1);
+    setPixel(half, 2, 0, 0, [0, 0, 0, 0]);
+    expect(transparentShare(half)).toBe(0.5);
+  });
+
+  it("still removes the paper of a scan with transparent padding around it", () => {
+    const w = 20;
+    const h = 10;
+    const data = image(w, h, [230, 230, 225, 255]);
+    for (let x = 0; x < w; x++) setPixel(data, w, x, 0, [0, 0, 0, 0]); // transparent top row
+    for (let x = 5; x < 15; x++) setPixel(data, w, x, 5, [20, 20, 20, 255]);
+    removeBackground(data, w, h);
+    expect(data[(3 * w + 3) * 4 + 3]).toBe(0); // paper gone
+    expect(data[(5 * w + 10) * 4 + 3]).toBe(255); // ink kept
   });
 });
 

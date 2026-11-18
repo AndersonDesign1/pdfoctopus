@@ -100,10 +100,13 @@ export function padBox(box: Box, margin: number, width: number, height: number):
   };
 }
 
-/** True when some pixel is noticeably see-through (the image already has no background). */
-export function hasTransparency(rgba: Uint8ClampedArray): boolean {
-  for (let i = 3; i < rgba.length; i += 4) if ((rgba[i] as number) < 250) return true;
-  return false;
+/** The share (0 to 1) of pixels that are mostly see-through. */
+export function transparentShare(rgba: Uint8ClampedArray): number {
+  const total = rgba.length / 4;
+  if (total === 0) return 0;
+  let clear = 0;
+  for (let i = 3; i < rgba.length; i += 4) if ((rgba[i] as number) < 128) clear++;
+  return clear / total;
 }
 
 const luminance = (r: number, g: number, b: number) => 0.299 * r + 0.587 * g + 0.114 * b;
@@ -122,6 +125,8 @@ export function removeBackground(rgba: Uint8ClampedArray, width: number, height:
   const border: [number[], number[], number[]] = [[], [], []];
   const sample = (x: number, y: number) => {
     const i = (y * width + x) * 4;
+    // Transparent padding (around some scans) isn't paper.
+    if ((rgba[i + 3] as number) < 128) return;
     for (let c = 0; c < 3; c++) border[c]?.push(rgba[i + c] as number);
   };
   for (let x = 0; x < width; x++) {
@@ -132,6 +137,7 @@ export function removeBackground(rgba: Uint8ClampedArray, width: number, height:
     sample(0, y);
     sample(width - 1, y);
   }
+  if (border[0].length === 0) return; // No opaque border: nothing to take the paper from.
   const median = (values: number[]) => {
     values.sort((a, b) => a - b);
     return values[Math.floor(values.length / 2)] as number;

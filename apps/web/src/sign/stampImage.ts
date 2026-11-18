@@ -12,12 +12,12 @@ import "@fontsource/great-vibes/latin-ext-400.css";
 import {
   contentBounds,
   fitWithin,
-  hasTransparency,
   type InkPoint,
   padBox,
   removeBackground,
   smoothStroke,
   strokeWidth,
+  transparentShare,
 } from "./ink";
 
 /** A ready-to-stamp image. */
@@ -48,6 +48,11 @@ export const INK_COLOURS = [
 
 /** Uploaded pictures are scaled down to this many pixels on their longer side. */
 const MAX_UPLOAD_SIDE = 1600;
+/**
+ * Larger files aren't read at all: the browser decodes the whole picture before it can be
+ * scaled down, and a phone photo is well under this.
+ */
+const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 
 function newCanvas(width: number, height: number): HTMLCanvasElement {
   const canvas = document.createElement("canvas");
@@ -185,6 +190,9 @@ export function dateToStamp(text: string, colour: string): StampImage | null {
  * `removePaper` is set. Null if nothing is left (e.g. a blank page).
  */
 export async function pictureToStamp(file: Blob, removePaper: boolean): Promise<StampImage | null> {
+  if (file.size > MAX_UPLOAD_BYTES) {
+    throw new Error("That picture is too large (25 MB at most). Try a smaller photo or scan.");
+  }
   let bitmap: ImageBitmap;
   try {
     bitmap = await createImageBitmap(file);
@@ -198,7 +206,9 @@ export async function pictureToStamp(file: Blob, removePaper: boolean): Promise<
     ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
     if (removePaper) {
       const data = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      if (!hasTransparency(data.data)) {
+      // A picture that's mostly see-through already has its background removed. A few
+      // transparent pixels (padding around a scan) don't count.
+      if (transparentShare(data.data) < 0.3) {
         removeBackground(data.data, canvas.width, canvas.height);
         ctx.putImageData(data, 0, 0);
       }

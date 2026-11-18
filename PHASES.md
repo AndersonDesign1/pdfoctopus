@@ -99,7 +99,7 @@ drag and resize (or move with the arrow keys), then applied as one undoable step
   pages the appearance is turned back so it's upright as shown. Undo takes the annotation off
   the page and redo puts the same object back. Saves now use MuPDF's `compress` option,
   because MuPDF stores stamp images as raw pixels (a signature added ~1.7 MB before).
-  Tests: `stamps.test.ts`, and the fixture sweep stamps every file.
+  Tests: `stamps.test.ts`, and the fixture sweep stamps every editable fixture.
 - **UI:** `apps/web/src/sign/` (dialog, drawing pad, placement box, and the pure helpers in
   `ink.ts`, which are unit-tested). Fonts come from `@fontsource` (SIL OFL), Latin subsets only.
 - **Checked:** in Chromium end to end (draw, type, upload, place, apply, undo, save), and the

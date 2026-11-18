@@ -797,7 +797,7 @@ export function App() {
           e.preventDefault();
           if (action.type === "change") setPending({ ...pending, rect: action.rect });
           else if (action.type === "apply" && !busy) applyPending();
-          else if (action.type === "cancel") cancelPending();
+          else if (action.type === "cancel" && !busy) cancelPending();
           return;
         }
       }
@@ -807,9 +807,10 @@ export function App() {
         if (!pending) void onSave(e.shiftKey);
       } else if (mod && !typingInField(e.target) && (key === "z" || key === "y")) {
         e.preventDefault();
-        // Undo while placing a stamp means "never mind the stamp".
-        if (pending) cancelPending();
-        else undoOrRedo(key === "y" || e.shiftKey ? "redo" : "undo");
+        // Undo while placing a stamp means "never mind the stamp" (unless it's being applied).
+        if (pending) {
+          if (!busy) cancelPending();
+        } else undoOrRedo(key === "y" || e.shiftKey ? "redo" : "undo");
       } else if (mod && e.key.toLowerCase() === "f") {
         e.preventDefault();
         searchInput.current?.focus();

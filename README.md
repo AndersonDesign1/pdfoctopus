@@ -56,7 +56,8 @@ PDFoctopus is in its early days. Contributions are welcome. Please read
 
 [AGPL-3.0-or-later](./LICENSE)
 
-The app includes these third-party parts, under their own licences:
+Notable third-party parts of the app, under their own licences (the full list of
+dependencies is in each `package.json`):
 
 - [MuPDF](https://mupdf.com) (`mupdf` on npm), the PDF engine: AGPL-3.0-or-later
 - The handwriting fonts for typed signatures, from [Fontsource](https://fontsource.org):

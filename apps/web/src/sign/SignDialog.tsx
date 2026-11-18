@@ -109,12 +109,14 @@ export function SignDialog({
   // A typed signature waits for its font, and the dialog can be closed meanwhile. Once it's
   // closed, the result must be dropped: not remembered, and not placed.
   const open = useRef(true);
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    // Set on mount too: React's development mode mounts components twice, running the
+    // cleanup in between, and the dialog must count as open after the second mount.
+    open.current = true;
+    return () => {
       open.current = false;
-    },
-    [],
-  );
+    };
+  }, []);
 
   async function use() {
     setError(undefined);
@@ -177,7 +179,12 @@ export function SignDialog({
             items={saved}
             noun={noun}
             onPick={(s) => onUse(stampFromDataUrl(s.dataUrl, s.width, s.height))}
-            onRemove={(s) => setSaved(removeSaved(s.id).filter((x) => x.kind === kind))}
+            onRemove={(s) => {
+              const next = removeSaved(s.id).filter((x) => x.kind === kind);
+              setSaved(next);
+              // The Saved tab disappears with its last item.
+              if (next.length === 0) setTab("draw");
+            }}
           />
         )}
 
@@ -396,6 +403,8 @@ function DrawPad({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   /** The stroke being drawn, kept outside React state so drawing doesn't re-render. */
   const active = useRef<InkPoint[] | null>(null);
+  /** The pointer drawing the current stroke: a second finger or pen doesn't join in. */
+  const activePointer = useRef<number | null>(null);
   const frame = useRef(0);
 
   const redraw = useCallback(() => {
@@ -435,7 +444,9 @@ function DrawPad({
     });
   }
 
-  function finish() {
+  function finish(e: ReactPointerEvent) {
+    if (e.pointerId !== activePointer.current) return;
+    activePointer.current = null;
     const stroke = active.current;
     active.current = null;
     if (stroke?.length) onChange([...strokes, stroke]);
@@ -449,14 +460,15 @@ function DrawPad({
         role="img"
         style={{ aspectRatio: `${PAD.width} / ${PAD.height}` }}
         onPointerDown={(e) => {
-          if (e.button !== 0) return;
+          if (e.button !== 0 || active.current) return;
           e.currentTarget.setPointerCapture(e.pointerId);
+          activePointer.current = e.pointerId;
           active.current = [point(e)];
           scheduleRedraw();
         }}
         onPointerMove={(e) => {
           const stroke = active.current;
-          if (!stroke) return;
+          if (!stroke || e.pointerId !== activePointer.current) return;
           // Coalesced events give every point the pen passed through, not one per frame.
           const events = e.nativeEvent.getCoalescedEvents?.() ?? [];
           for (const ev of events.length ? events : [e.nativeEvent]) stroke.push(point(ev));
