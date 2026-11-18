@@ -203,6 +203,11 @@ export class PdfEngine {
   private doc: mupdf.Document | null = null;
   /** MuPDF's needsPassword() stays true after a successful unlock, so track it here. */
   private locked = false;
+  /**
+   * The opened file's size and where its last cross-reference section starts. Every
+   * incremental save is these bytes plus one update, whose trailer must point back here.
+   */
+  private base: { length: number; startxref: number | null } | null = null;
   private undoStack: Step[] = [];
   private redoStack: Step[] = [];
   /** Text layout of pages, for selecting text; dropped whenever the document changes. */
@@ -215,6 +220,7 @@ export class PdfEngine {
   open(bytes: Uint8Array): OpenResult {
     this.close();
     this.doc = mupdf.Document.openDocument(bytes, "application/pdf");
+    this.base = { length: bytes.byteLength, startxref: lastStartxref(bytes) };
     this.locked = this.doc.needsPassword();
     if (this.locked) return { needsPassword: true };
     return { needsPassword: false, ...this.info() };
@@ -366,17 +372,26 @@ export class PdfEngine {
     // as raw pixels, which would make a signed file several megabytes bigger. In an
     // incremental save it only applies to the objects being appended, never to the original.
     const buffer = pdf.saveToBuffer(incremental ? "incremental,compress" : "garbage,compress");
+    let bytes: Uint8Array;
     try {
-      return buffer.asUint8Array().slice();
+      bytes = buffer.asUint8Array().slice();
     } finally {
       buffer.destroy();
     }
+    if (incremental && this.base?.startxref != null) {
+      // After a first save, MuPDF writes later updates as if the earlier one had been appended
+      // to the original file, so their trailer points (/Prev) at a section that isn't there.
+      // Each save is the original bytes plus one update, so point it back at the original's.
+      bytes = fixUpdatePrev(bytes, this.base.length, this.base.startxref);
+    }
+    return bytes;
   }
 
   close(): void {
     this.clearTextCache();
     this.doc?.destroy();
     this.doc = null;
+    this.base = null;
     this.locked = false;
     this.undoStack = [];
     this.redoStack = [];
@@ -979,6 +994,37 @@ function flattenInherited(page: mupdf.PDFObject): void {
     const inherited = page.getInheritable(key);
     if (!inherited.isNull()) page.put(key, inherited);
   }
+}
+
+/** Where the last cross-reference section of a PDF starts (its final `startxref`), or null. */
+export function lastStartxref(bytes: Uint8Array): number | null {
+  // It's within the last few hundred bytes of a well-formed file; allow some junk after it.
+  const tail = new TextDecoder("latin1").decode(bytes.subarray(Math.max(0, bytes.length - 4096)));
+  const matches = [...tail.matchAll(/startxref\s+(\d+)/g)];
+  const last = matches[matches.length - 1];
+  return last ? Number(last[1]) : null;
+}
+
+/**
+ * Make the update appended to `base` original bytes point back (/Prev) at the original's last
+ * cross-reference section. Only the update is touched, so the original bytes stay identical.
+ * Changing the number's length is safe: the trailer comes after everything its offsets point to.
+ */
+export function fixUpdatePrev(bytes: Uint8Array, baseLength: number, prev: number): Uint8Array {
+  const latin1 = new TextDecoder("latin1");
+  const update = latin1.decode(bytes.subarray(baseLength));
+  const trailer = update.lastIndexOf("trailer");
+  // MuPDF writes a classic trailer for the update; anything else is left alone.
+  if (trailer < 0) return bytes;
+  const match = /\/Prev\s+(\d+)/.exec(update.slice(trailer));
+  if (!match || Number(match[1]) === prev) return bytes;
+  const at = baseLength + trailer + match.index;
+  const replacement = new TextEncoder().encode(`/Prev ${prev}`);
+  const out = new Uint8Array(bytes.length - match[0].length + replacement.length);
+  out.set(bytes.subarray(0, at), 0);
+  out.set(replacement, at);
+  out.set(bytes.subarray(at + match[0].length), at + replacement.length);
+  return out;
 }
 
 /** Check a [left, top, right, bottom] rectangle: finite numbers, at least 1 point each way. */

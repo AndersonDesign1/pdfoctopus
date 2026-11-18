@@ -160,6 +160,10 @@ function runPageTools(name: string, path: string): void {
     try {
       saved = engine.save();
       expect(saved.slice(0, original.length)).toEqual(original);
+      // Saving again (Save twice, or Save then Save as) must give a valid file too.
+      const again = engine.save();
+      expect(again.slice(0, original.length)).toEqual(original);
+      expect(needsRepair(again, password)).toBe(false);
     } catch (err) {
       if (!(err instanceof IncrementalSaveError)) throw err;
       saved = engine.save({ incremental: false });
@@ -177,6 +181,19 @@ function runPageTools(name: string, path: string): void {
     }
   } finally {
     engine.close();
+  }
+}
+
+/** True when MuPDF has to repair a saved file to open it. */
+function needsRepair(bytes: Uint8Array, password?: string): boolean {
+  const doc = mupdf.Document.openDocument(bytes, "application/pdf");
+  try {
+    if (doc.needsPassword()) doc.authenticatePassword(password ?? "");
+    const pdf = doc.asPDF() as mupdf.PDFDocument;
+    pdf.countPages();
+    return pdf.wasRepaired();
+  } finally {
+    doc.destroy();
   }
 }
 

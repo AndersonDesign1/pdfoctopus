@@ -292,6 +292,30 @@ describe("addAnnotation", () => {
     expect(saved.subarray(0, original.length)).toEqual(original);
   });
 
+  it("survives saving while an annotation is undone, then redoing and saving again", () => {
+    // MuPDF 1.28.6 drops new objects nothing points to when saving, from the open document
+    // too, so an undone annotation was gone on redo and the next save was broken. Keep this
+    // test when updating MuPDF (see .github/dependabot.yml).
+    const engine = open(textPdf());
+    engine.addAnnotation({
+      kind: "rectangle",
+      page: 0,
+      rect: [10, 10, 60, 60],
+      color: RED,
+      width: 2,
+    });
+    engine.addAnnotation({ kind: "note", page: 0, at: [100, 10], text: "Hi", color: RED });
+    engine.undo();
+    engine.undo();
+    engine.save();
+    engine.redo();
+    engine.redo();
+    expect(subtypes(engine.save())).toEqual(["Square", "Text", "Popup"]);
+    // And again, to be sure the second save is still a good file.
+    const reopened = open(engine.save());
+    expect(reopened.pageCount).toBe(1);
+  });
+
   it("refuses bad input without changing the document", () => {
     const engine = open(createBlankPdf(1));
     const bad: [AnnotationSpec, string][] = [
