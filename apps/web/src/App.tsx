@@ -254,6 +254,9 @@ export function App() {
   const [zoom, setZoom] = useState<Zoom>({ mode: "fit-width", scale: 1 });
   const [scale, setScale] = useState(1);
   const [page, setPage] = useState(0);
+  /** The latest page, for work that finishes after a wait (reading a picture). */
+  const pageRef = useRef(page);
+  pageRef.current = page;
   const [pageInput, setPageInput] = useState("1");
 
   const [query, setQuery] = useState("");
@@ -580,6 +583,8 @@ export function App() {
   ) {
     const current = docRef.current;
     if (!current) return;
+    // The page shown now: a picture may have taken a moment to read, and the view moved on.
+    const page = pageRef.current;
     const size = current.info.pages[page];
     if (!size) return;
     // In the middle of what's on screen, not of the whole page, which may be mostly scrolled away.
