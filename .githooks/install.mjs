@@ -10,7 +10,7 @@ import { realpathSync } from "node:fs";
 
 const projectRoot = realpathSync(process.cwd());
 const top = spawnSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8" });
-const repoRoot = top.status === 0 ? realpathSync(top.stdout.trim()) : null;
+const repoRoot = top.status === 0 ? realpathSync(top.stdout.replace(/\r?\n$/, "")) : null;
 
 if (repoRoot === projectRoot) {
   const result = spawnSync("git", ["config", "core.hooksPath", ".githooks"], { stdio: "inherit" });
