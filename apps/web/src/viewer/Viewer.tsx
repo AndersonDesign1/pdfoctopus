@@ -7,6 +7,7 @@
 import type { PageSize, SearchHit } from "@pdfoctopus/core";
 import {
   forwardRef,
+  type ReactNode,
   useCallback,
   useEffect,
   useImperativeHandle,
@@ -44,6 +45,11 @@ export interface ViewerHandle {
   scrollToHit(hit: SearchHit): void;
   /** True when the pages are wider than the view (so arrow keys should scroll sideways). */
   canScrollHorizontally(): boolean;
+  /**
+   * The point of a page nearest the middle of the view, in points from the page's top-left
+   * corner: where something new should appear so the user sees it. Null if it isn't laid out.
+   */
+  visibleCentre(index: number): { x: number; y: number } | null;
 }
 
 export interface ViewerProps {
@@ -58,6 +64,10 @@ export interface ViewerProps {
   onCurrentPageChange(index: number): void;
   hits: SearchHit[];
   currentHit: number;
+  /** Something drawn on top of one page, such as a signature being placed. */
+  overlay?: { page: number; render(scale: number): ReactNode };
+  /** Called with the point clicked on a page, in points from its top-left corner. */
+  onPageClick?(index: number, point: { x: number; y: number }): void;
 }
 
 /** Render resolution waits until zooming pauses, so a pinch doesn't queue dozens of renders. */
@@ -96,6 +106,8 @@ export const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
     onCurrentPageChange,
     hits,
     currentHit,
+    overlay,
+    onPageClick,
   },
   ref,
 ) {
@@ -301,6 +313,19 @@ export const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
         const el = scrollRef.current;
         return !!el && el.scrollWidth > el.clientWidth + 1;
       },
+      visibleCentre(index: number) {
+        const el = scrollRef.current;
+        const l = layoutRef.current;
+        const top = l.tops[index];
+        const width = l.widths[index];
+        const height = l.heights[index];
+        if (!el || top === undefined || width === undefined || height === undefined) return null;
+        const left = (Math.max(l.totalWidth, el.clientWidth) - width) / 2;
+        const x = el.scrollLeft + el.clientWidth / 2 - left;
+        const y = el.scrollTop + el.clientHeight / 2 - top;
+        const clamp = (v: number, max: number) => Math.min(Math.max(0, v), max);
+        return { x: clamp(x, width) / l.scale, y: clamp(y, height) / l.scale };
+      },
       scrollToPage(index: number) {
         const el = scrollRef.current;
         const top = layoutRef.current.tops[index];
@@ -370,10 +395,25 @@ export const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
     const page = pages[i] as PageSize;
     const label = labels[i] ? `Page ${i + 1} (${labels[i]})` : `Page ${i + 1}`;
     pageViews.push(
+      // biome-ignore lint/a11y/useKeyWithClickEvents: clicking only moves a stamp being placed, which the keyboard can also move with the arrow keys
+      // biome-ignore lint/a11y/noStaticElementInteractions: as above
       <div
         key={i}
-        className="pdfo-page"
+        className={onPageClick ? "pdfo-page placing" : "pdfo-page"}
         style={{ top: layout.tops[i], left: (contentWidth - width) / 2, width, height }}
+        onClick={
+          onPageClick
+            ? (e) => {
+                // A button on the page (such as "Try again") does its own thing.
+                if ((e.target as HTMLElement).closest("button")) return;
+                const box = e.currentTarget.getBoundingClientRect();
+                onPageClick(i, {
+                  x: (e.clientX - box.left) / scale,
+                  y: (e.clientY - box.top) / scale,
+                });
+              }
+            : undefined
+        }
       >
         <PageCanvas
           renderer={renderer}
@@ -394,6 +434,7 @@ export const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(
             />
           )),
         )}
+        {overlay?.page === i && overlay.render(scale)}
       </div>,
     );
   }

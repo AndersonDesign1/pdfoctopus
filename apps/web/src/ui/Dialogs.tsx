@@ -14,7 +14,7 @@ import { formatBytes, formatPageSize, formatPdfDate } from "./format";
  * A native modal <dialog>: focus moves to its first control (the password field, or the
  * Close button), stays inside while it's open, and Escape closes it.
  */
-function Modal({
+export function Modal({
   title,
   onClose,
   children,

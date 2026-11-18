@@ -8,6 +8,7 @@
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
+import * as mupdf from "mupdf";
 import { describe, expect, it } from "vitest";
 import { createBlankPdf, PdfEngine } from "./engine";
 import { IncrementalSaveError } from "./errors";
@@ -117,6 +118,18 @@ function runPageTools(name: string, path: string): void {
     engine.deletePages([0]);
     if (engine.pageCount > 1) engine.deletePages([1]);
     expect(engine.pageCount).toBe(count + 1);
+    // A signature in the middle of the first page, whatever its size (some fixtures have
+    // pages only a few points across) and rotation.
+    const { width, height } = engine.info().pages[0] as { width: number; height: number };
+    const w = Math.max(1, Math.min(40, width / 2));
+    const h = Math.max(1, Math.min(20, height / 2));
+    const stampRect: [number, number, number, number] = [
+      (width - w) / 2,
+      (height - h) / 2,
+      (width + w) / 2,
+      (height + h) / 2,
+    ];
+    engine.addImageStamp({ page: 0, rect: stampRect, image: tinyPng(), kind: "signature" });
     const extracted = engine.extractPages([0, engine.pageCount - 1]);
     expect(reopenedPageCount(extracted, password)).toBe(2);
     const split = engine.splitPages([[0], [engine.pageCount - 1, 0]]);
@@ -143,11 +156,40 @@ function runPageTools(name: string, path: string): void {
       const info = reopened.needsPassword ? check.authenticate(password ?? "") : reopened;
       expect(info?.pageCount).toBe(count + 1);
       expect(check.renderPage(0, 0.1).width).toBeGreaterThan(0);
+      expect(hasSignatureStamp(saved, password)).toBe(true);
     } finally {
       check.close();
     }
   } finally {
     engine.close();
+  }
+}
+
+/** A small opaque PNG to stamp with. */
+function tinyPng(): Uint8Array {
+  const pix = new mupdf.Pixmap(mupdf.ColorSpace.DeviceRGB, [0, 0, 8, 4], false);
+  try {
+    pix.clear(40);
+    return pix.asPNG();
+  } finally {
+    pix.destroy();
+  }
+}
+
+/** True when the first page of a saved file carries the signature stamp. */
+function hasSignatureStamp(bytes: Uint8Array, password?: string): boolean {
+  const doc = mupdf.Document.openDocument(bytes, "application/pdf");
+  try {
+    if (doc.needsPassword()) doc.authenticatePassword(password ?? "");
+    const annots = doc.asPDF()?.findPage(0).get("Annots");
+    if (!annots?.isArray()) return false;
+    for (let i = 0; i < annots.length; i++) {
+      const name = annots.get(i).resolve().get("Name");
+      if (name.isName() && name.asName() === "PDFoctopusSignature") return true;
+    }
+    return false;
+  } finally {
+    doc.destroy();
   }
 }
 

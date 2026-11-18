@@ -14,6 +14,7 @@ import {
   PdfWorkerClient,
   type RotationDelta,
   type SearchHit,
+  type StampKind,
 } from "@pdfoctopus/core";
 import { Footer } from "@pdfoctopus/ui";
 import { invoke, isTauri } from "@tauri-apps/api/core";
@@ -26,6 +27,10 @@ import {
   writeFiles,
   writeToDestination,
 } from "./saveFile";
+import { clampRect, formatToday, initialRect, type PageRect, placementKey } from "./sign/ink";
+import { Placement } from "./sign/Placement";
+import { SignDialog } from "./sign/SignDialog";
+import { dateToStamp, type StampImage } from "./sign/stampImage";
 import {
   type ChosenPdf,
   InsertPdfDialog,
@@ -71,6 +76,22 @@ type PageDialog =
       error?: string;
       needsPasswords?: boolean;
     };
+
+/** A signature, initials or date being positioned on a page, before it's applied. */
+interface PendingStamp {
+  kind: Exclude<StampKind, "image">;
+  image: StampImage;
+  page: number;
+  rect: PageRect;
+  /** What the stamp says, when it's text (the date). */
+  text?: string;
+}
+
+const STAMP_NOUN: Record<PendingStamp["kind"], string> = {
+  signature: "signature",
+  initials: "initials",
+  date: "date",
+};
 
 const NO_HISTORY: HistoryState = {
   canUndo: false,
@@ -163,6 +184,10 @@ export function App() {
   const dirtyRef = useRef(dirty);
   dirtyRef.current = dirty;
   const [pageDialog, setPageDialog] = useState<PageDialog>();
+  /** Which dialog for making a signature is open, if any. */
+  const [signDialog, setSignDialog] = useState<"signature" | "initials">();
+  /** A stamp being positioned. Page tools wait until it's applied or cancelled. */
+  const [pending, setPending] = useState<PendingStamp>();
   /** A page to scroll to once the viewer has the edited document. */
   const pendingScroll = useRef<number | null>(null);
   const [busy, setBusy] = useState(false);
@@ -207,6 +232,8 @@ export function App() {
     setHistory(NO_HISTORY);
     setDirty(false);
     setPageDialog(undefined);
+    setSignDialog(undefined);
+    setPending(undefined);
   }, []);
 
   /** Start a fresh worker and begin loading MuPDF in the background. */
@@ -436,6 +463,8 @@ export function App() {
   }
 
   const targets = targetPages(selection, page);
+  /** Page tools and saving wait while a stamp is being placed. */
+  const locked = busy || pending !== undefined;
 
   function rotate(degrees: RotationDelta) {
     const pages = targets;
@@ -473,6 +502,68 @@ export function App() {
       const result = await pdf.insertBlankPages(at, 1);
       applyEdit(result, "Inserted a blank page.", selectRun(at, 1), at);
     });
+  }
+
+  // ---- Signatures, initials and dates ----
+
+  /** Show a stamp on the current page, ready to be dragged into place. */
+  function startPlacing(kind: PendingStamp["kind"], image: StampImage, text?: string) {
+    const current = docRef.current;
+    if (!current) return;
+    const size = current.info.pages[page];
+    if (!size) return;
+    // In the middle of what's on screen, not of the whole page, which may be mostly scrolled away.
+    const centre = viewer.current?.visibleCentre(page) ?? undefined;
+    const rect = initialRect(size, image.width / image.height, kind, centre);
+    setPending({ kind, image, text, page, rect });
+    setStatus(
+      `Drag your ${STAMP_NOUN[kind]} into place, or click where it should go. ` +
+        "Press Apply (or Enter) when it's right.",
+    );
+  }
+
+  function addDate() {
+    const text = formatToday();
+    const image = dateToStamp(text, "#111111");
+    if (image) startPlacing("date", image, text);
+  }
+
+  /** Move the pending stamp to where the user clicked, on whichever page, keeping its size. */
+  function movePendingTo(index: number, point: { x: number; y: number }) {
+    const size = docRef.current?.info.pages[index];
+    if (!pending || !size) return;
+    const { width, height } = pending.rect;
+    const rect = { left: point.x - width / 2, top: point.y - height / 2, width, height };
+    setPending({ ...pending, page: index, rect: clampRect(rect, size) });
+  }
+
+  function applyPending() {
+    const stamp = pending;
+    if (!stamp) return;
+    const { left, top, width, height } = stamp.rect;
+    void runTask(`add the ${STAMP_NOUN[stamp.kind]}`, async (pdf) => {
+      const result = await pdf.addImageStamp({
+        page: stamp.page,
+        rect: [left, top, left + width, top + height],
+        // A copy: the bytes are handed over to the worker, and a saved image may be reused.
+        image: stamp.image.png.slice(),
+        kind: stamp.kind,
+        text: stamp.text,
+      });
+      setPending(undefined);
+      const where = `page ${stamp.page + 1}`;
+      applyEdit(
+        result,
+        stamp.kind === "signature"
+          ? `Signed ${where}. Save to keep it.`
+          : `Added the ${STAMP_NOUN[stamp.kind]} to ${where}. Save to keep it.`,
+      );
+    });
+  }
+
+  function cancelPending() {
+    setPending(undefined);
+    setStatus("");
   }
 
   function undoOrRedo(which: "undo" | "redo") {
@@ -688,20 +779,38 @@ export function App() {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.ctrlKey || e.metaKey;
       // No shortcuts while a dialog is open: it has the user's attention (and its own keys).
-      if (pageDialog || passwordPrompt || showProperties) return;
+      if (pageDialog || passwordPrompt || showProperties || signDialog) return;
       if (mod && e.key.toLowerCase() === "o") {
         e.preventDefault();
         fileInput.current?.click();
         return;
       }
       if (!doc) return;
+      // While a stamp is being placed, its keys work wherever the focus is, even when its page
+      // has scrolled out of view. Enter on a button is that button's own click.
+      if (pending && !mod && !e.altKey && !typingInField(e.target)) {
+        const size = doc.info.pages[pending.page];
+        const enterOnButton = e.key === "Enter" && e.target instanceof HTMLButtonElement;
+        const action =
+          size && !enterOnButton ? placementKey(e.key, e.shiftKey, pending.rect, size) : null;
+        if (action) {
+          e.preventDefault();
+          if (action.type === "change") setPending({ ...pending, rect: action.rect });
+          else if (action.type === "apply" && !busy) applyPending();
+          else if (action.type === "cancel" && !busy) cancelPending();
+          return;
+        }
+      }
       const key = e.key.toLowerCase();
       if (mod && key === "s") {
         e.preventDefault();
-        void onSave(e.shiftKey);
+        if (!pending) void onSave(e.shiftKey);
       } else if (mod && !typingInField(e.target) && (key === "z" || key === "y")) {
         e.preventDefault();
-        undoOrRedo(key === "y" || e.shiftKey ? "redo" : "undo");
+        // Undo while placing a stamp means "never mind the stamp" (unless it's being applied).
+        if (pending) {
+          if (!busy) cancelPending();
+        } else undoOrRedo(key === "y" || e.shiftKey ? "redo" : "undo");
       } else if (mod && e.key.toLowerCase() === "f") {
         e.preventDefault();
         searchInput.current?.focus();
@@ -830,7 +939,7 @@ export function App() {
             <button
               type="button"
               className="tool"
-              disabled={busy}
+              disabled={locked}
               onClick={() => onSave(false)}
               title="Save (Ctrl+S)"
             >
@@ -847,7 +956,7 @@ export function App() {
             <button
               type="button"
               className="tool"
-              disabled={busy}
+              disabled={locked}
               onClick={() => onSave(true)}
               title="Save a copy under a new name (Ctrl+Shift+S)"
             >
@@ -1021,7 +1130,7 @@ export function App() {
             <button
               type="button"
               className="tool icon"
-              disabled={busy || !history.canUndo}
+              disabled={locked || !history.canUndo}
               onClick={() => undoOrRedo("undo")}
               aria-label={history.undoLabel ? `Undo ${history.undoLabel}` : "Undo"}
               title={history.undoLabel ? `Undo ${history.undoLabel} (Ctrl+Z)` : "Nothing to undo"}
@@ -1031,7 +1140,7 @@ export function App() {
             <button
               type="button"
               className="tool icon"
-              disabled={busy || !history.canRedo}
+              disabled={locked || !history.canRedo}
               onClick={() => undoOrRedo("redo")}
               aria-label={history.redoLabel ? `Redo ${history.redoLabel}` : "Redo"}
               title={history.redoLabel ? `Redo ${history.redoLabel} (Ctrl+Y)` : "Nothing to redo"}
@@ -1047,7 +1156,7 @@ export function App() {
             <button
               type="button"
               className="tool icon"
-              disabled={busy}
+              disabled={locked}
               onClick={() => rotate(-90)}
               aria-label="Rotate left"
               title="Rotate left"
@@ -1057,7 +1166,7 @@ export function App() {
             <button
               type="button"
               className="tool icon"
-              disabled={busy}
+              disabled={locked}
               onClick={() => rotate(90)}
               aria-label="Rotate right"
               title="Rotate right"
@@ -1067,7 +1176,7 @@ export function App() {
             <button
               type="button"
               className="tool"
-              disabled={busy || targets.length >= pageCount}
+              disabled={locked || targets.length >= pageCount}
               onClick={deleteSelected}
               title="Delete (Delete key in the page list)"
             >
@@ -1076,7 +1185,7 @@ export function App() {
             <button
               type="button"
               className="tool"
-              disabled={busy}
+              disabled={locked}
               onClick={extractSelected}
               title="Save these pages as a new PDF"
             >
@@ -1086,7 +1195,7 @@ export function App() {
             <button
               type="button"
               className="tool"
-              disabled={busy}
+              disabled={locked}
               onClick={insertBlank}
               title="Insert a blank page after these pages"
             >
@@ -1095,7 +1204,7 @@ export function App() {
             <button
               type="button"
               className="tool"
-              disabled={busy}
+              disabled={locked}
               onClick={() =>
                 setPageDialog({
                   kind: "insert",
@@ -1109,7 +1218,7 @@ export function App() {
             <button
               type="button"
               className="tool"
-              disabled={busy}
+              disabled={locked}
               onClick={() =>
                 setPageDialog({ kind: "insert", title: "Merge PDFs", defaultPosition: "end" })
               }
@@ -1120,11 +1229,39 @@ export function App() {
             <button
               type="button"
               className="tool"
-              disabled={busy}
+              disabled={locked}
               onClick={() => setPageDialog({ kind: "split" })}
               title="Split into separate PDFs"
             >
               Split
+            </button>
+            <span className="divider" />
+            <button
+              type="button"
+              className="tool"
+              disabled={locked}
+              onClick={() => setSignDialog("signature")}
+              title="Draw, type or upload your signature and place it on the page"
+            >
+              Sign
+            </button>
+            <button
+              type="button"
+              className="tool"
+              disabled={locked}
+              onClick={() => setSignDialog("initials")}
+              title="Add your initials"
+            >
+              Initials
+            </button>
+            <button
+              type="button"
+              className="tool"
+              disabled={locked}
+              onClick={addDate}
+              title="Add today's date"
+            >
+              Date
             </button>
           </div>
         )}
@@ -1170,12 +1307,12 @@ export function App() {
                 current={page}
                 selected={selection.pages}
                 onClickPage={onThumbClick}
-                onMovePages={busy ? undefined : movePages}
+                onMovePages={locked ? undefined : movePages}
                 onKeyDown={(e) => {
                   const mod = e.ctrlKey || e.metaKey;
                   if (e.key === "Delete" || e.key === "Backspace") {
                     e.preventDefault();
-                    if (targets.length < pageCount) deleteSelected();
+                    if (!locked && targets.length < pageCount) deleteSelected();
                   } else if (mod && e.key.toLowerCase() === "a") {
                     e.preventDefault();
                     setSelection(selectAll(pageCount));
@@ -1196,6 +1333,25 @@ export function App() {
               onCurrentPageChange={onCurrentPageChange}
               hits={hits}
               currentHit={currentHit}
+              onPageClick={pending && !busy ? movePendingTo : undefined}
+              overlay={
+                pending && {
+                  page: pending.page,
+                  render: (viewScale) => (
+                    <Placement
+                      rect={pending.rect}
+                      page={doc.info.pages[pending.page] ?? { width: 1, height: 1 }}
+                      scale={viewScale}
+                      imageUrl={pending.image.dataUrl}
+                      noun={STAMP_NOUN[pending.kind]}
+                      busy={busy}
+                      onChange={(rect) => setPending((p) => (p ? { ...p, rect } : p))}
+                      onApply={applyPending}
+                      onCancel={cancelPending}
+                    />
+                  ),
+                }
+              }
             />
           </div>
         ) : (
@@ -1259,6 +1415,20 @@ export function App() {
           busy={busy}
           onInsert={(files, position) => void insertPdfs(files, position)}
           onCancel={() => setPageDialog(undefined)}
+        />
+      )}
+
+      {signDialog && doc && (
+        <SignDialog
+          // A fresh dialog for each kind, so a drawn signature isn't offered as initials.
+          key={signDialog}
+          kind={signDialog}
+          onUse={(image) => {
+            const kind = signDialog;
+            setSignDialog(undefined);
+            startPlacing(kind, image);
+          }}
+          onCancel={() => setSignDialog(undefined)}
         />
       )}
 

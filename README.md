@@ -55,3 +55,11 @@ PDFoctopus is in its early days. Contributions are welcome. Please read
 ## Licence
 
 [AGPL-3.0-or-later](./LICENSE)
+
+Notable third-party parts of the app, under their own licences (the full list of
+dependencies is in each `package.json`):
+
+- [MuPDF](https://mupdf.com) (`mupdf` on npm), the PDF engine: AGPL-3.0-or-later
+- The handwriting fonts for typed signatures, from [Fontsource](https://fontsource.org):
+  Dancing Script, Great Vibes and Caveat, under the
+  [SIL Open Font License 1.1](https://openfontlicense.org)
