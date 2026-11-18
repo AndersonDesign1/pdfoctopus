@@ -181,7 +181,8 @@ deleted afterwards like any annotation.
 - **Engine:** `addTextStamp` in `packages/core/src/engine.ts`, drawing in `textStamp.ts`, and
   the limits, names and layout in `stampRules.ts` (no MuPDF there, so the app shares the
   layout for its preview). A stamp is a Stamp annotation with its own appearance: a rounded
-  border and Helvetica Bold text, drawn as vector graphics, scaled to fit its box without
+  border, the main line in Helvetica Bold and the optional second line in Helvetica, drawn as
+  vector graphics, scaled to fit its box without
   stretching, and turned upright on a rotated page. Stamps that say a standard name get it as
   /Name (/Approved, /Draft, …) so other apps know what they are. MuPDF's `update()` resizes a
   stamp's box to fit its stock "Draft" look, so the box is put back afterwards. Tests:
@@ -189,8 +190,10 @@ deleted afterwards like any annotation.
   unrotated one), and the fixture sweep stamps every editable fixture.
 - **UI:** `apps/web/src/sign/StampDialog.tsx`, the preview in `textStampPreview.ts`.
 - **Checked:** in Chromium end to end, on a rotated page too, and the saved file in pdf.js.
-- **Limits:** the standard fonts have Latin letters only, so text in other scripts (or symbols
-  such as ✓) is refused with a message; embedding a font would lift that. Custom stamps aren't
+- **Limits:** the standard fonts cover printable Latin-1 only (Latin letters with their accents,
+  digits and common punctuation), so text in other scripts (or symbols such as ✓) is refused
+  with a message, and "Today's date" falls back to English in locales that write dates in other
+  scripts; embedding a font would lift that. Custom stamps aren't
   remembered between sessions yet.
 - **Next in Phase 2:** images (overlay edits), then redaction and forms.
 

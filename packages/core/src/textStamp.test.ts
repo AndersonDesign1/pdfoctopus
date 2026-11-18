@@ -125,6 +125,13 @@ describe("addTextStamp", () => {
     expect(() => engine.addTextStamp(stamp({ text: "OK ✓" }))).toThrow(/can't include "✓"/);
     expect(() => engine.addTextStamp(stamp({ text: "承認" }))).toThrow(/can't include/);
     expect(() => engine.addTextStamp(stamp({ text: "X".repeat(41) }))).toThrow(/too long/);
+    // The second line has its own limits.
+    expect(() => engine.addTextStamp(stamp({ detail: "Y".repeat(61) }))).toThrow(
+      /second line is too long/,
+    );
+    expect(() => engine.addTextStamp(stamp({ detail: "18 ✓ 2026" }))).toThrow(
+      /second line can't include "✓"/,
+    );
     expect(() => engine.addTextStamp(stamp({ rect: [200, 20, 400, 80] }))).toThrow(
       /inside the page/,
     );

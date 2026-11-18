@@ -200,6 +200,8 @@ function runPageTools(name: string, path: string): void {
       expect(info?.pageCount).toBe(count + 1);
       expect(check.renderPage(0, 0.1).width).toBeGreaterThan(0);
       expect(hasSignatureStamp(saved, password)).toBe(true);
+      // The text stamp too, by its standard name.
+      expect(hasSignatureStamp(saved, password, "Approved")).toBe(true);
       expect(annotationsOnFirstPage(saved, password)).toEqual(
         expect.arrayContaining(["Square", "Text:Checked"]),
       );
@@ -265,7 +267,11 @@ function tinyPng(): Uint8Array {
 }
 
 /** True when the first page of a saved file carries the signature stamp. */
-function hasSignatureStamp(bytes: Uint8Array, password?: string): boolean {
+function hasSignatureStamp(
+  bytes: Uint8Array,
+  password?: string,
+  stampName = "PDFoctopusSignature",
+): boolean {
   const doc = mupdf.Document.openDocument(bytes, "application/pdf");
   try {
     if (doc.needsPassword()) doc.authenticatePassword(password ?? "");
@@ -273,7 +279,7 @@ function hasSignatureStamp(bytes: Uint8Array, password?: string): boolean {
     if (!annots?.isArray()) return false;
     for (let i = 0; i < annots.length; i++) {
       const name = annots.get(i).resolve().get("Name");
-      if (name.isName() && name.asName() === "PDFoctopusSignature") return true;
+      if (name.isName() && name.asName() === stampName) return true;
     }
     return false;
   } finally {

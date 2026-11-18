@@ -23,6 +23,15 @@ export interface ChosenStamp {
   image: StampImage;
 }
 
+/**
+ * Today's date in the user's own format, unless that uses characters the stamp's fonts don't
+ * have (Arabic digits, for example): then in English.
+ */
+function todayForStamp(): string {
+  const local = formatToday();
+  return stampTextProblem(local) ? formatToday(new Date(), "en-GB") : local;
+}
+
 const sameColour = (a: RgbColor, b: RgbColor) =>
   a.every((v, i) => Math.abs(v - (b[i] ?? 0)) < 0.01);
 
@@ -88,10 +97,11 @@ export function StampDialog({
             aria-invalid={stampTextProblem(text) !== null}
           />
         </label>
-        <label className="pdfo-field">
-          Second line (optional)
+        <div className="pdfo-field">
+          <label htmlFor="pdfo-stamp-detail">Second line (optional)</label>
           <span className="pdfo-stamp-detail">
             <input
+              id="pdfo-stamp-detail"
               value={detail}
               maxLength={MAX_STAMP_DETAIL}
               placeholder="A date, a name, a reference…"
@@ -101,12 +111,12 @@ export function StampDialog({
             <button
               type="button"
               className="button secondary"
-              onClick={() => setDetail(formatToday())}
+              onClick={() => setDetail(todayForStamp())}
             >
               Today's date
             </button>
           </span>
-        </label>
+        </div>
         <fieldset className="pdfo-fieldset pdfo-colours">
           <legend>Colour</legend>
           {STAMP_COLOURS.map((c) => (
