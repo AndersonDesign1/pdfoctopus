@@ -1039,3 +1039,67 @@ input {
   left: auto;
   right: -3px;
 }
+
+/* ---- Text stamps ---- */
+
+.pdfo-stamp-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.pdfo-stamp-presets {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 6px;
+}
+
+/* Each preset looks like a small stamp, in its own colour (set inline). Shown on white, as on
+   a page, in both themes. */
+.pdfo-stamp-preset {
+  padding: 6px 4px;
+  border: 2px solid currentColor;
+  border-radius: 5px;
+  background: #ffffff;
+  font: inherit;
+  font-weight: 700;
+  font-size: 0.8rem;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+}
+
+.pdfo-stamp-preset[aria-pressed="true"] {
+  outline: 3px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.pdfo-stamp-detail {
+  display: flex;
+  gap: 6px;
+}
+
+.pdfo-stamp-detail input {
+  flex: 1;
+  min-width: 0;
+}
+
+.pdfo-stamp-detail .button {
+  padding: 6px 10px;
+  white-space: nowrap;
+}
+
+.pdfo-stamp-preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 90px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.pdfo-stamp-preview img {
+  max-width: 100%;
+  max-height: 110px;
+}

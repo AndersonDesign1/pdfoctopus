@@ -20,6 +20,7 @@ export type {
   RotationDelta,
   SearchHit,
   StampKind,
+  TextStamp,
 } from "./engine";
 export {
   EngineCrashedError,
@@ -38,3 +39,13 @@ export type {
   WorkerResponse,
   WorkerResults,
 } from "./protocol";
+export {
+  BORDER as STAMP_BORDER,
+  cleanStampText,
+  layoutStamp,
+  MAX_STAMP_DETAIL,
+  MAX_STAMP_TEXT,
+  RADIUS as STAMP_RADIUS,
+  type StampLayout,
+  stampName,
+} from "./stampRules";

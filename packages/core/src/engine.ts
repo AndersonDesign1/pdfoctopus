@@ -23,6 +23,8 @@ import {
   transformRect,
 } from "./annotationObjects";
 import { IncrementalSaveError, PasswordRequiredError } from "./errors";
+import { checkStampText, MAX_STAMP_DETAIL, MAX_STAMP_TEXT, stampName } from "./stampRules";
+import { stampAppearance } from "./textStamp";
 
 /** A rendered page as raw, non-premultiplied RGBA pixels (ready for `ImageData`). */
 export interface RenderedPage {
@@ -184,6 +186,19 @@ export interface ImageStamp {
   kind: StampKind;
   /** Text describing the stamp (e.g. the date written in it), stored as its description. */
   text?: string;
+}
+
+/** A text stamp to put on a page, such as "APPROVED", with an optional second line. */
+export interface TextStamp {
+  /** 0-based page. */
+  page: number;
+  /** Where to put it: [left, top, right, bottom] in points from the page's top-left corner as shown. */
+  rect: [number, number, number, number];
+  /** What it says, in large bold letters (up to 40 characters). */
+  text: string;
+  /** A smaller second line, such as a date or a name (up to 60 characters). */
+  detail?: string;
+  color: RgbColor;
 }
 
 /** One undoable step. Each step knows how to reverse itself, so no copies are kept. */
@@ -682,6 +697,61 @@ export class PdfEngine {
     }
 
     return this.annotationStep(labels.undo, index, [object]);
+  }
+
+  /**
+   * Add a text stamp ("APPROVED", "DRAFT", …) as one undoable step. It's drawn as vector
+   * graphics with a standard font, scaled to fit `rect` and centred in it.
+   */
+  addTextStamp(stamp: TextStamp): EditResult {
+    const pdf = this.requirePdf();
+    const [index] = this.checkPages([stamp.page]) as [number];
+    const [x0, y0, x1, y1] = checkRect(stamp.rect);
+    const text = checkStampText(stamp.text, MAX_STAMP_TEXT, "stamp text");
+    if (!text) throw new Error("The stamp needs some text");
+    const detail = stamp.detail
+      ? checkStampText(stamp.detail, MAX_STAMP_DETAIL, "second line")
+      : "";
+    const color = checkColor(stamp.color);
+    this.checkOnPage(index, [x0, y0, x1, y1], "The stamp must be inside the page");
+
+    let object: mupdf.PDFObject;
+    const page = pdf.loadPage(index);
+    let annot: mupdf.PDFAnnotation | undefined;
+    try {
+      const [bx0, by0] = page.getBounds();
+      annot = page.createAnnotation("Stamp");
+      annot.setRect([bx0 + x0, by0 + y0, bx0 + x1, by0 + y1]);
+      annot.setFlags(ANNOT_FLAG_PRINT);
+      annot.setContents(detail ? `${text}\n${detail}` : text);
+      annot.update();
+      object = annot.getObject();
+      // Replace MuPDF's stock appearance with ours, after update(), which would redraw it.
+      const ap = pdf.newDictionary();
+      ap.put(
+        "N",
+        stampAppearance(
+          pdf,
+          { text, detail: detail || null, color },
+          x1 - x0,
+          y1 - y0,
+          readRotation(pdf.findPage(index)),
+        ),
+      );
+      object.put("AP", ap);
+      // update() resized the box to suit MuPDF's stock stamp; put back the one asked for.
+      putRect(pdf, object, transformRect(invert(this.shownTransform(index)), [x0, y0, x1, y1]));
+      object.put("Name", pdf.newName(stampName(text)));
+      const c = pdf.newArray();
+      for (const v of color) c.push(v);
+      object.put("C", c);
+    } catch (err) {
+      if (annot) page.deleteAnnotation(annot);
+      throw err;
+    } finally {
+      page.destroy();
+    }
+    return this.annotationStep("Add stamp", index, [object]);
   }
 
   // ---------------------------------------------------------------------------------------

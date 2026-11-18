@@ -184,12 +184,22 @@ export interface PageRect {
   height: number;
 }
 
-export type StampSizeKind = "signature" | "initials" | "date";
+export type StampSizeKind = "signature" | "initials" | "date" | "stamp";
 
 /** Usual width of each kind of stamp, in points (a signature is about 6 cm wide). */
-const TYPICAL_WIDTH: Record<StampSizeKind, number> = { signature: 170, initials: 60, date: 110 };
+const TYPICAL_WIDTH: Record<StampSizeKind, number> = {
+  signature: 170,
+  initials: 60,
+  date: 110,
+  stamp: 150,
+};
 /** Never wider than this share of the page. */
-const MAX_SHARE: Record<StampSizeKind, number> = { signature: 0.45, initials: 0.2, date: 0.35 };
+const MAX_SHARE: Record<StampSizeKind, number> = {
+  signature: 0.45,
+  initials: 0.2,
+  date: 0.35,
+  stamp: 0.4,
+};
 
 /**
  * Where a new stamp goes: a sensible size for its kind and the page, keeping the image's

@@ -103,6 +103,8 @@ async function handle(req: WorkerRequest): Promise<WorkerSuccess> {
       return success(req.id, "splitPages", engine.splitPages(req.groups));
     case "addImageStamp":
       return success(req.id, "addImageStamp", engine.addImageStamp(req.stamp));
+    case "addTextStamp":
+      return success(req.id, "addTextStamp", engine.addTextStamp(req.stamp));
     case "addAnnotation":
       return success(req.id, "addAnnotation", engine.addAnnotation(req.spec));
     case "selectText":
