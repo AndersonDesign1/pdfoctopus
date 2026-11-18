@@ -133,7 +133,7 @@ Pick the **Select** tool (first in the Annotate row):
 - [ ] **Stamp** each preset, and your own text with accents (é, ü); a symbol such as ✓ is
       refused with a message
 - [ ] A second line: Today's date, and a name; each colour
-- [ ] Place, resize and apply; then select it, move it, resize it and delete it; undo each
+- [ ] Place, resize and apply; then select it, move it, resize it and delete it; undo and redo each
 - [ ] On a rotated page the stamp reads the right way up
 - [ ] **Saved file in Adobe Acrobat Reader:** the stamps look the same, are listed as stamps in
       the comments list (Approved and Draft by their names), and print. Also in
