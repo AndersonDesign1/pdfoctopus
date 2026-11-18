@@ -24,9 +24,10 @@ A docs commit pushed straight to `main` on 2026-11-10 failed the formatting chec
 and every PR based on it (including Dependabot #11) were red for a week. Fixed, and to stop it
 happening again: `CLAUDE.md` and CONTRIBUTING.md now say every change goes through a PR and
 is merged only with green CI, and `bun install` sets up a pre-push hook that refuses pushes
-to `main` and runs lint and typecheck. **For the repo owner:** in the `main` branch
-protection settings, turn on "Do not allow bypassing the above settings" and require the
-`web`, `desktop` and `signatures` checks, so admins can't skip them either.
+to `main` and runs lint and typecheck. The hook is only a local guardrail (`--no-verify`
+skips it). The real enforcement is branch protection, so, **for the repo owner:** in the
+`main` branch protection settings, turn on "Do not allow bypassing the above settings" and
+require the `web`, `desktop` and `signatures` checks, so admins can't skip them either.
 
 ### 1. Dependabot PRs: done (2026-11-07)
 
