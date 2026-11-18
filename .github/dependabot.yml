@@ -18,6 +18,12 @@ updates:
       # Node, by hand, rather than whenever a new major is published.
       - dependency-name: "@types/node"
         update-types: ["version-update:semver-major"]
+      # MuPDF 1.28.6 changed how incremental saves treat objects in the open document: saving
+      # while an annotation is undone destroyed it, and repeated saves broke the file (found
+      # with #11; see "survives saving while an annotation is undone" in annotations.test.ts
+      # and save.test.ts). Later versions are offered as usual and must pass those tests.
+      - dependency-name: "mupdf"
+        versions: ["1.28.6"]
 
   - package-ecosystem: "cargo"
     directory: "/apps/desktop/src-tauri"

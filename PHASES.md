@@ -107,6 +107,21 @@ drag and resize (or move with the arrow keys), then applied as one undoable step
 - **Still to check by hand:** see the Phase 2 list in [TESTING.md](./TESTING.md), mainly how
   the signed files look and print in Adobe Reader.
 
+### Saving more than once was broken (fixed 2026-11-18)
+
+Found while checking Dependabot #11: after the first save in a session, MuPDF wrote later
+updates as if the first had been appended to the original file, so their trailer (`/Prev`)
+pointed at a section that wasn't there. A second save after an edit needed repair to open (and
+would break existing signatures); a second save with no edit didn't open at all. Every save is
+now the original bytes plus one update holding every change, pointing back at the original's
+cross-reference section (`fixUpdatePrev` in `engine.ts`). `save.test.ts` covers it, and the
+fixture sweep now saves every file twice and checks MuPDF doesn't have to repair it.
+
+**MuPDF stays on 1.28.1 for now.** 1.28.6 (in Dependabot #11) fails those tests and destroys an
+undone annotation when saving; `.github/dependabot.yml` skips that version. The rest of #11's
+updates (Biome, Playwright, Turbo, Wrangler, Vite, the React plugin) are in PR #14, with the
+Markdown reformat Biome 2.6.6+ needs. #11 can be closed.
+
 ### 5. Phase 2: annotation tools (2026-11-18)
 
 An **Annotate** toolbar row has Highlight, Underline, Strikethrough, Pen, Rectangle, Ellipse,
@@ -165,7 +180,7 @@ annotation is one undoable step.
 ### Accounts & admin
 
 - [ ] Choose and register the domain (`pdfoctopus.com` or `pdfoctopus.fyi`) on Cloudflare.
-  Until then, the web app will be served from `pdfoctopus.josanderson25.workers.dev` (Cloudflare Workers)
+      Until then, the web app will be served from `pdfoctopus.josanderson25.workers.dev` (Cloudflare Workers)
 - [ ] Apply to SignPath's free code-signing program for open source
 - [ ] Create an Oracle Cloud account and try to claim an Always Free ARM VM
 - [ ] Quick trademark check on the name before any commercial use
@@ -209,7 +224,7 @@ annotation is one undoable step.
 ### Test files
 
 - [x] Collect 30+ real-world PDFs in `fixtures/` (invoices, contracts, forms, scans, CJK,
-  encrypted, signed, very large, malformed)
+      encrypted, signed, very large, malformed)
 - [x] Document the source and licence of each fixture
 
 ### Exit criteria
@@ -371,8 +386,8 @@ annotation is one undoable step.
 - [ ] Docker Compose stack: Gotenberg + small native MuPDF DOCX service
 - [ ] Cloudflare Tunnel in front of the server
 - [ ] Cloudflare Access in front of the tunnel. The Access service token never ships in the
-  browser or desktop app: both call a small PDFoctopus Worker (on Cloudflare Workers),
-  which holds the token and forwards the request to the tunnel
+      browser or desktop app: both call a small PDFoctopus Worker (on Cloudflare Workers),
+      which holds the token and forwards the request to the tunnel
 - [ ] Disable Gotenberg routes the app doesn't use (e.g. Chromium URL fetching)
 - [ ] Files deleted immediately after conversion; no request logging of file contents
 - [ ] Size limits, timeouts and rate limiting
