@@ -129,6 +129,14 @@ function runPageTools(name: string, path: string): void {
       (width + w) / 2,
       (height + h) / 2,
     ];
+    // A text stamp first (its own fonts and drawing, no image), then a signature over it.
+    engine.addTextStamp({
+      page: 0,
+      rect: stampRect,
+      text: "APPROVED",
+      detail: "1 Jan 2026",
+      color: [0.8, 0.1, 0.1],
+    });
     engine.addImageStamp({ page: 0, rect: stampRect, image: tinyPng(), kind: "signature" });
     // And a rectangle and a sticky note in the same place.
     engine.addAnnotation({

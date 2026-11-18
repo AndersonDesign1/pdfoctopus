@@ -16,6 +16,7 @@ import type {
   RenderedPage,
   RotationDelta,
   SearchHit,
+  TextStamp,
 } from "./engine";
 import type { PdfErrorCode } from "./errors";
 
@@ -34,6 +35,7 @@ export type WorkerRequest =
   | { id: number; type: "extractPages"; pages: number[] }
   | { id: number; type: "splitPages"; groups: number[][] }
   | { id: number; type: "addImageStamp"; stamp: ImageStamp }
+  | { id: number; type: "addTextStamp"; stamp: TextStamp }
   | { id: number; type: "addAnnotation"; spec: AnnotationSpec }
   | { id: number; type: "selectText"; page: number; from: PagePoint; to: PagePoint }
   | { id: number; type: "listAnnotations"; page: number }
@@ -66,6 +68,7 @@ export interface WorkerResults {
   extractPages: Uint8Array;
   splitPages: Uint8Array[];
   addImageStamp: EditResult;
+  addTextStamp: EditResult;
   addAnnotation: EditResult;
   selectText: number[][];
   listAnnotations: AnnotationInfo[];

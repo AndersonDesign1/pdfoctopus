@@ -10,6 +10,7 @@ import type {
   PageSize,
   PdfSource,
   RotationDelta,
+  TextStamp,
 } from "./engine";
 import { EngineCrashedError, errorFromCode, isFatalEngineError } from "./errors";
 import type {
@@ -232,6 +233,11 @@ export class PdfWorkerClient {
   }
 
   /** Add a highlight, drawing, shape, note, text box or white-out, as one undoable step. */
+  /** Add a text stamp ("APPROVED", …) as one undoable step. */
+  addTextStamp(stamp: TextStamp) {
+    return this.call<"addTextStamp">({ type: "addTextStamp", stamp });
+  }
+
   addAnnotation(spec: AnnotationSpec) {
     return this.call<"addAnnotation">({ type: "addAnnotation", spec });
   }
