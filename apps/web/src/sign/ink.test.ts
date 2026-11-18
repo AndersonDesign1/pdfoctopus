@@ -151,6 +151,15 @@ describe("placing a stamp", () => {
     expect(initialRect(a4, 1, "initials").width).toBe(60);
   });
 
+  it("fits a picture in a square, so a tall one isn't page-high", () => {
+    const wide = initialRect(a4, 2, "image");
+    expect(wide.width).toBe(220);
+    expect(wide.height).toBeCloseTo(110);
+    const tall = initialRect(a4, 0.5, "image");
+    expect(tall.height).toBeCloseTo(220);
+    expect(tall.width).toBeCloseTo(110);
+  });
+
   it("goes where the user clicked, but never off the page", () => {
     const r = initialRect(a4, 3, "signature", { x: 590, y: 5 });
     expect(r.left + r.width).toBeLessThanOrEqual(a4.width);

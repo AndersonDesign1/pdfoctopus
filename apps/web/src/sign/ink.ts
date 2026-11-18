@@ -184,7 +184,7 @@ export interface PageRect {
   height: number;
 }
 
-export type StampSizeKind = "signature" | "initials" | "date" | "stamp";
+export type StampSizeKind = "signature" | "initials" | "date" | "stamp" | "image";
 
 /** Usual width of each kind of stamp, in points (a signature is about 6 cm wide). */
 const TYPICAL_WIDTH: Record<StampSizeKind, number> = {
@@ -192,6 +192,7 @@ const TYPICAL_WIDTH: Record<StampSizeKind, number> = {
   initials: 60,
   date: 110,
   stamp: 150,
+  image: 220,
 };
 /** Never wider than this share of the page. */
 const MAX_SHARE: Record<StampSizeKind, number> = {
@@ -199,6 +200,7 @@ const MAX_SHARE: Record<StampSizeKind, number> = {
   initials: 0.2,
   date: 0.35,
   stamp: 0.4,
+  image: 0.6,
 };
 
 /**
@@ -212,7 +214,9 @@ export function initialRect(
   centre?: { x: number; y: number },
 ): PageRect {
   const ratio = aspect > 0 && Number.isFinite(aspect) ? aspect : 1;
-  const width = Math.min(TYPICAL_WIDTH[kind], page.width * MAX_SHARE[kind]);
+  const base = Math.min(TYPICAL_WIDTH[kind], page.width * MAX_SHARE[kind]);
+  // A picture fits in a square of that size, so a tall one isn't as tall as the page.
+  const width = kind === "image" && ratio < 1 ? base * ratio : base;
   const size = fitWithin(width, width / ratio, page.width, page.height);
   const c = centre ?? { x: page.width / 2, y: page.height / 2 };
   return clampRect({ left: c.x - size.width / 2, top: c.y - size.height / 2, ...size }, page);

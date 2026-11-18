@@ -671,7 +671,9 @@ export class PdfEngine {
       const annot = page.createAnnotation("Stamp");
       annot.setRect([bx0 + x0, by0 + y0, bx0 + x1, by0 + y1]);
       annot.setStampImage(image);
-      annot.setFlags(ANNOT_FLAG_PRINT | ANNOT_FLAG_LOCKED);
+      // Signatures, initials and dates are locked, so other apps don't let them be moved by
+      // accident; a picture is ordinary content that may be moved anywhere.
+      annot.setFlags(ANNOT_FLAG_PRINT | (stamp.kind === "image" ? 0 : ANNOT_FLAG_LOCKED));
       annot.setContents(stamp.text?.trim() || labels.contents);
       annot.update();
       object = annot.getObject();
