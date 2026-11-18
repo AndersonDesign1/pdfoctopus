@@ -4,6 +4,24 @@
 // (see worker.ts) in the browser, and directly in Node for tests.
 
 import * as mupdf from "mupdf";
+import {
+  canEditText,
+  canRecolor,
+  canResize,
+  describe,
+  insertAt,
+  invert,
+  isListed,
+  type Matrix6,
+  putRect,
+  readColor,
+  readRect,
+  restore,
+  shiftAnnotation,
+  snapshot,
+  subtype,
+  transformRect,
+} from "./annotationObjects";
 import { IncrementalSaveError, PasswordRequiredError } from "./errors";
 
 /** A rendered page as raw, non-premultiplied RGBA pixels (ready for `ImageData`). */
@@ -128,6 +146,29 @@ export type AnnotationSpec =
   | { kind: "whiteout"; page: number; rect: [number, number, number, number] };
 
 export type AnnotationKind = AnnotationSpec["kind"];
+
+/** An annotation already on a page, as `listAnnotations` reports it. */
+export interface AnnotationInfo {
+  /** Identifies it on its page (its PDF object number). */
+  id: number;
+  /** What people would call it: "highlight", "signature", "white-out box". */
+  label: string;
+  /** Its box: [left, top, right, bottom] in points from the page's top-left corner as shown. */
+  rect: [number, number, number, number];
+  color: RgbColor | null;
+  /** The text of a note or text box; null for other annotations. */
+  text: string | null;
+  canResize: boolean;
+  canRecolor: boolean;
+  canEditText: boolean;
+}
+
+/** Changes to an annotation. A new rect the same size as the old one moves it. */
+export interface AnnotationChange {
+  rect?: [number, number, number, number];
+  color?: RgbColor;
+  text?: string;
+}
 
 /** An image to put on a page, such as a signature. */
 export interface ImageStamp {
@@ -775,6 +816,249 @@ export class PdfEngine {
       page.destroy();
     }
     return this.annotationStep(label, index, objects);
+  }
+
+  /** The annotations on a page that can be selected, bottom first (as they're drawn). */
+  listAnnotations(pageIndex: number): AnnotationInfo[] {
+    const pdf = this.requirePdf();
+    const [index] = this.checkPages([pageIndex]) as [number];
+    const shown = this.shownTransform(index);
+    const annots = pdf.findPage(index).get("Annots");
+    const list: AnnotationInfo[] = [];
+    if (!annots.isArray()) return list;
+    for (let i = 0; i < annots.length; i++) {
+      const object = annots.get(i);
+      if (!isListed(object)) continue;
+      const editableText = canEditText(object);
+      const contents = object.get("Contents");
+      list.push({
+        id: object.asIndirect(),
+        label: describe(object),
+        rect: transformRect(shown, readRect(object)),
+        color: readColor(object),
+        text: editableText ? (contents.isString() ? contents.asString() : "") : null,
+        canResize: canResize(object),
+        canRecolor: canRecolor(object),
+        canEditText: editableText,
+      });
+    }
+    return list;
+  }
+
+  /**
+   * Delete an annotation (and a note's pop-up window) as one undoable step. Undo puts the same
+   * objects back where they were, so the stacking order is kept.
+   */
+  deleteAnnotation(pageIndex: number, id: number): EditResult {
+    const pdf = this.requirePdf();
+    const [index] = this.checkPages([pageIndex]) as [number];
+    const object = this.findAnnotation(index, id);
+    const annots = annotsOf(pdf, index);
+    // The annotation and any pop-up that belongs to it, with their places in /Annots.
+    const removed: { at: number; object: mupdf.PDFObject }[] = [];
+    for (let i = 0; i < annots.length; i++) {
+      const item = annots.get(i);
+      const parent = item.get("Parent");
+      const isOwnPopup =
+        subtype(item) === "Popup" && parent.isIndirect() && parent.asIndirect() === id;
+      if (item.asIndirect() === id || isOwnPopup) removed.push({ at: i, object: item });
+    }
+    return this.run({
+      label: `Delete ${describe(object)}`,
+      redo: () => {
+        for (const { object: item } of removed.slice().reverse()) {
+          detachAnnotation(pdf, index, item);
+        }
+      },
+      undo: () => {
+        const list = annotsOf(pdf, index);
+        for (const { at, object: item } of removed) insertAt(list, at, item);
+      },
+    });
+  }
+
+  /**
+   * Move, resize, recolour or change the text of an annotation, as one undoable step.
+   * Moving shifts its coordinates and keeps its appearance, so annotations from other apps
+   * move unchanged. Other changes have MuPDF redraw it into a new appearance stream, so the
+   * old one is still there for undo.
+   */
+  editAnnotation(pageIndex: number, id: number, change: AnnotationChange): EditResult {
+    const pdf = this.requirePdf();
+    const [index] = this.checkPages([pageIndex]) as [number];
+    const object = this.findAnnotation(index, id);
+    const noun = describe(object);
+    const shown = this.shownTransform(index);
+    const toPdf = invert(shown);
+
+    // Check everything before changing anything.
+    let move: [number, number] | null = null;
+    let resizeTo: [number, number, number, number] | null = null;
+    if (change.rect) {
+      const target = checkRect(change.rect);
+      const current = transformRect(shown, readRect(object));
+      const sameSize =
+        Math.abs(target[2] - target[0] - (current[2] - current[0])) < 0.01 &&
+        Math.abs(target[3] - target[1] - (current[3] - current[1])) < 0.01;
+      this.checkOnPage(index, target, "The annotation must stay on the page", sameSize);
+      if (sameSize) {
+        const dx = target[0] - current[0];
+        const dy = target[1] - current[1];
+        // Only the linear part: a shift has no origin.
+        const pdx = dx * toPdf[0] + dy * toPdf[2];
+        const pdy = dx * toPdf[1] + dy * toPdf[3];
+        if (Math.abs(pdx) >= 0.001 || Math.abs(pdy) >= 0.001) move = [pdx, pdy];
+      } else {
+        if (!canResize(object)) throw new Error(`A ${noun} can't be resized`);
+        if (target[2] - target[0] < 2 || target[3] - target[1] < 2) {
+          throw new Error("The annotation is too small");
+        }
+        resizeTo = transformRect(toPdf, target);
+      }
+    }
+    let color: RgbColor | null = null;
+    if (change.color) {
+      if (!canRecolor(object)) throw new Error(`A ${noun}'s colour can't be changed`);
+      const next = checkColor(change.color);
+      const old = readColor(object);
+      color = old?.every((v, i) => Math.abs(v - (next[i] as number)) < 0.001) ? null : next;
+    }
+    let text: string | null = null;
+    if (change.text !== undefined) {
+      if (!canEditText(object)) throw new Error(`A ${noun} has no text to edit`);
+      text = checkText(change.text);
+      const old = object.get("Contents");
+      if (old.isString() && old.asString() === text) text = null;
+    }
+    const changes = [move, resizeTo, color, text].filter((c) => c !== null).length;
+    if (changes === 0) return this.run({ label: "", undo() {}, redo() {} }, true);
+
+    const popup = object.get("Popup");
+    const popupRect = () => (popup.isIndirect() ? readRect(popup) : null);
+    const before = { entries: snapshot(pdf, object), popup: popupRect() };
+
+    const page = pdf.loadPage(index);
+    try {
+      if (move) {
+        shiftAnnotation(pdf, object, move[0], move[1]);
+        if (popup.isIndirect() && popup.get("Rect").isArray()) {
+          shiftAnnotation(pdf, popup, move[0], move[1]);
+        }
+      }
+      let redraw = false;
+      if (resizeTo) {
+        putRect(pdf, object, resizeTo);
+        // A stamp's appearance (a signature image) scales to its box; shapes and text boxes
+        // are redrawn at the new size, without the old inner margins.
+        if (subtype(object) !== "Stamp") {
+          object.delete("RD");
+          redraw = true;
+        }
+      }
+      const annot = page.getAnnotations().find((a) => a.getObject().asIndirect() === id);
+      if (!annot) throw new Error("That annotation is not on the page");
+      if (color) {
+        if (subtype(object) === "FreeText") {
+          const da = annot.getDefaultAppearance();
+          annot.setDefaultAppearance(da.font || "Helv", da.size || 12, color);
+        } else {
+          annot.setColor(color);
+        }
+        redraw = true;
+      }
+      if (text !== null) {
+        annot.setContents(text);
+        // Some viewers show rich text, when there is any, instead of the plain text.
+        object.delete("RC");
+        if (subtype(object) === "FreeText") redraw = true;
+      }
+      if (redraw) {
+        // Without an appearance MuPDF draws a new stream, leaving the old one for undo.
+        object.delete("AP");
+        annot.update();
+      }
+    } catch (err) {
+      restore(pdf, object, before.entries);
+      if (before.popup && popup.isIndirect()) putRect(pdf, popup, before.popup);
+      throw err;
+    } finally {
+      page.destroy();
+    }
+    const after = { entries: snapshot(pdf, object), popup: popupRect() };
+
+    const label =
+      changes > 1
+        ? `Edit ${noun}`
+        : move
+          ? `Move ${noun}`
+          : resizeTo
+            ? `Resize ${noun}`
+            : color
+              ? `Recolour ${noun}`
+              : `Edit ${noun}`;
+    let applied = true;
+    const apply = (state: typeof before) => {
+      restore(pdf, object, state.entries);
+      if (state.popup && popup.isIndirect()) putRect(pdf, popup, state.popup);
+    };
+    return this.run({
+      label,
+      redo: () => {
+        if (applied) return;
+        apply(after);
+        applied = true;
+      },
+      undo: () => {
+        apply(before);
+        applied = false;
+      },
+    });
+  }
+
+  /** The annotation with this object number on a page, if it's one that can be edited. */
+  private findAnnotation(index: number, id: number): mupdf.PDFObject {
+    if (!Number.isInteger(id) || id <= 0) throw new Error("That annotation is not on the page");
+    const annots = this.requirePdf().findPage(index).get("Annots");
+    if (annots.isArray()) {
+      for (let i = 0; i < annots.length; i++) {
+        const item = annots.get(i);
+        if (item.asIndirect() === id && isListed(item)) return item;
+      }
+    }
+    throw new Error("That annotation is not on the page");
+  }
+
+  /** From PDF space to points from the page's top-left corner as shown. */
+  private shownTransform(index: number): Matrix6 {
+    const page = this.requirePdf().loadPage(index);
+    try {
+      const [a, b, c, d, e, f] = page.getTransform();
+      const [x0, y0] = page.getBounds();
+      return [a, b, c, d, e - x0, f - y0];
+    } finally {
+      page.destroy();
+    }
+  }
+
+  /**
+   * Throw unless a rect (in points as shown) is on the page, give or take rounding. With
+   * `allowCover`, a rect bigger than the page one way (some apps make those) may instead cover
+   * the page that way, so it can still be moved.
+   */
+  private checkOnPage(index: number, rect: readonly number[], message: string, allowCover = false) {
+    const page = this.requireDoc().loadPage(index);
+    try {
+      const [bx0, by0, bx1, by1] = page.getBounds();
+      const [x0, y0, x1, y1] = rect as [number, number, number, number];
+      const slack = 0.5;
+      const fits = (start: number, end: number, size: number) => {
+        if (start >= -slack && end <= size + slack) return true;
+        return allowCover && end - start > size && start <= slack && end >= size - slack;
+      };
+      if (!fits(x0, x1, bx1 - bx0) || !fits(y0, y1, by1 - by0)) throw new Error(message);
+    } finally {
+      page.destroy();
+    }
   }
 
   /**

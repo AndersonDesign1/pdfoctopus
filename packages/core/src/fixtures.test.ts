@@ -10,7 +10,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import * as mupdf from "mupdf";
 import { describe, expect, it } from "vitest";
-import { createBlankPdf, PdfEngine } from "./engine";
+import { type AnnotationInfo, createBlankPdf, PdfEngine } from "./engine";
 import { IncrementalSaveError } from "./errors";
 
 const fixturesDir = join(import.meta.dirname, "..", "..", "..", "fixtures");
@@ -142,9 +142,25 @@ function runPageTools(name: string, path: string): void {
       kind: "note",
       page: 0,
       at: [stampRect[0], stampRect[1]],
-      text: "Checked",
+      text: "Draft",
       color: [1, 0.8, 0],
     });
+    // Edit them: move the signature to the left edge, recolour the rectangle, change the
+    // note's text, and add an ellipse and delete it again.
+    engine.addAnnotation({ kind: "ellipse", page: 0, rect: stampRect, color: [0, 0, 1], width: 1 });
+    const added = engine.listAnnotations(0).slice(-4);
+    expect(added.map((a) => a.label)).toEqual(["signature", "rectangle", "note", "ellipse"]);
+    const [signature, rectangle, note, ellipse] = added as [
+      AnnotationInfo,
+      AnnotationInfo,
+      AnnotationInfo,
+      AnnotationInfo,
+    ];
+    const [sx0, sy0, sx1, sy1] = signature.rect;
+    engine.editAnnotation(0, signature.id, { rect: [0, sy0, sx1 - sx0, sy1] });
+    engine.editAnnotation(0, rectangle.id, { color: [0, 0, 1] });
+    engine.editAnnotation(0, note.id, { text: "Checked" });
+    engine.deleteAnnotation(0, ellipse.id);
     const extracted = engine.extractPages([0, engine.pageCount - 1]);
     expect(reopenedPageCount(extracted, password)).toBe(2);
     const split = engine.splitPages([[0], [engine.pageCount - 1, 0]]);
@@ -179,6 +195,15 @@ function runPageTools(name: string, path: string): void {
       expect(annotationsOnFirstPage(saved, password)).toEqual(
         expect.arrayContaining(["Square", "Text:Checked"]),
       );
+      expect(annotationsOnFirstPage(saved, password)).not.toContain("Circle");
+      // The edits survived saving: the signature at the left edge, the rectangle blue.
+      const listed = check.listAnnotations(0);
+      const movedSignature = listed.find(
+        (a) => a.label === "signature" && Math.abs(a.rect[0]) < 0.5,
+      );
+      expect(movedSignature?.rect[1]).toBeCloseTo(signature.rect[1], 1);
+      // (Matched by colour: a full rewrite, for files that can't be appended to, renumbers.)
+      expect(listed.some((a) => a.label === "rectangle" && a.color?.join() === "0,0,1")).toBe(true);
     } finally {
       check.close();
     }

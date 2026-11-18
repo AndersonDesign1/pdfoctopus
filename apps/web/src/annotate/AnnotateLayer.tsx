@@ -46,7 +46,7 @@ export interface AnnotateLayerProps {
 
 type Drag = { start: PagePoint; current: PagePoint; points: PagePoint[]; pointer: number };
 
-type Editor =
+export type Editor =
   | { kind: "note"; at: PagePoint }
   | { kind: "text"; rect: [number, number, number, number] };
 
@@ -335,14 +335,19 @@ export function AnnotateLayer({
   );
 }
 
-/** Where a note's or text box's text is typed. Ctrl/Cmd+Enter adds it, Escape cancels. */
-function TextEditor({
+/**
+ * Where a note's or text box's text is typed. Ctrl/Cmd+Enter adds it (or saves the change, when
+ * editing text that's already there), Escape cancels.
+ */
+export function TextEditor({
   editor,
   page,
   scale,
   busy,
   onCancel,
   onDone,
+  initialText = "",
+  submitLabel = "Add",
 }: {
   editor: Editor;
   page: { width: number; height: number };
@@ -350,8 +355,10 @@ function TextEditor({
   busy: boolean;
   onCancel(): void;
   onDone(text: string): void;
+  initialText?: string;
+  submitLabel?: string;
 }) {
-  const [text, setText] = useState("");
+  const [text, setText] = useState(initialText);
   const id = useId();
   // Keep the editor on the page: near the right edge it moves left, and near the bottom it
   // opens above the spot instead of below.
@@ -402,7 +409,7 @@ function TextEditor({
         }}
       />
       <div className="pdfo-annotate-editor-actions">
-        <span className="pdfo-hint">Ctrl+Enter to add</span>
+        <span className="pdfo-hint">Ctrl+Enter to {submitLabel.toLowerCase()}</span>
         <button type="button" className="button secondary" onClick={onCancel}>
           Cancel
         </button>
@@ -412,7 +419,7 @@ function TextEditor({
           disabled={busy || !text.trim()}
           onClick={() => onDone(text)}
         >
-          Add
+          {submitLabel}
         </button>
       </div>
     </div>

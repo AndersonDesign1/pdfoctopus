@@ -3,6 +3,8 @@
 // Messages exchanged between the UI thread and the PDF worker.
 
 import type {
+  AnnotationChange,
+  AnnotationInfo,
   AnnotationSpec,
   DocumentInfo,
   EditResult,
@@ -34,6 +36,15 @@ export type WorkerRequest =
   | { id: number; type: "addImageStamp"; stamp: ImageStamp }
   | { id: number; type: "addAnnotation"; spec: AnnotationSpec }
   | { id: number; type: "selectText"; page: number; from: PagePoint; to: PagePoint }
+  | { id: number; type: "listAnnotations"; page: number }
+  | { id: number; type: "deleteAnnotation"; page: number; annotation: number }
+  | {
+      id: number;
+      type: "editAnnotation";
+      page: number;
+      annotation: number;
+      change: AnnotationChange;
+    }
   | { id: number; type: "undo" }
   | { id: number; type: "redo" }
   | { id: number; type: "close" };
@@ -57,6 +68,9 @@ export interface WorkerResults {
   addImageStamp: EditResult;
   addAnnotation: EditResult;
   selectText: number[][];
+  listAnnotations: AnnotationInfo[];
+  deleteAnnotation: EditResult;
+  editAnnotation: EditResult;
   undo: EditResult | null;
   redo: EditResult | null;
   close: null;

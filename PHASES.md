@@ -16,7 +16,7 @@ tasks needed to finish it and the **exit criteria** that must be true before we 
 ## Next up
 
 Start here if you're picking the project up. Do these in order, and update this list in the
-same PR that changes it. Last updated: 2026-11-18, after the first annotation tools.
+same PR that changes it. Last updated: 2026-11-18, after editing and deleting annotations.
 
 ### 0. Keep `main` green (2026-11-18)
 
@@ -139,9 +139,37 @@ annotation is one undoable step.
 - **Checked:** every tool end to end in Chromium, and the saved file in pdf.js.
 - **White-out only covers.** The text underneath is still in the file. True removal is
   redaction, further down Phase 2.
-- **Next in Phase 2:** edit and delete existing annotations (which also covers removing a
-  misplaced signature after saving), then stamps (Approved, Draft, …) and images, then
-  redaction and forms.
+
+### 6. Phase 2: editing and deleting annotations (2026-11-18)
+
+The **Select** tool, first in the Annotate row, selects markup annotations (highlights,
+drawings, shapes, notes, text boxes, stamps and the like), including ones made in other apps
+and signatures saved in an earlier session. Links, form fields, hidden annotations and note
+pop-ups aren't listed. Drag it to move it, drag
+its corner to resize it, pick a colour, edit a note's or text box's text, or delete it (the
+Delete button or key). Arrow keys move it by a point, or ten with Shift. Each change is one
+undoable step.
+
+- **Engine:** `listAnnotations`, `editAnnotation` and `deleteAnnotation` in
+  `packages/core/src/engine.ts`, helpers in `annotationObjects.ts`. Moving shifts the
+  annotation's geometry (/Rect, /QuadPoints, /InkList, /L, /Vertices, /CL, and a note pop-up's
+  /Rect) and keeps its appearance, so it looks the same afterwards, even when MuPDF couldn't
+  draw it. Resizing scales a stamp's appearance and has MuPDF
+  redraw shapes and text boxes. Recolouring and text-box edits delete the appearance first,
+  so MuPDF draws a new stream instead of overwriting the old one in place (which it does, and
+  which would break undo). Undo restores a copy of the changed dictionary entries. Deleting a
+  note takes its pop-up too, and undo puts them back in the same place in the stacking order.
+  Tests: `annotationEdit.test.ts`, and the fixture sweep moves, recolours, edits and deletes on
+  every editable fixture.
+- **UI:** `apps/web/src/annotate/SelectLayer.tsx`, with the geometry in `edit.ts`
+  (unit-tested).
+- **Checked:** in Chromium end to end (select, move, resize, recolour, nudge, delete, undo,
+  edit text, save), and the saved file in pdf.js.
+- **Not yet:** resizing drawings, lines and highlights (they can be moved, recoloured and
+  deleted), changing line width, and selecting several annotations at once. Signatures and
+  other stamps PDFoctopus adds are marked "locked" for other apps, but PDFoctopus itself can
+  still move and delete them.
+- **Next in Phase 2:** stamps (Approved, Draft, …) and images, then redaction and forms.
 
 ### Where things are
 
@@ -299,7 +327,7 @@ annotation is one undoable step.
 - [ ] Add text boxes and images (overlay edits). Text boxes are done; images are still to do
 - [x] White-out
 - [ ] Stamps (Approved, Draft, Confidential, custom)
-- [ ] Edit and delete existing annotations
+- [x] Edit and delete existing annotations
 
 ### Redaction
 

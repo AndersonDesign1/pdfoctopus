@@ -107,6 +107,16 @@ async function handle(req: WorkerRequest): Promise<WorkerSuccess> {
       return success(req.id, "addAnnotation", engine.addAnnotation(req.spec));
     case "selectText":
       return success(req.id, "selectText", engine.selectText(req.page, req.from, req.to));
+    case "listAnnotations":
+      return success(req.id, "listAnnotations", engine.listAnnotations(req.page));
+    case "deleteAnnotation":
+      return success(req.id, "deleteAnnotation", engine.deleteAnnotation(req.page, req.annotation));
+    case "editAnnotation":
+      return success(
+        req.id,
+        "editAnnotation",
+        engine.editAnnotation(req.page, req.annotation, req.change),
+      );
     case "undo":
       return success(req.id, "undo", engine.undo());
     case "redo":
