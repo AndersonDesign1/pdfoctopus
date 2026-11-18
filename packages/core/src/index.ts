@@ -2,6 +2,8 @@
 
 export { PdfWorkerClient, type PdfWorkerClientOptions } from "./client";
 export type {
+  AnnotationChange,
+  AnnotationInfo,
   AnnotationKind,
   AnnotationSpec,
   DocumentInfo,

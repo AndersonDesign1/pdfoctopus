@@ -3,6 +3,7 @@
 // Promise-based client for the PDF worker. Use this from the UI thread.
 
 import type {
+  AnnotationChange,
   AnnotationSpec,
   ImageStamp,
   PagePoint,
@@ -238,6 +239,21 @@ export class PdfWorkerClient {
   /** The text a highlight from `from` to `to` would cover, as quads in page points. */
   selectText(page: number, from: PagePoint, to: PagePoint) {
     return this.call<"selectText">({ type: "selectText", page, from, to });
+  }
+
+  /** The annotations on a page that can be selected, bottom first. */
+  listAnnotations(page: number) {
+    return this.call<"listAnnotations">({ type: "listAnnotations", page });
+  }
+
+  /** Delete an annotation (by its `id` from listAnnotations) as one undoable step. */
+  deleteAnnotation(page: number, annotation: number) {
+    return this.call<"deleteAnnotation">({ type: "deleteAnnotation", page, annotation });
+  }
+
+  /** Move, resize, recolour or change the text of an annotation, as one undoable step. */
+  editAnnotation(page: number, annotation: number, change: AnnotationChange) {
+    return this.call<"editAnnotation">({ type: "editAnnotation", page, annotation, change });
   }
 
   /** Undo the last page operation. Resolves to null when there was nothing to undo. */
