@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import {
+  type AnnotationChange,
+  type AnnotationInfo,
   type AnnotationSpec,
   type DocumentInfo,
   describePages,
@@ -22,6 +24,8 @@ import { Footer } from "@pdfoctopus/ui";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AnnotateLayer } from "./annotate/AnnotateLayer";
+import { arrowDelta, moveBox, sameBox } from "./annotate/edit";
+import { SelectLayer } from "./annotate/SelectLayer";
 import { cssColor, PALETTE, TOOLS, type ToolId, toolById, WIDTHS } from "./annotate/tools";
 import {
   chooseDestination,
@@ -163,6 +167,11 @@ function formatRanges(pages: readonly number[]): string {
   return parts.join(", ");
 }
 
+/** "a rectangle", "an ellipse". */
+function articled(noun: string): string {
+  return `${/^[aeiou]/i.test(noun) ? "an" : "a"} ${noun}`;
+}
+
 function countPages(n: number): string {
   return `${n} page${n === 1 ? "" : "s"}`;
 }
@@ -197,6 +206,13 @@ export function App() {
   /** The colour chosen for each tool (until then, the tool's own default). */
   const [toolColors, setToolColors] = useState<Partial<Record<ToolId, RgbColor>>>({});
   const [lineWidth, setLineWidth] = useState(2);
+  /** True while the Select tool is picked: clicking an annotation then selects it. */
+  const [selecting, setSelecting] = useState(false);
+  /** The selected annotation and its page, if any. */
+  const [selectedAnnot, setSelectedAnnot] = useState<{
+    page: number;
+    annotation: AnnotationInfo;
+  } | null>(null);
   /**
    * The page where a note or text box is being typed, if any. Other edits (and drawing on other
    * pages, and saving) wait for it, and its page stays loaded even when scrolled away.
@@ -252,6 +268,8 @@ export function App() {
     setSignDialog(undefined);
     setPending(undefined);
     setTool(undefined);
+    setSelecting(false);
+    setSelectedAnnot(null);
   }, []);
 
   /** Start a fresh worker and begin loading MuPDF in the background. */
@@ -535,6 +553,8 @@ export function App() {
     const centre = viewer.current?.visibleCentre(page) ?? undefined;
     const rect = initialRect(size, image.width / image.height, kind, centre);
     setTool(undefined); // Placing a stamp and drawing don't mix.
+    setSelecting(false);
+    setSelectedAnnot(null);
     setPending({ kind, image, text, page, rect });
     setStatus(
       `Drag your ${STAMP_NOUN[kind]} into place, or click where it should go. ` +
@@ -595,8 +615,59 @@ export function App() {
       setStatus("");
       return;
     }
+    setSelecting(false);
+    setSelectedAnnot(null);
     setTool(id);
     setStatus(`${toolById(id).hint}. Press Escape when you're done.`);
+  }
+
+  /** Pick the Select tool, or put it down. */
+  function pickSelect() {
+    setSelectedAnnot(null);
+    if (selecting) {
+      setSelecting(false);
+      setStatus("");
+      return;
+    }
+    setTool(undefined);
+    setSelecting(true);
+    setStatus("Click an annotation to select it. Press Escape when you're done.");
+  }
+
+  function selectAnnotation(page: number, annotation: AnnotationInfo | null) {
+    setSelectedAnnot(annotation ? { page, annotation } : null);
+    if (!annotation) return;
+    const can = [
+      "drag to move it",
+      annotation.canResize ? "drag its corner to resize it" : null,
+      "press Delete to remove it",
+    ].filter(Boolean);
+    setStatus(`Selected ${articled(annotation.label)}: ${can.join(", ")}.`);
+  }
+
+  function editAnnotation(page: number, annotation: AnnotationInfo, change: AnnotationChange) {
+    const noun = `the ${annotation.label}`;
+    void runTask(`change ${noun}`, async (pdf) => {
+      const result = await pdf.editAnnotation(page, annotation.id, change);
+      const done =
+        change.text !== undefined
+          ? `Updated ${noun}.`
+          : change.color
+            ? `Changed the colour of ${noun}.`
+            : (result.history.undoLabel ?? "").startsWith("Resize")
+              ? `Resized ${noun}.`
+              : `Moved ${noun}.`;
+      applyEdit(result, `${done} Undo with Ctrl+Z.`);
+    });
+  }
+
+  function deleteAnnotation(page: number, annotation: AnnotationInfo) {
+    const noun = `the ${annotation.label}`;
+    void runTask(`delete ${noun}`, async (pdf) => {
+      const result = await pdf.deleteAnnotation(page, annotation.id);
+      setSelectedAnnot(null);
+      applyEdit(result, `Deleted ${noun} from page ${page + 1}. Undo with Ctrl+Z.`);
+    });
   }
 
   function addAnnotation(spec: AnnotationSpec) {
@@ -827,9 +898,38 @@ export function App() {
         return;
       }
       if (!doc) return;
-      if (tool && !drafting && e.key === "Escape" && !typingInField(e.target)) {
-        setTool(undefined);
+      if ((tool || selecting) && !drafting && e.key === "Escape" && !typingInField(e.target)) {
+        // The first Escape lets go of the selection, the next puts the tool down.
+        if (selectedAnnot) setSelectedAnnot(null);
+        else {
+          setTool(undefined);
+          setSelecting(false);
+        }
         setStatus("");
+        return;
+      }
+      // Delete works on the selection wherever the focus is (it's lost for a moment while the
+      // page is redrawn after each change).
+      if (
+        selectedAnnot &&
+        !drafting &&
+        !mod &&
+        (e.key === "Delete" || e.key === "Backspace") &&
+        !typingInField(e.target)
+      ) {
+        e.preventDefault();
+        if (!busy) deleteAnnotation(selectedAnnot.page, selectedAnnot.annotation);
+        return;
+      }
+      const nudge = selectedAnnot && !mod && !e.altKey && arrowDelta(e.key, e.shiftKey);
+      if (selectedAnnot && nudge && !drafting && !typingInField(e.target)) {
+        e.preventDefault();
+        const size = doc.info.pages[selectedAnnot.page];
+        const { annotation } = selectedAnnot;
+        const rect = size && moveBox(annotation.rect, nudge[0], nudge[1], size);
+        if (rect && !busy && !sameBox(rect, annotation.rect)) {
+          editAnnotation(selectedAnnot.page, annotation, { rect });
+        }
         return;
       }
       // While a stamp is being placed, its keys work wherever the focus is, even when its page
@@ -1315,6 +1415,18 @@ export function App() {
         {doc && (
           <div className="toolbar annotate-tools" role="toolbar" aria-label="Annotate">
             <span className="toolbar-label">Annotate</span>
+            <button
+              type="button"
+              className="tool icon"
+              disabled={locked}
+              aria-pressed={selecting}
+              aria-label="Select, move or delete annotations"
+              title="Select, move or delete annotations"
+              onClick={pickSelect}
+            >
+              <span aria-hidden="true">⬚</span>
+            </button>
+            <span className="divider" />
             {TOOLS.map((t) => (
               <button
                 key={t.id}
@@ -1453,6 +1565,27 @@ export function App() {
                       onCancel={cancelPending}
                     />
                   ) : null;
+                }
+                if (selecting) {
+                  return (
+                    <SelectLayer
+                      key={`${editVersion}:${index}`}
+                      pageIndex={index}
+                      page={size}
+                      scale={viewScale}
+                      busy={busy}
+                      blocked={drafting && draftPage !== index}
+                      selectedId={
+                        selectedAnnot?.page === index ? selectedAnnot.annotation.id : null
+                      }
+                      list={() => getClient().listAnnotations(index)}
+                      onSelect={(a) => selectAnnotation(index, a)}
+                      onRefresh={(annotation) => setSelectedAnnot({ page: index, annotation })}
+                      onEdit={(a, change) => editAnnotation(index, a, change)}
+                      onDelete={(a) => deleteAnnotation(index, a)}
+                      onDraftChange={setDraftPage}
+                    />
+                  );
                 }
                 if (!tool) return null;
                 const picked = toolById(tool);

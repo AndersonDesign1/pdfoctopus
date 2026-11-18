@@ -109,6 +109,25 @@ Open `fixtures/generated/contract-libreoffice.pdf`, then use each tool in the **
 - [ ] **Saved file in Adobe Acrobat Reader:** all annotations show in the comments list, the
       note opens with its text, everything prints. Also in **Chrome/Edge** and **Firefox**
 
+### Editing and deleting annotations
+
+Pick the **Select** tool (first in the Annotate row):
+
+- [ ] Click each kind of annotation to select it, including thin lines and a highlight
+- [ ] **Move:** drag it; also press and drag in one go on an unselected one; arrow keys move it
+      by 1 point (10 with Shift) and never change the page
+- [ ] **Resize:** drag the corner of a rectangle, ellipse, text box, white-out box and signature
+      (a signature keeps its proportions)
+- [ ] **Colour:** change a highlight's, a drawing's and a text box's colour
+- [ ] **Text:** Edit text (or double-click, or Enter) on a note and a text box, then Save
+- [ ] **Delete:** the Delete button, and the Delete key; a note's pop-up goes with it
+- [ ] Undo and redo each change; Escape lets go of the selection, Escape again puts the tool down
+- [ ] Open a file signed in an earlier session and delete or move the signature
+- [ ] Open a PDF with comments made in **Adobe Acrobat** and move one: it keeps its look
+- [ ] **Rotated page:** moving and resizing go the way you drag
+- [ ] **Phone:** tap to select, drag the selection; the buttons stay on screen
+- [ ] **Saved file in Adobe Acrobat Reader:** the edits are there and nothing else changed
+
 ## Problems found
 
 _None yet._
