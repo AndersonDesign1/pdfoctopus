@@ -22,7 +22,7 @@ import {
 
 /** A ready-to-stamp image. */
 export interface StampImage {
-  /** PNG bytes (JPEG for a placed photo, see pictureToImage). */
+  /** Encoded image bytes: PNG, or JPEG for a placed photo (see pictureToImage). */
   png: Uint8Array;
   /** The same PNG as a data: URL, for previews and for saving it for reuse. */
   dataUrl: string;

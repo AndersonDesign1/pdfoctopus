@@ -146,6 +146,8 @@ Pick the **Select** tool (first in the Annotate row):
 - [ ] Drop a picture on the open document: it's placed, and the document stays open
 - [ ] Place, resize (proportions kept) and apply; select, move and delete it; undo and redo
 - [ ] A very large photo (over 20 megapixels) is accepted and the saved file stays small
+- [ ] **Rotated page:** the picture lands where it was dragged and reads the right way up
+- [ ] A file that isn't a picture (a text file renamed to .png) gets a message, nothing else
 - [ ] **Saved file in Adobe Acrobat Reader:** the pictures look right, can be moved there, and
       print. Also in **Chrome/Edge** and **Firefox**
 

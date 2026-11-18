@@ -205,8 +205,9 @@ selected, moved, resized (keeping its proportions) and deleted.
 
 - **In the browser** (`pictureToImage` in `apps/web/src/sign/stampImage.ts`): the camera's
   orientation is applied, pictures are scaled down to 2,400 pixels on their longer side, photos
-  become JPEG and pictures with transparency (and PNG or GIF files) stay PNG. Anything still
-  over the engine's 10 MB limit is made smaller. Nothing leaves the device.
+  become JPEG, pictures with transparency stay PNG, and PNG or GIF files normally stay PNG
+  (a large opaque one is re-encoded as JPEG if its PNG would be over the engine's 10 MB limit).
+  Anything still over the limit is made smaller. Nothing leaves the device.
 - **Engine:** the existing `addImageStamp` with kind `image`. Unlike signatures, pictures
   aren't marked "locked", so other apps let them be moved too. New tests: a JPEG photo is
   drawn where it was placed and saved compressed, and pictures aren't locked.
