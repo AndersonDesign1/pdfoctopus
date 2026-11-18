@@ -110,7 +110,20 @@ describe("addAnnotation", () => {
     const { from, to } = span(engine, 0, "quick brown");
     const result = engine.addAnnotation({ kind, page: 0, from, to, color: [1, 0.8, 0] });
     expect(result.history.undoLabel).toMatch(/^Add /);
-    expect(subtypes(engine.save())).toEqual([subtype]);
+    const saved = engine.save();
+    expect(subtypes(saved)).toEqual([subtype]);
+    // It covers the selected words: one quad, spanning them from left to right. (QuadPoints are
+    // in PDF space, where y runs up, but x is the same as on screen for this unrotated page.)
+    const [selected] = engine.selectText(0, from, to) as [number[]];
+    const doc = mupdf.Document.openDocument(saved, "application/pdf");
+    const quadPoints = doc.asPDF()?.findPage(0).get("Annots").get(0).get("QuadPoints");
+    const xs = Array.from({ length: quadPoints?.length ?? 0 }, (_, i) => i)
+      .filter((i) => i % 2 === 0)
+      .map((i) => quadPoints?.get(i).asNumber() as number);
+    doc.destroy();
+    expect(xs).toHaveLength(4);
+    expect(Math.min(...xs)).toBeCloseTo(selected[0] as number, 1);
+    expect(Math.max(...xs)).toBeCloseTo(selected[2] as number, 1);
   });
 
   it("puts a highlight behind the words, coloured", () => {
