@@ -123,6 +123,12 @@ async function handle(req: WorkerRequest): Promise<WorkerSuccess> {
       return success(req.id, "addField", engine.addField(req.spec));
     case "updateField":
       return success(req.id, "updateField", engine.updateField(req.page, req.field, req.changes));
+    case "setPassword":
+      return success(req.id, "setPassword", engine.setPassword(req.spec));
+    case "removePassword":
+      return success(req.id, "removePassword", engine.removePassword());
+    case "unlockPermissions":
+      return success(req.id, "unlockPermissions", engine.unlockPermissions(req.password));
     case "listFieldNames":
       return success(req.id, "listFieldNames", engine.listFieldNames());
     case "deleteField":

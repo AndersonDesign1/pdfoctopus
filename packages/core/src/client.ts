@@ -21,6 +21,7 @@ import type {
   WorkerRequest,
   WorkerResults,
 } from "./protocol";
+import type { PasswordSpec } from "./security";
 
 type Pending = { resolve: (value: unknown) => void; reject: (reason: Error) => void };
 type DistributiveOmit<T, K extends keyof T> = T extends unknown ? Omit<T, K> : never;
@@ -284,6 +285,21 @@ export class PdfWorkerClient {
   /** Change a field's name, whether it's required, its default value or its options. */
   updateField(page: number, field: number, changes: FieldChanges) {
     return this.call<"updateField">({ type: "updateField", page, field, changes });
+  }
+
+  /** Protect the file with a password when it's next saved, as one undoable step. */
+  setPassword(spec: PasswordSpec) {
+    return this.call<"setPassword">({ type: "setPassword", spec });
+  }
+
+  /** Save the file without its password, as one undoable step. */
+  removePassword() {
+    return this.call<"removePassword">({ type: "removePassword" });
+  }
+
+  /** Unlock the file's permissions with its permissions password (null if it's wrong). */
+  unlockPermissions(password: string) {
+    return this.call<"unlockPermissions">({ type: "unlockPermissions", password });
   }
 
   /** The full names of every field in the form. */
