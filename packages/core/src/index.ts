@@ -33,6 +33,7 @@ export {
   PasswordRequiredError,
   type PdfErrorCode,
 } from "./errors";
+export type { FieldChanges, NewField, NewFieldKind } from "./formBuild";
 export type { FieldKind } from "./forms";
 export { describePages, parsePageRanges, splitEvery, splitSingle } from "./pageRanges";
 export type {

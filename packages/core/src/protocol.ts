@@ -21,6 +21,7 @@ import type {
   TextStamp,
 } from "./engine";
 import type { PdfErrorCode } from "./errors";
+import type { FieldChanges, NewField } from "./formBuild";
 
 export type WorkerRequest =
   | { id: number; type: "init" }
@@ -46,6 +47,9 @@ export type WorkerRequest =
   | { id: number; type: "listFields"; page: number }
   | { id: number; type: "setFieldValue"; page: number; field: number; value: string | boolean }
   | { id: number; type: "flattenForm" }
+  | { id: number; type: "addField"; spec: NewField }
+  | { id: number; type: "updateField"; page: number; field: number; changes: FieldChanges }
+  | { id: number; type: "deleteField"; page: number; field: number }
   | { id: number; type: "deleteAnnotation"; page: number; annotation: number }
   | {
       id: number;
@@ -84,6 +88,9 @@ export interface WorkerResults {
   listFields: FormField[];
   setFieldValue: EditResult;
   flattenForm: EditResult;
+  addField: EditResult;
+  updateField: EditResult;
+  deleteField: EditResult;
   deleteAnnotation: EditResult;
   editAnnotation: EditResult;
   undo: EditResult | null;

@@ -13,6 +13,7 @@ import type {
   TextStamp,
 } from "./engine";
 import { EngineCrashedError, errorFromCode, isFatalEngineError } from "./errors";
+import type { FieldChanges, NewField } from "./formBuild";
 import type {
   LoadProgress,
   RequestType,
@@ -273,6 +274,21 @@ export class PdfWorkerClient {
   /** Turn the form into ordinary page content, as one undoable step. */
   flattenForm() {
     return this.call<"flattenForm">({ type: "flattenForm" });
+  }
+
+  /** Add a form field (a box on a page), as one undoable step. */
+  addField(spec: NewField) {
+    return this.call<"addField">({ type: "addField", spec });
+  }
+
+  /** Change a field's name, whether it's required, its default value or its options. */
+  updateField(page: number, field: number, changes: FieldChanges) {
+    return this.call<"updateField">({ type: "updateField", page, field, changes });
+  }
+
+  /** Delete a form field's box, as one undoable step. */
+  deleteField(page: number, field: number) {
+    return this.call<"deleteField">({ type: "deleteField", page, field });
   }
 
   /** The annotations on a page that can be selected, bottom first. */

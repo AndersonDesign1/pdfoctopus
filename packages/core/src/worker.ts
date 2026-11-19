@@ -119,6 +119,12 @@ async function handle(req: WorkerRequest): Promise<WorkerSuccess> {
       return success(req.id, "setFieldValue", engine.setFieldValue(req.page, req.field, req.value));
     case "flattenForm":
       return success(req.id, "flattenForm", engine.flattenForm());
+    case "addField":
+      return success(req.id, "addField", engine.addField(req.spec));
+    case "updateField":
+      return success(req.id, "updateField", engine.updateField(req.page, req.field, req.changes));
+    case "deleteField":
+      return success(req.id, "deleteField", engine.deleteField(req.page, req.field));
     case "listAnnotations":
       return success(req.id, "listAnnotations", engine.listAnnotations(req.page));
     case "deleteAnnotation":
