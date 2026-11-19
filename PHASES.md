@@ -342,6 +342,38 @@ it. Each change is one undoable step, and saving stays incremental.
 - **Not yet checked:** the saved files in Adobe Reader and other viewers; see the list in
   TESTING.md.
 
+### 12. Phase 3: passwords and permissions (2026-11-19)
+
+**Password** (page tools row) opens a dialog: require a password to open the file, limit what
+people can do with it (print, copy, change the content, comment, fill in forms, organise
+pages) behind a permissions password, or both; or remove the file's password. It takes effect
+when the file is saved, which then rewrites the whole file (the dialog says so, and that
+digital signatures stop being valid), and it's one undoable step until then.
+
+- **Engine:** `setPassword`, `removePassword` and `unlockPermissions` in
+  `packages/core/src/engine.ts`, helpers in `security.ts`. MuPDF writes AES-256 (Standard
+  security handler V5 R6) when saving with `encrypt=aes-256` and the passwords and `/P`;
+  `encrypt=none` removes it. Reading for accessibility is always allowed; "print" allows
+  high-quality printing too.
+- **Permissions are read from `/Encrypt /P`**, not MuPDF's `hasPermission`, which reports
+  editing as allowed when it isn't.
+- **A file that restricts anything** can only have its password or permissions changed once
+  unlocked with its permissions (owner) password: when opening, or in the dialog afterwards.
+  Otherwise anyone with the open password could remove the limits.
+- **Saving a protected file without changing its password** keeps its encryption, whether
+  the save appends (as usual) or rewrites.
+- **Passwords can't contain a comma** (MuPDF's writer options are comma-separated) and are at
+  most 127 bytes; any language works.
+- **Tests:** `security.test.ts`: `/P` bits, open password, permissions only, both passwords,
+  undo before saving, unlocking, removing, refusals, a non-English password, and saving a
+  protected file by appending and rewriting.
+- **Checked:** in Chromium end to end (protect with both passwords and limits, save, reopen
+  with the open password, unlock with the permissions password, remove, save), and the saved
+  files with qpdf (R6, AES-256 for streams, strings and files; refused without the password;
+  the permissions as set; the unprotected copy opens without one).
+- **Not yet checked:** Adobe Acrobat and Reader (see TESTING.md). PDFoctopus doesn't yet
+  enforce a file's own limits on what can be done in it, besides changing its password.
+
 ### Where things are
 
 - **Engine:** `packages/core` (MuPDF in a Web Worker, plus a promise-based client). Tests:
@@ -531,10 +563,12 @@ it. Each change is one undoable step, and saving stays incremental.
 
 ### Password & permissions
 
-- [ ] Add an open password (AES-256)
-- [ ] Remove a password (when the user knows it)
-- [ ] Set permissions: print, copy, edit, annotate, fill forms, assemble
-- [ ] Verify output with qpdf (opens with password, refuses without, reports AES-256)
+- [x] Add an open password (AES-256)
+- [x] Remove a password (when the user knows it; with the permissions password if the file
+      restricts anything)
+- [x] Set permissions: print, copy, edit, annotate, fill forms, assemble
+- [x] Verify output with qpdf (opens with password, refuses without, reports AES-256) (checked
+      by hand with libqpdf 11 through pikepdf; not in CI yet)
 - [ ] Verify output in Adobe Acrobat and Adobe Reader
 
 ### Compress

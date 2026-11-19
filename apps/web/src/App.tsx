@@ -18,6 +18,7 @@ import {
   type LoadProgress,
   type NewFieldKind,
   PasswordRequiredError,
+  type PasswordSpec,
   PdfWorkerClient,
   type RgbColor,
   type RotationDelta,
@@ -52,6 +53,7 @@ import {
   writeFiles,
   writeToDestination,
 } from "./saveFile";
+import { SecurityDialog } from "./security/SecurityDialog";
 import { clampRect, formatToday, initialRect, type PageRect, placementKey } from "./sign/ink";
 import { Placement } from "./sign/Placement";
 import { SignDialog } from "./sign/SignDialog";
@@ -325,6 +327,8 @@ export function App() {
   const [status, setStatus] = useState("");
   const [passwordPrompt, setPasswordPrompt] = useState<PasswordPrompt>();
   const [showProperties, setShowProperties] = useState(false);
+  /** The password and permissions dialog, if open, with the last error from applying it. */
+  const [passwordDialog, setPasswordDialog] = useState<{ error?: string }>();
   const [sidebar, setSidebar] = useState(true);
   const [dragging, setDragging] = useState(false);
   const [theme, setTheme] = useTheme();
@@ -360,6 +364,7 @@ export function App() {
     setCurrentHit(0);
     setPage(0);
     setShowProperties(false);
+    setPasswordDialog(undefined);
     setSelection(EMPTY_SELECTION);
     setHistory(NO_HISTORY);
     setDirty(false);
@@ -523,6 +528,8 @@ export function App() {
       // After redacting, the whole file is rewritten (agreed to when applying), so nothing
       // removed is left in the original bytes.
       const rewritten = doc.info.redacted;
+      // Adding or removing a password rewrites the whole file too (the engine sees to that).
+      const security = docRef.current?.info.security.pending ?? "none";
       try {
         bytes = await pdf.save(!rewritten);
       } catch (err) {
@@ -563,7 +570,11 @@ export function App() {
         rewritten
           ? // Not "the redacted content is gone": an undone redaction is back, and saved.
             `${done} The whole file was rewritten, as it is after redacting.`
-          : done,
+          : security === "protect"
+            ? `${done} It's protected now (the whole file was rewritten).`
+            : security === "remove"
+              ? `${done} It has no password now (the whole file was rewritten).`
+              : done,
       );
     } catch (err) {
       reportError("save this file", err);
@@ -943,6 +954,63 @@ export function App() {
     });
   }
 
+  // ---- Passwords and permissions ----
+
+  /** Run a change from the password dialog: an error keeps the dialog open and shows there. */
+  function runPasswordTask(action: string, task: (pdf: PdfWorkerClient) => Promise<void>) {
+    void runTask(action, async (pdf) => {
+      try {
+        await task(pdf);
+      } catch (err) {
+        if (isFatalEngineError(err)) throw err;
+        setPasswordDialog({ error: messageOf(err) });
+      }
+    });
+  }
+
+  function protectNow(spec: PasswordSpec) {
+    runPasswordTask("set the password", async (pdf) => {
+      const result = await pdf.setPassword(spec);
+      setPasswordDialog(undefined);
+      applyEdit(
+        result,
+        `${spec.openPassword ? "Password set" : "Limits set"}: the file is protected when you ` +
+          "save it, which rewrites the whole file. Undo with Ctrl+Z.",
+      );
+    });
+  }
+
+  function removePasswordNow() {
+    runPasswordTask("remove the password", async (pdf) => {
+      const result = await pdf.removePassword();
+      setPasswordDialog(undefined);
+      applyEdit(
+        result,
+        result.info.security.pending === "remove"
+          ? "The password is removed when you save, which rewrites the whole file. Undo with Ctrl+Z."
+          : "The file won't get a password when you save. Undo with Ctrl+Z.",
+      );
+    });
+  }
+
+  function unlockPermissionsNow(password: string) {
+    runPasswordTask("unlock the permissions", async (pdf) => {
+      const info = await pdf.unlockPermissions(password);
+      if (!info) {
+        setPasswordDialog({ error: "That isn't the permissions password." });
+        return;
+      }
+      const current = docRef.current;
+      if (current) {
+        const next = { ...current, info };
+        docRef.current = next;
+        setDoc(next);
+      }
+      setPasswordDialog({});
+      setStatus("Permissions unlocked: the password and limits can be changed.");
+    });
+  }
+
   // ---- Building forms ----
 
   function pickFormTool(id: NewFieldKind | "edit") {
@@ -1270,6 +1338,7 @@ export function App() {
         pageDialog ||
         passwordPrompt ||
         showProperties ||
+        passwordDialog ||
         signDialog ||
         stampDialog ||
         redactDialog ||
@@ -1845,6 +1914,18 @@ export function App() {
             >
               Image
             </button>
+            <span className="divider" />
+            <button
+              type="button"
+              className="tool"
+              disabled={locked}
+              onClick={() => setPasswordDialog({})}
+              title="Protect the file with a password, or limit what people can do with it"
+            >
+              {doc.info.security.encrypted || doc.info.security.pending === "protect"
+                ? "🔒 Password"
+                : "Password"}
+            </button>
             <input
               ref={imageInput}
               className="visually-hidden"
@@ -2190,6 +2271,17 @@ export function App() {
         />
       )}
 
+      {passwordDialog && doc && (
+        <SecurityDialog
+          security={doc.info.security}
+          error={passwordDialog.error}
+          busy={busy}
+          onProtect={protectNow}
+          onRemove={removePasswordNow}
+          onUnlock={unlockPermissionsNow}
+          onCancel={() => setPasswordDialog(undefined)}
+        />
+      )}
       {showProperties && doc && (
         <PropertiesDialog
           fileName={doc.fileName}

@@ -248,6 +248,29 @@ Use `fixtures/generated/contract-libreoffice.pdf` (no form) and
 - [ ] **Phone or tablet:** drawing a field's box with a finger works, and the Form row shows all
       six field tools and **Edit fields**; the field dialog fits the screen
 
+## Phase 3: passwords and permissions
+
+Use any PDF, e.g. `fixtures/generated/contract-libreoffice.pdf`.
+
+- [ ] **Password** (page tools row): tick "Require a password to open", type it twice,
+      Protect, Save. The button shows a lock
+- [ ] Open the saved file in **Adobe Acrobat Reader**, **Chrome/Edge** and **Firefox**: each
+      asks for the password, refuses a wrong one, and opens with the right one. In Acrobat,
+      File → Properties → Security says AES 256-bit
+- [ ] Protect with only "Limit what people can do": untick Copy and Change the content, set a
+      permissions password, Save. In Acrobat the file opens without a password, copying is
+      blocked, and Security shows the limits
+- [ ] Both: an open password and limits. In Acrobat the open password opens it with the
+      limits; the permissions password opens it with none
+- [ ] Reopen the limited file in PDFoctopus: Password asks for the permissions password
+      first; a wrong one is refused. With the right one, **Remove password**, Save: the file
+      opens anywhere without a password
+- [ ] A password with accents or another alphabet (e.g. "Pässwörd") works in Acrobat
+- [ ] Undo (Ctrl+Z) after setting a password and before saving: the file saves without one
+- [ ] Edit a protected file (rotate a page) and save: it still asks for the password
+- [ ] A digitally signed PDF: the dialog warns signatures stop being valid; Acrobat agrees after
+      saving
+
 ## Problems found
 
 _None yet._

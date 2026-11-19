@@ -22,6 +22,7 @@ import type {
 } from "./engine";
 import type { PdfErrorCode } from "./errors";
 import type { FieldChanges, NewField } from "./formBuild";
+import type { PasswordSpec } from "./security";
 
 export type WorkerRequest =
   | { id: number; type: "init" }
@@ -51,6 +52,9 @@ export type WorkerRequest =
   | { id: number; type: "updateField"; page: number; field: number; changes: FieldChanges }
   | { id: number; type: "deleteField"; page: number; field: number }
   | { id: number; type: "listFieldNames" }
+  | { id: number; type: "setPassword"; spec: PasswordSpec }
+  | { id: number; type: "removePassword" }
+  | { id: number; type: "unlockPermissions"; password: string }
   | { id: number; type: "deleteAnnotation"; page: number; annotation: number }
   | {
       id: number;
@@ -93,6 +97,9 @@ export interface WorkerResults {
   updateField: EditResult;
   deleteField: EditResult;
   listFieldNames: string[];
+  setPassword: EditResult;
+  removePassword: EditResult;
+  unlockPermissions: DocumentInfo | null;
   deleteAnnotation: EditResult;
   editAnnotation: EditResult;
   undo: EditResult | null;

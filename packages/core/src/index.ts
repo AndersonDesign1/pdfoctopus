@@ -44,6 +44,7 @@ export type {
   WorkerResponse,
   WorkerResults,
 } from "./protocol";
+export type { PasswordSpec, Permissions, SecurityInfo } from "./security";
 export {
   BORDER as STAMP_BORDER,
   cleanStampText,

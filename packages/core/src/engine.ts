@@ -56,6 +56,15 @@ import {
   restoreField,
   snapshotField,
 } from "./forms";
+import {
+  ALL_PERMISSIONS,
+  checkPasswordSpec,
+  encryptOptions,
+  filePermissions,
+  fileRestricts,
+  type PasswordSpec,
+  type SecurityInfo,
+} from "./security";
 import { checkStampText, MAX_STAMP_DETAIL, MAX_STAMP_TEXT, stampName } from "./stampRules";
 import { stampAppearance } from "./textStamp";
 
@@ -102,6 +111,8 @@ export interface DocumentInfo {
    * because appending would keep the removed content in the original bytes.
    */
   redacted: boolean;
+  /** Whether the file has a password, what it allows, and what saving will do to that. */
+  security: SecurityInfo;
 }
 
 /** A search hit: one or more quads (a hit can wrap across lines) on one page. */
@@ -362,6 +373,11 @@ export class PdfEngine {
   private doc: mupdf.Document | null = null;
   /** MuPDF's needsPassword() stays true after a successful unlock, so track it here. */
   private locked = false;
+  /** Whether the file was unlocked with its permissions (owner) password. */
+  private ownerUnlocked = false;
+  /** A password to add, or the file's to remove, when it's next saved (null: keep as is). */
+  private securityChange: { kind: "protect"; spec: PasswordSpec } | { kind: "remove" } | null =
+    null;
   /**
    * The opened file's size and where its last cross-reference section starts. Every
    * incremental save is these bytes plus one update, whose trailer must point back here.
@@ -394,9 +410,97 @@ export class PdfEngine {
   authenticate(password: string): DocumentInfo | null {
     const doc = this.requireDoc(false);
     if (!this.locked) return this.info();
-    if (doc.authenticatePassword(password) === 0) return null;
+    const result = doc.authenticatePassword(password);
+    if (result === 0) return null;
     this.locked = false;
+    this.ownerUnlocked = (result & 4) !== 0;
     return this.info();
+  }
+
+  /**
+   * Unlock a file's permissions with its permissions (owner) password, so its password and
+   * permissions can be changed. Returns the document's info, or null if the password is wrong.
+   */
+  unlockPermissions(password: string): DocumentInfo | null {
+    const doc = this.requireDoc();
+    if ((doc.authenticatePassword(password) & 4) === 0) return null;
+    this.ownerUnlocked = true;
+    return this.info();
+  }
+
+  // ---------------------------------------------------------------------------------------
+  // Passwords and permissions. They take effect when the file is saved, which then rewrites
+  // the whole file: an incremental save can't change how a file is encrypted.
+
+  /** The file's security, and what the next save will do to it. */
+  private securityInfo(): SecurityInfo {
+    const doc = this.doc;
+    const pdf = doc?.asPDF();
+    const method = doc?.getMetaData("encryption");
+    const encrypted = !!method && method !== "None";
+    const permissions = pdf ? filePermissions(pdf) : { ...ALL_PERMISSIONS };
+    const change = this.securityChange;
+    return {
+      encrypted,
+      method: encrypted ? method : undefined,
+      permissions,
+      canChange: !encrypted || this.ownerUnlocked || !(pdf && fileRestricts(pdf)),
+      pending: change ? change.kind : "none",
+      pendingOpenPassword: change?.kind === "protect" ? !!change.spec.openPassword : undefined,
+      pendingPermissions: change?.kind === "protect" ? { ...change.spec.permissions } : undefined,
+    };
+  }
+
+  /**
+   * Protect the file with a password (to open it, to change its permissions, or both) when
+   * it's next saved, as one undoable step.
+   */
+  setPassword(spec: PasswordSpec): EditResult {
+    this.requirePdf();
+    if (!this.securityInfo().canChange) {
+      throw new Error("Unlock the permissions with the permissions password first");
+    }
+    checkPasswordSpec(spec);
+    const copy: PasswordSpec = {
+      openPassword: spec.openPassword ?? "",
+      permissionsPassword: spec.permissionsPassword ?? "",
+      permissions: { ...spec.permissions },
+    };
+    return this.securityStep(copy.openPassword ? "Add password" : "Restrict permissions", {
+      kind: "protect",
+      spec: copy,
+    });
+  }
+
+  /** Save the file without a password (and without restrictions), as one undoable step. */
+  removePassword(): EditResult {
+    this.requirePdf();
+    const security = this.securityInfo();
+    if (!security.canChange) {
+      throw new Error("Unlock the permissions with the permissions password first");
+    }
+    if (!security.encrypted && security.pending !== "protect") {
+      throw new Error("This file has no password");
+    }
+    return this.securityStep("Remove password", security.encrypted ? { kind: "remove" } : null);
+  }
+
+  private securityStep(label: string, next: PdfEngine["securityChange"]): EditResult {
+    const before = this.securityChange;
+    let applied = true;
+    this.securityChange = next;
+    return this.run({
+      label,
+      redo: () => {
+        if (applied) return;
+        this.securityChange = next;
+        applied = true;
+      },
+      undo: () => {
+        this.securityChange = before;
+        applied = false;
+      },
+    });
   }
 
   info(): DocumentInfo {
@@ -427,6 +531,7 @@ export class PdfEngine {
       redactionMarks: this.countRedactionMarks(),
       form: this.formInfo(),
       redacted: this.redacted,
+      security: this.securityInfo(),
     };
   }
 
@@ -536,13 +641,24 @@ export class PdfEngine {
     // bytes at the start of the file, so the whole file is always rewritten. (The user agreed
     // to that when applying the redactions.)
     if (this.redacted) incremental = false;
+    // Adding or removing a password rewrites the whole file too (agreed to when setting it).
+    const change = this.securityChange;
+    if (change) incremental = false;
     if (incremental && !pdf.canBeSavedIncrementally()) {
       throw new IncrementalSaveError();
     }
     // "compress" deflates streams that are written uncompressed. MuPDF stores a stamp's image
     // as raw pixels, which would make a signed file several megabytes bigger. In an
     // incremental save it only applies to the objects being appended, never to the original.
-    const buffer = pdf.saveToBuffer(incremental ? "incremental,compress" : "garbage,compress");
+    const security =
+      change?.kind === "protect"
+        ? `,${encryptOptions(change.spec)}`
+        : change?.kind === "remove"
+          ? ",encrypt=none"
+          : "";
+    const buffer = pdf.saveToBuffer(
+      incremental ? "incremental,compress" : `garbage,compress${security}`,
+    );
     let bytes: Uint8Array;
     try {
       bytes = buffer.asUint8Array().slice();
@@ -570,6 +686,8 @@ export class PdfEngine {
     this.doc = null;
     this.base = null;
     this.locked = false;
+    this.ownerUnlocked = false;
+    this.securityChange = null;
     this.undoStack = [];
     this.redoStack = [];
     this.redacted = false;
