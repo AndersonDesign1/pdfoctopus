@@ -98,6 +98,24 @@ export function restrictsAnything(p: Permissions): boolean {
   return Object.values(p).some((allowed) => !allowed);
 }
 
+/** Every permission bit /P can withhold. */
+const ALL_BITS =
+  PRINT | EDIT | COPY | ANNOTATE | FILL_FORMS | ACCESSIBILITY | ASSEMBLE | PRINT_HIGH;
+
+/**
+ * Whether a file withholds anything at all, judged from its raw /P, not from `Permissions`,
+ * which leaves out bits PDFoctopus always sets (high-quality printing, accessibility): a file
+ * that withholds only those still needs its permissions password to change its password.
+ */
+export function fileRestricts(pdf: mupdf.PDFDocument): boolean {
+  const encrypt = pdf.getTrailer().get("Encrypt");
+  if (!encrypt.isDictionary()) return false;
+  const p = encrypt.get("P");
+  // /P is required; a file without one is treated as restricting everything.
+  if (!p.isNumber()) return true;
+  return (p.asNumber() & ALL_BITS) !== ALL_BITS;
+}
+
 /** What an encrypted file allows, from its /Encrypt /P (all of it if it isn't encrypted). */
 export function filePermissions(pdf: mupdf.PDFDocument): Permissions {
   const encrypt = pdf.getTrailer().get("Encrypt");

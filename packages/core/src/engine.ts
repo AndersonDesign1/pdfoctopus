@@ -61,8 +61,8 @@ import {
   checkPasswordSpec,
   encryptOptions,
   filePermissions,
+  fileRestricts,
   type PasswordSpec,
-  restrictsAnything,
   type SecurityInfo,
 } from "./security";
 import { checkStampText, MAX_STAMP_DETAIL, MAX_STAMP_TEXT, stampName } from "./stampRules";
@@ -444,7 +444,7 @@ export class PdfEngine {
       encrypted,
       method: encrypted ? method : undefined,
       permissions,
-      canChange: !encrypted || this.ownerUnlocked || !restrictsAnything(permissions),
+      canChange: !encrypted || this.ownerUnlocked || !(pdf && fileRestricts(pdf)),
       pending: change ? change.kind : "none",
       pendingOpenPassword: change?.kind === "protect" ? !!change.spec.openPassword : undefined,
       pendingPermissions: change?.kind === "protect" ? { ...change.spec.permissions } : undefined,

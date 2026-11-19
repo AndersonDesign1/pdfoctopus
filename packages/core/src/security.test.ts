@@ -208,6 +208,45 @@ describe("removePassword", () => {
   });
 });
 
+describe("files that withhold only what PDFoctopus doesn't offer", () => {
+  /** A file encrypted by another app with this raw /P (only the user password set here). */
+  function encryptedWith(p: number): Uint8Array {
+    const pdf = new mupdf.PDFDocument();
+    pdf.insertPage(-1, pdf.addPage([0, 0, 300, 300], 0, pdf.newDictionary(), ""));
+    const out = pdf
+      .saveToBuffer(`encrypt=aes-256,user-password=reader,owner-password=author,permissions=${p}`)
+      .asUint8Array()
+      .slice();
+    pdf.destroy();
+    return out;
+  }
+  const BITS = { print: 1 << 2, accessibility: 1 << 9, printHigh: 1 << 11 };
+
+  for (const [what, withheld] of [
+    ["high-quality printing", BITS.printHigh],
+    ["reading for accessibility", BITS.accessibility],
+  ] as const) {
+    it(`still needs the permissions password when ${what} is withheld`, () => {
+      const everything = permissionBits(ALL_PERMISSIONS);
+      const engine = open(encryptedWith(everything & ~withheld));
+      engine.authenticate("reader");
+      expect(engine.info().security.canChange).toBe(false);
+      expect(() => engine.removePassword()).toThrow(/permissions password/);
+      expect(() =>
+        engine.setPassword({ openPassword: "new", permissions: ALL_PERMISSIONS }),
+      ).toThrow(/permissions password/);
+      // With the permissions password, it can.
+      expect(engine.unlockPermissions("author")?.security.canChange).toBe(true);
+    });
+  }
+
+  it("lets the open password change a file that withholds nothing", () => {
+    const engine = open(encryptedWith(permissionBits(ALL_PERMISSIONS)));
+    engine.authenticate("reader");
+    expect(engine.info().security.canChange).toBe(true);
+  });
+});
+
 describe("saving a protected file without changing its password", () => {
   it("keeps the encryption, whether appending or rewriting", () => {
     const engine = open(createBlankPdf(1));
