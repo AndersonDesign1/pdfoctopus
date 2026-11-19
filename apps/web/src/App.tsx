@@ -9,6 +9,8 @@ import {
   type EditResult,
   EngineCrashedError,
   EngineLoadError,
+  type FormField,
+  type FormInfo,
   type HistoryState,
   IncrementalSaveError,
   isFatalEngineError,
@@ -36,6 +38,8 @@ import {
   toolById,
   WIDTHS,
 } from "./annotate/tools";
+import { FlattenDialog } from "./form/FlattenDialog";
+import { FormLayer } from "./form/FormLayer";
 import {
   chooseDestination,
   chooseFolder,
@@ -195,6 +199,24 @@ function articled(noun: string): string {
   return `${/^[aeiou]/i.test(noun) ? "an" : "a"} ${noun}`;
 }
 
+/**
+ * A field label worth quoting back: words ("Last Name"), not a name only software reads
+ * ("f1_01[0]"), which is all some forms have.
+ */
+const READABLE_LABEL = /^\p{L}[\p{L}\p{N} '’.,:?()/-]{0,60}$/u;
+
+/** What to say about a form when its file is opened, if anything. */
+function formNotice(form: FormInfo): string {
+  if (form.xfa === "dynamic") {
+    return (
+      "This PDF's form is an XFA form, which PDFoctopus can't fill in. " +
+      "Its pages may show only a message asking for Adobe Reader."
+    );
+  }
+  if (form.fields === 0) return "";
+  return "This PDF has a form: click a field to fill it in.";
+}
+
 function countPages(n: number): string {
   return `${n} page${n === 1 ? "" : "s"}`;
 }
@@ -228,6 +250,10 @@ export function App() {
   const [stampDialog, setStampDialog] = useState(false);
   /** True while the "Apply redactions?" confirmation is open. */
   const [redactDialog, setRedactDialog] = useState(false);
+  /** True while the "Flatten form?" confirmation is open. */
+  const [flattenDialog, setFlattenDialog] = useState(false);
+  /** The form field that has the focus, so it gets it back after a change redraws the page. */
+  const [focusedField, setFocusedField] = useState<number | null>(null);
   /** A stamp being positioned. Page tools wait until it's applied or cancelled. */
   const [pending, setPending] = useState<PendingStamp>();
   /** The annotation tool picked, if any: dragging on a page then draws with it. */
@@ -300,6 +326,8 @@ export function App() {
     setSignDialog(undefined);
     setStampDialog(false);
     setRedactDialog(false);
+    setFlattenDialog(false);
+    setFocusedField(null);
     setPending(undefined);
     setTool(undefined);
     setSelecting(false);
@@ -409,7 +437,7 @@ export function App() {
         renderer: new PageRenderer(pdf),
       });
       setZoom({ mode: "fit-width", scale: 1 });
-      setStatus("");
+      setStatus(formNotice(info.form));
     } catch (err) {
       reportError("open this file", err);
     } finally {
@@ -796,6 +824,33 @@ export function App() {
         result,
         `Redacted ${countPages(result.pages)}${removed}. Save to finish: the whole file will be ` +
           "rewritten, so nothing removed is left in it. Undo with Ctrl+Z.",
+      );
+    });
+  }
+
+  /** Fill in a form field, from its box on the page. */
+  function setField(pageIndex: number, field: FormField, value: string | boolean) {
+    const hybrid = docRef.current?.info.form.xfa === "hybrid";
+    void runTask("fill in the form field", async (pdf) => {
+      const result = await pdf.setFieldValue(pageIndex, field.id, value);
+      const note =
+        hybrid && result.info.form.xfa === "none"
+          ? " The form's XFA copy was removed, so every app shows what you filled in."
+          : "";
+      const what = READABLE_LABEL.test(field.label) ? `"${field.label}"` : "a form field";
+      applyEdit(result, `Filled in ${what} on page ${pageIndex + 1}.${note} Undo with Ctrl+Z.`);
+    });
+  }
+
+  function flattenFormNow() {
+    setFlattenDialog(false);
+    void runTask("flatten the form", async (pdf) => {
+      const result = await pdf.flattenForm();
+      setFocusedField(null);
+      applyEdit(
+        result,
+        "Flattened the form: what was filled in is now part of the pages and can't be changed. " +
+          "Undo with Ctrl+Z.",
       );
     });
   }
@@ -1672,6 +1727,20 @@ export function App() {
                 ))}
               </select>
             )}
+            {doc.info.form.fields > 0 && (
+              <>
+                <span className="divider" />
+                <button
+                  type="button"
+                  className="tool"
+                  disabled={locked}
+                  onClick={() => setFlattenDialog(true)}
+                  title="Turn the form's fields into ordinary page content"
+                >
+                  Flatten form
+                </button>
+              </>
+            )}
             {doc.info.redactionMarks > 0 && (
               <>
                 <span className="divider" />
@@ -1797,7 +1866,21 @@ export function App() {
                     />
                   );
                 }
-                if (!tool) return null;
+                if (!tool) {
+                  if (doc.info.form.fields === 0) return null;
+                  return (
+                    <FormLayer
+                      key={`${editVersion}:${index}`}
+                      pageIndex={index}
+                      scale={viewScale}
+                      busy={busy || drafting}
+                      list={() => getClient().listFields(index)}
+                      onSet={(field, value) => setField(index, field, value)}
+                      focusId={focusedField}
+                      onFocusField={setFocusedField}
+                    />
+                  );
+                }
                 const picked = toolById(tool);
                 return (
                   <AnnotateLayer
@@ -1892,6 +1975,9 @@ export function App() {
           onApply={applyRedactionsNow}
           onCancel={() => setRedactDialog(false)}
         />
+      )}
+      {flattenDialog && doc && (
+        <FlattenDialog onFlatten={flattenFormNow} onCancel={() => setFlattenDialog(false)} />
       )}
       {stampDialog && doc && (
         <StampDialog

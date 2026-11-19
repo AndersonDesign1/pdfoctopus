@@ -243,8 +243,8 @@ saved; saving a redacted file clears the undo history, so the removal is final f
   one: a reply (/IRT) or a tagged PDF's structure tree can still point at it, and a full save
   keeps whatever is pointed at. Its entries are kept in memory for undo.
 - **Form fields are refused:** a field's value lives in the form, not only on the page, so
-  deleting its box would leave the value in the file. Apply says which page and does nothing.
-  Proper field redaction can come with the forms work.
+  deleting its box would leave the value in the file. Apply says which page, asks for the form
+  to be flattened first, and does nothing.
 - **Tests:** `redaction.test.ts` covers marking areas and search results (text inside form
   XObjects too), the black box, annotations and pop-ups under a mark, undo/redo, rotated pages,
   the form-field refusal, bad input, and that the saved file isn't incremental and doesn't
@@ -261,6 +261,45 @@ saved; saving a redacted file clears the undo history, so the removal is final f
   word), and real documents; see the redaction list in TESTING.md.
   A mark removes every letter it touches, even partly.
 - **Next in Phase 2:** forms.
+
+### 10. Phase 2: filling in forms (2026-11-19)
+
+Opening a PDF with a form says so in the status line. With no tool picked, every field has a
+real input over it: click a text field and type (Tab goes to the next field, Enter or leaving
+the field saves it, Escape puts back what was there), click a checkbox or radio button, or pick
+from a dropdown. Each change is one undoable step and saves incrementally. **Flatten form**
+(shown when the file has fields) asks first, then turns every field into ordinary page content.
+
+- **Engine:** `listFields`, `setFieldValue` and `flattenForm` in `packages/core/src/engine.ts`,
+  helpers in `forms.ts`. Values are checked per kind (a dropdown only takes one of its options,
+  a radio button can only be chosen, read-only fields are refused). Undo puts back the field's
+  `/V`, `/AS` and `/AP` on the field and all its boxes; MuPDF draws a new appearance stream for
+  each change, so the old one is still there to go back to.
+- **A field is found by its name (`/T`)**, walking up `/Parent`, not by `/FT`: some files
+  repeat `/FT` on every box, and then a radio group's boxes looked like separate fields.
+- **XFA:** a "hybrid" form (AcroForm plus an XFA copy, like the IRS W-9) is filled in through
+  its AcroForm, and the XFA copy is removed in the same step (undo puts it back), because Adobe
+  Reader shows the XFA copy and would show the old values. A form that's only XFA can't be
+  filled in; opening one says so.
+- **Flattening** uses MuPDF's bake, and removes the AcroForm. If the form asks apps to draw
+  its fields (`NeedAppearances`), the text and dropdown boxes are drawn first, because some
+  files (the LibreOffice fixture) leave values with empty appearances and flattening keeps only
+  appearances. Undo restores every page's `/Contents`, `/Resources` and `/Annots`, the
+  AcroForm and those appearances.
+- **Redaction** of a field is still refused, but now says to flatten the form first; after
+  flattening, the field's value is ordinary page content and is redacted like any text.
+- **Date fields** are text fields with a format script; they're filled in as text. Scripts
+  (formatting, calculations, validation) don't run.
+- **Tests:** `forms.test.ts` (every kind of field, undo/redo, incremental save, flattening,
+  NeedAppearances, hybrid and XFA-only forms, refusals, redaction after flattening), plus a
+  fixture sweep that fills the first text field and checkbox of every fixture with a form,
+  saves, and checks the file reopens without repair and keeps the value.
+- **Checked:** in Chromium on the LibreOffice form (text, Tab to the next field, checkbox,
+  dropdown, save, flatten, undo) and the IRS W-9.
+- **Not yet checked:** the saved files in Adobe Reader and other viewers; see the forms list in
+  TESTING.md.
+- **Next in Phase 2:** building forms (adding fields and editing their properties), as a
+  separate PR.
 
 ### Where things are
 
@@ -429,11 +468,13 @@ saved; saving a redacted file clears the undo history, so the removal is final f
 
 ### Forms
 
-- [ ] Fill AcroForm fields (text, checkbox, radio, dropdown, date)
+- [x] Fill AcroForm fields (text, checkbox, radio, dropdown, date) (date fields are filled in
+      as text; form scripts don't run)
 - [ ] Create new fields: text, checkbox, radio, dropdown, signature, date
 - [ ] Edit field properties (name, required, default value)
-- [ ] Flatten forms
-- [ ] Detect XFA forms and show a clear warning
+- [x] Flatten forms
+- [x] Detect XFA forms and show a clear warning (hybrid forms are filled in and their XFA copy
+      removed; XFA-only forms get a warning when opened)
 
 ### Exit criteria
 

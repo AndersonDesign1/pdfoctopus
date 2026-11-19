@@ -111,6 +111,17 @@ describe("setFieldValue", () => {
     expect(field(engine, (f) => f.id === text.id).value).toBe("Quokka Example");
   });
 
+  it("draws fields the file left for apps to draw (NeedAppearances) before flattening", () => {
+    const engine = open(read(LIBREOFFICE));
+    // "Bob" is a value this file never drew: its appearance is empty.
+    engine.flattenForm();
+    expect(pageText(engine)).toContain("Bob");
+    engine.undo();
+    expect(engine.info().form.fields).toBeGreaterThan(0);
+    engine.redo();
+    expect(pageText(engine)).toContain("Bob");
+  });
+
   it("ticks and unticks a checkbox", () => {
     const engine = open(read(LIBREOFFICE));
     const box = field(engine, (f) => f.kind === "checkbox");

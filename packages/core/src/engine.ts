@@ -28,6 +28,7 @@ import { IncrementalSaveError, PasswordRequiredError } from "./errors";
 import {
   acroForm,
   type FieldKind,
+  type FieldSnapshot,
   fieldKind,
   fieldObjects,
   fieldOf,
@@ -1325,12 +1326,18 @@ export class PdfEngine {
       else root.put("AcroForm", copyDirect(pdf, state.form));
     };
     const before = capture();
+    // A form that asks apps to draw its fields (NeedAppearances) may have empty or stale
+    // appearances; flattening keeps only appearances, so draw the text ones first. Each gets a
+    // new stream (MuPDF would otherwise rewrite the old one in place), so undo can put the old
+    // ones back.
+    const redrawn = this.redrawFieldsIfNeeded(pdf);
     try {
       pdf.bake(false, true);
       // Whatever MuPDF leaves of the form, there are no fields now.
       root.delete("AcroForm");
     } catch (err) {
       putBack(before);
+      restoreField(pdf, redrawn);
       throw err;
     }
     const after = capture();
@@ -1344,9 +1351,37 @@ export class PdfEngine {
       },
       undo: () => {
         putBack(before);
+        restoreField(pdf, redrawn);
         applied = false;
       },
     });
+  }
+
+  /**
+   * If the form asks apps to draw its fields (NeedAppearances), give every text and choice
+   * field box a freshly drawn appearance. Returns what they had, to put back on undo.
+   */
+  private redrawFieldsIfNeeded(pdf: mupdf.PDFDocument): FieldSnapshot {
+    const form = acroForm(pdf);
+    const need = form?.get("NeedAppearances");
+    if (!need?.isBoolean() || !need.asBoolean()) return [];
+    const snapshot: FieldSnapshot = [];
+    for (let i = 0; i < pdf.countPages(); i++) {
+      const page = pdf.loadPage(i);
+      try {
+        for (const w of page.getWidgets()) {
+          const kind = fieldKind(w);
+          if (kind !== "text" && kind !== "combobox" && kind !== "listbox") continue;
+          const object = w.getObject();
+          snapshot.push(...snapshotField(pdf, [object]));
+          object.delete("AP");
+          w.update();
+        }
+      } finally {
+        page.destroy();
+      }
+    }
+    return snapshot;
   }
 
   /** How many form field boxes there are, and whether the form has XFA. */
