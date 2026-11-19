@@ -163,7 +163,23 @@ export const TOOLS: Tool[] = [
     defaultColor: [1, 1, 1],
     hint: "Drag over what to cover with white",
   },
+  {
+    id: "redact",
+    label: "Redact",
+    noun: "a redaction mark",
+    icon: "▇",
+    gesture: "box",
+    hasWidth: false,
+    needsText: false,
+    defaultColor: [0, 0, 0],
+    hint: "Drag over what to remove. Nothing is removed until you apply the redactions",
+  },
 ];
+
+/** Tools that don't take a colour. */
+export function hasColor(id: ToolId): boolean {
+  return id !== "whiteout" && id !== "redact";
+}
 
 export function toolById(id: ToolId): Tool {
   return TOOLS.find((t) => t.id === id) as Tool;

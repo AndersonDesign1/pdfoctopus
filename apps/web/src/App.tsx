@@ -25,8 +25,17 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AnnotateLayer } from "./annotate/AnnotateLayer";
 import { arrowDelta, moveBox, sameBox } from "./annotate/edit";
+import { RedactDialog } from "./annotate/RedactDialog";
 import { SelectLayer } from "./annotate/SelectLayer";
-import { cssColor, PALETTE, TOOLS, type ToolId, toolById, WIDTHS } from "./annotate/tools";
+import {
+  cssColor,
+  hasColor,
+  PALETTE,
+  TOOLS,
+  type ToolId,
+  toolById,
+  WIDTHS,
+} from "./annotate/tools";
 import {
   chooseDestination,
   chooseFolder,
@@ -217,6 +226,8 @@ export function App() {
   const [signDialog, setSignDialog] = useState<"signature" | "initials">();
   /** True while the dialog for choosing a stamp ("APPROVED", …) is open. */
   const [stampDialog, setStampDialog] = useState(false);
+  /** True while the "Apply redactions?" confirmation is open. */
+  const [redactDialog, setRedactDialog] = useState(false);
   /** A stamp being positioned. Page tools wait until it's applied or cancelled. */
   const [pending, setPending] = useState<PendingStamp>();
   /** The annotation tool picked, if any: dragging on a page then draws with it. */
@@ -288,6 +299,7 @@ export function App() {
     setPageDialog(undefined);
     setSignDialog(undefined);
     setStampDialog(false);
+    setRedactDialog(false);
     setPending(undefined);
     setTool(undefined);
     setSelecting(false);
@@ -427,8 +439,11 @@ export function App() {
       }
       setStatus("Saving…");
       let bytes: Uint8Array;
+      // After redacting, the whole file is rewritten (agreed to when applying), so nothing
+      // removed is left in the original bytes.
+      const rewritten = doc.info.redacted;
       try {
-        bytes = await pdf.save(true);
+        bytes = await pdf.save(!rewritten);
       } catch (err) {
         if (!(err instanceof IncrementalSaveError)) throw err;
         // Never rewrite a file silently: it can change how it looks and breaks signatures.
@@ -460,7 +475,12 @@ export function App() {
       );
       setDirty(false);
       const name = outcome.fileName ?? doc.fileName;
-      setStatus(outcome.result === "saved" ? `Saved ${name}.` : `Downloaded ${name}.`);
+      const done = outcome.result === "saved" ? `Saved ${name}.` : `Downloaded ${name}.`;
+      setStatus(
+        rewritten
+          ? `${done} The whole file was rewritten, so the redacted content is gone from it.`
+          : done,
+      );
     } catch (err) {
       reportError("save this file", err);
     } finally {
@@ -737,6 +757,36 @@ export function App() {
     });
   }
 
+  /** Mark every search result for redaction, to check and then apply. */
+  function redactSearchHits() {
+    const marks = hits.map((h) => ({ page: h.page, quads: h.quads }));
+    if (marks.length === 0) return;
+    const word = searched ?? "the search";
+    void runTask("mark the matches for redaction", async (pdf) => {
+      const result = await pdf.markForRedaction(marks);
+      applyEdit(
+        result,
+        `Marked ${marks.length === 1 ? "1 match" : `${marks.length} matches`} of "${word}" for redaction. ` +
+          "Check them, then press Apply redactions.",
+      );
+    });
+  }
+
+  function applyRedactionsNow() {
+    setRedactDialog(false);
+    void runTask("apply the redactions", async (pdf) => {
+      const result = await pdf.applyRedactions();
+      const removed = result.annotationsRemoved
+        ? `, and deleted ${result.annotationsRemoved === 1 ? "1 annotation" : `${result.annotationsRemoved} annotations`} under the marks`
+        : "";
+      applyEdit(
+        result,
+        `Redacted ${countPages(result.pages)}${removed}. Save to finish: the whole file will be ` +
+          "rewritten, so nothing removed is left in it. Undo with Ctrl+Z.",
+      );
+    });
+  }
+
   function addAnnotation(spec: AnnotationSpec) {
     const { noun } = toolById(spec.kind);
     void runTask(`add ${noun}`, async (pdf) => {
@@ -958,7 +1008,16 @@ export function App() {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.ctrlKey || e.metaKey;
       // No shortcuts while a dialog is open: it has the user's attention (and its own keys).
-      if (pageDialog || passwordPrompt || showProperties || signDialog || stampDialog) return;
+      if (
+        pageDialog ||
+        passwordPrompt ||
+        showProperties ||
+        signDialog ||
+        stampDialog ||
+        redactDialog
+      ) {
+        return;
+      }
       if (mod && e.key.toLowerCase() === "o") {
         e.preventDefault();
         fileInput.current?.click();
@@ -1067,7 +1126,7 @@ export function App() {
   /** Places a dropped picture, while a document is open and nothing else is in progress. */
   const dropPictureRef = useRef<((file: File) => void) | null>(null);
   dropPictureRef.current =
-    doc && !locked && !pageDialog && !signDialog && !stampDialog && !passwordPrompt
+    doc && !locked && !pageDialog && !signDialog && !stampDialog && !redactDialog && !passwordPrompt
       ? (file) => void placePicture(file)
       : null;
   useEffect(() => {
@@ -1331,6 +1390,17 @@ export function App() {
                         ? `${currentHit + 1} of ${hits.length}${truncated ? "+" : ""}`
                         : "No matches"}
                 </span>
+                {hits.length > 0 && !searching && (
+                  <button
+                    type="button"
+                    className="tool"
+                    disabled={locked}
+                    onClick={redactSearchHits}
+                    title="Mark every match for redaction"
+                  >
+                    Redact all
+                  </button>
+                )}
               </form>
               <span className="divider" />
               <button type="button" className="tool" onClick={() => setShowProperties(true)}>
@@ -1548,7 +1618,7 @@ export function App() {
                 <span aria-hidden="true">{t.icon}</span>
               </button>
             ))}
-            {tool && tool !== "whiteout" && (
+            {tool && hasColor(tool) && (
               <>
                 <span className="divider" />
                 <fieldset className="pdfo-fieldset pdfo-colours">
@@ -1583,6 +1653,20 @@ export function App() {
                   </option>
                 ))}
               </select>
+            )}
+            {doc.info.redactionMarks > 0 && (
+              <>
+                <span className="divider" />
+                <button
+                  type="button"
+                  className="tool redact-apply"
+                  disabled={locked}
+                  onClick={() => setRedactDialog(true)}
+                  title="Remove what's under the redaction marks for good"
+                >
+                  Apply redactions ({doc.info.redactionMarks})
+                </button>
+              </>
             )}
           </div>
         )}
@@ -1784,6 +1868,13 @@ export function App() {
         />
       )}
 
+      {redactDialog && doc && (
+        <RedactDialog
+          marks={doc.info.redactionMarks}
+          onApply={applyRedactionsNow}
+          onCancel={() => setRedactDialog(false)}
+        />
+      )}
       {stampDialog && doc && (
         <StampDialog
           onPlace={(chosen) => {

@@ -7,6 +7,11 @@ Use the live app at <https://pdfoctopus.josanderson25.workers.dev> (it updates w
 changes). Test files are in [`fixtures/`](./fixtures); `fixtures/generated/` has small ones
 to start with.
 
+New features add their checks here as they're built, so this list is the whole backlog of
+hand tests: work down it in any order. The ones that matter most, because nothing automated
+can do them, are opening and printing saved files in **Adobe Acrobat Reader**, and anything
+on the **desktop app** or a **phone**.
+
 ## Phase 1: page tools and saving
 
 These close the last Phase 1 exit criterion in [PHASES.md](./PHASES.md).
@@ -151,6 +156,27 @@ Pick the **Select** tool (first in the Annotate row):
       message and nothing else happens
 - [ ] **Saved file in Adobe Acrobat Reader:** the pictures look right, can be moved there, and
       print. Also in **Chrome/Edge** and **Firefox**
+
+## Phase 2: redaction
+
+Redaction is for removing things for good, so check the results carefully. Use
+`fixtures/generated/contract-libreoffice.pdf` (and a real document of your own if you have one).
+
+- [ ] **Redact tool** (Annotate row): drag over a few words and over a picture. Marks show as
+      red outlines and nothing is removed yet; Select can move, resize and delete a mark
+- [ ] **Search, then Redact all:** every match is marked
+- [ ] **Apply redactions:** read the dialog, apply; black boxes replace the marked content, and
+      a comment or highlight under a mark is gone. Undo brings everything back; redo removes it
+- [ ] **Save**, then open the saved file in **Adobe Acrobat Reader**, **Chrome/Edge** and
+      **Firefox**: search for a redacted word (not found), select and copy the text around a
+      black box and paste it somewhere (the redacted words aren't in it), and check that pictures
+      under a mark are blacked out, not just covered
+- [ ] A mark that only touches the edge of a word: the whole word (or letter) is removed, not
+      half of it
+- [ ] A form PDF with a mark over a form field: Apply refuses with a message about form fields
+- [ ] A digitally signed PDF: the dialog warns that signatures will no longer be valid, and
+      after saving Acrobat says so
+- [ ] Rotated page: the marked area is what gets removed
 
 ## Problems found
 
