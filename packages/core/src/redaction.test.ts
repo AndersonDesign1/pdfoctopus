@@ -310,6 +310,17 @@ describe("redaction", () => {
     expect(engine.search("Bond").hits).toHaveLength(1);
   });
 
+  it("lets an area mark be resized, and a mark over words only moved", () => {
+    const engine = open(textPdf());
+    engine.addAnnotation({ kind: "redact", page: 0, rect: [20, 20, 80, 50] });
+    engine.markForRedaction(
+      engine.search("Bond").hits.map((h) => ({ page: h.page, quads: h.quads })),
+    );
+    const [area, words] = engine.listAnnotations(0);
+    expect(area).toMatchObject({ label: "redaction mark", canResize: true });
+    expect(words).toMatchObject({ label: "redaction mark", canResize: false });
+  });
+
   it("refuses bad marks, and applying with nothing marked", () => {
     const engine = open(createBlankPdf(1));
     expect(() => engine.applyRedactions()).toThrow(/Nothing is marked/);

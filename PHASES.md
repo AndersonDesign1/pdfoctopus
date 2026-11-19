@@ -249,13 +249,16 @@ closed.
   XObjects too), the black box, annotations and pop-ups under a mark, undo/redo, rotated pages,
   the form-field refusal, bad input, and that the saved file isn't incremental and doesn't
   contain the word even fully decompressed. The fixture sweep redacts the middle of the first
-  page of every editable fixture, saves, and checks it reopens without repair.
+  page of every editable fixture, saves, and checks it reopens without repair; where the mark
+  covers a form field, it checks the refusal left the mark and the page as they were.
 - **Checked:** in Chromium end to end (Redact all on a name, a box mark, apply, search finds
   nothing, save), and the saved file in MuPDF (no trace of the name) and pdf.js.
 - **Redact all** refuses when the search stopped at its 5,000-match limit, rather than mark
   only some matches.
 - **Not covered yet:** the document's title and other metadata, bookmarks, attachments and
   hidden layers aren't changed (the dialog says so); a later version could offer to clear them.
+- **Not yet checked:** the saved file in Adobe Reader (search for and copy around a redacted
+  word), and real documents; see the redaction list in TESTING.md.
   A mark removes every letter it touches, even partly.
 - **Next in Phase 2:** forms.
 
@@ -421,7 +424,8 @@ closed.
 
 - [x] Mark areas or search results for redaction
 - [x] Apply redactions (true removal of text and images underneath, not black boxes)
-- [x] Test: redacted text can't be found or copied afterwards
+- [ ] Test: redacted text can't be found or copied afterwards (automated tests pass; the
+      search-and-copy check in Adobe Reader, in TESTING.md, is still to do)
 
 ### Forms
 

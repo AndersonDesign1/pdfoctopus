@@ -340,7 +340,10 @@ describe("redaction on every fixture", () => {
           engine.applyRedactions();
         } catch (err) {
           // A form field under the mark is refused on purpose (see redaction.test.ts).
-          if (err instanceof Error && /form field/.test(err.message)) return;
+          if (err instanceof Error && /covers a form field/.test(err.message)) {
+            expect(engine.info()).toMatchObject({ redactionMarks: 1, redacted: false });
+            return;
+          }
           throw err;
         }
         expect(engine.info()).toMatchObject({ redacted: true, redactionMarks: 0 });

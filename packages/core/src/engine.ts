@@ -1155,12 +1155,13 @@ export class PdfEngine {
         const page = pdf.loadPage(index);
         try {
           const annot = page.createAnnotation("Redact");
+          // Tracked straight away, so it's taken off again if anything below fails.
+          added.push({ index, object: annot.getObject() });
           annot.setQuadPoints(
             quads.map((q) => q.map((v, i) => v + (i % 2 === 0 ? ox : oy)) as mupdf.Quad),
           );
           annot.setContents("Marked for redaction");
           annot.update();
-          added.push({ index, object: annot.getObject() });
         } finally {
           page.destroy();
         }

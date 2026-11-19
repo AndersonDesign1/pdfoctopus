@@ -32,7 +32,7 @@ export function RedactDialog({
       </p>
       <p className="status">
         You can undo this until you close the file. Check the result before you share it: the
-        document's title, bookmarks and attachments aren't changed.
+        document's title, bookmarks, attachments and hidden layers aren't changed.
       </p>
       <div className="pdfo-dialog-actions">
         <button type="button" className="button secondary" onClick={onCancel}>

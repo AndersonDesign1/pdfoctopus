@@ -478,7 +478,8 @@ export function App() {
       const done = outcome.result === "saved" ? `Saved ${name}.` : `Downloaded ${name}.`;
       setStatus(
         rewritten
-          ? `${done} The whole file was rewritten, so the redacted content is gone from it.`
+          ? // Not "the redacted content is gone": an undone redaction is back, and saved.
+            `${done} The whole file was rewritten, as it is after redacting.`
           : done,
       );
     } catch (err) {
