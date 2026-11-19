@@ -8,6 +8,7 @@ import {
   canEditText,
   canRecolor,
   canResize,
+  copyDirect,
   describe,
   insertAt,
   invert,
@@ -60,6 +61,13 @@ export interface DocumentInfo {
   /** Page labels as shown in the document (e.g. "i", "ii", "1"), when it defines them. */
   labels: (string | null)[];
   metadata: DocumentMetadata;
+  /** Areas marked for redaction and not yet applied, on all pages. */
+  redactionMarks: number;
+  /**
+   * True once redactions have been applied: from then on every save rewrites the whole file,
+   * because appending would keep the removed content in the original bytes.
+   */
+  redacted: boolean;
 }
 
 /** A search hit: one or more quads (a hit can wrap across lines) on one page. */
@@ -145,7 +153,9 @@ export type AnnotationSpec =
       size: number;
     }
   /** A white box over part of the page. It covers, but doesn't remove (see redaction). */
-  | { kind: "whiteout"; page: number; rect: [number, number, number, number] };
+  | { kind: "whiteout"; page: number; rect: [number, number, number, number] }
+  /** An area marked for redaction: nothing is removed until applyRedactions. */
+  | { kind: "redact"; page: number; rect: [number, number, number, number] };
 
 export type AnnotationKind = AnnotationSpec["kind"];
 
@@ -186,6 +196,14 @@ export interface ImageStamp {
   kind: StampKind;
   /** Text describing the stamp (e.g. the date written in it), stored as its description. */
   text?: string;
+}
+
+/** What applyRedactions did, with the document as it is now. */
+export interface RedactionResult extends EditResult {
+  /** How many pages had marks. */
+  pages: number;
+  /** How many annotations under the marks (comments, highlights, links) were deleted. */
+  annotationsRemoved: number;
 }
 
 /** A text stamp to put on a page, such as "APPROVED", with an optional second line. */
@@ -242,6 +260,7 @@ const ANNOTATION_LABELS: Record<AnnotationKind, string> = {
   note: "Add note",
   text: "Add text box",
   whiteout: "Add white-out",
+  redact: "Mark for redaction",
 };
 
 /** How many pages' text layouts are kept for selecting text. */
@@ -268,6 +287,8 @@ export class PdfEngine {
    */
   private base: { length: number; startxref: number | null } | null = null;
   private undoStack: Step[] = [];
+  /** Set once redactions are applied; never cleared (see DocumentInfo.redacted). */
+  private redacted = false;
   private redoStack: Step[] = [];
   /**
    * Text layout of recently used pages, for selecting text; dropped whenever the document
@@ -322,6 +343,8 @@ export class PdfEngine {
       pages,
       labels: anyLabel ? labels : labels.map(() => null),
       metadata: this.metadata(),
+      redactionMarks: this.countRedactionMarks(),
+      redacted: this.redacted,
     };
   }
 
@@ -427,6 +450,10 @@ export class PdfEngine {
   save({ incremental = true }: { incremental?: boolean } = {}): Uint8Array {
     const pdf = this.requireDoc().asPDF();
     if (!pdf) throw new Error("Not a PDF document");
+    // After a redaction an incremental save would keep the removed content in the original
+    // bytes at the start of the file, so the whole file is always rewritten. (The user agreed
+    // to that when applying the redactions.)
+    if (this.redacted) incremental = false;
     if (incremental && !pdf.canBeSavedIncrementally()) {
       throw new IncrementalSaveError();
     }
@@ -457,6 +484,7 @@ export class PdfEngine {
     this.locked = false;
     this.undoStack = [];
     this.redoStack = [];
+    this.redacted = false;
   }
 
   // ---------------------------------------------------------------------------------------
@@ -865,6 +893,12 @@ export class PdfEngine {
           annot.setContents(checkText(spec.text));
           break;
         }
+        case "redact": {
+          annot = page.createAnnotation("Redact");
+          annot.setRect(rect(spec.rect));
+          annot.setContents("Marked for redaction");
+          break;
+        }
         case "whiteout": {
           annot = page.createAnnotation("Square");
           annot.setRect(rect(spec.rect));
@@ -1085,6 +1119,201 @@ export class PdfEngine {
         applied = false;
       },
     });
+  }
+
+  // ---------------------------------------------------------------------------------------
+  // Redaction: mark areas (or search results), then apply, which removes the text, images and
+  // drawings under the marks for good. Applying is one undoable step until the file is saved;
+  // saving then rewrites the whole file, so nothing removed is left in it.
+
+  /**
+   * Mark text for redaction, such as every search result, as one undoable step. Each entry's
+   * quads are in points from the page's top-left corner as shown (as search returns them).
+   */
+  markForRedaction(
+    marks: readonly { page: number; quads: readonly (readonly number[])[] }[],
+  ): EditResult {
+    const pdf = this.requirePdf();
+    if (marks.length === 0) throw new Error("There's nothing to mark");
+    if (marks.length > MAX_SEARCH_HITS) throw new Error("There are too many to mark at once");
+    // Check everything first, so a bad entry leaves every page untouched.
+    const checked = marks.map((m) => {
+      const [index] = this.checkPages([m.page]) as [number];
+      if (m.quads.length === 0) throw new Error("A mark has no area");
+      for (const q of m.quads) {
+        if (q.length !== 8 || !q.every((v) => Number.isFinite(v))) {
+          throw new Error("A mark's position isn't valid");
+        }
+      }
+      return { index, quads: m.quads };
+    });
+    const added: { index: number; object: mupdf.PDFObject }[] = [];
+    try {
+      for (const { index, quads } of checked) {
+        const [ox, oy] = this.pageOrigin(index);
+        const page = pdf.loadPage(index);
+        try {
+          const annot = page.createAnnotation("Redact");
+          annot.setQuadPoints(
+            quads.map((q) => q.map((v, i) => v + (i % 2 === 0 ? ox : oy)) as mupdf.Quad),
+          );
+          annot.setContents("Marked for redaction");
+          annot.update();
+          added.push({ index, object: annot.getObject() });
+        } finally {
+          page.destroy();
+        }
+      }
+    } catch (err) {
+      for (const { index, object } of added) detachAnnotation(pdf, index, object);
+      throw err;
+    }
+    let attached = true;
+    return this.run({
+      label:
+        added.length === 1 ? "Mark for redaction" : `Mark ${added.length} places for redaction`,
+      redo: () => {
+        if (attached) return;
+        for (const { index, object } of added) attachAnnotation(pdf, index, object);
+        attached = true;
+      },
+      undo: () => {
+        for (const { index, object } of added) detachAnnotation(pdf, index, object);
+        attached = false;
+      },
+    });
+  }
+
+  /**
+   * Apply every redaction mark, as one undoable step: the text, images and drawings under the
+   * marks are removed from the pages' content and black boxes drawn in their place, and any
+   * annotation under a mark (a comment, a highlight, a link) is deleted too. From then on every
+   * save rewrites the whole file (see DocumentInfo.redacted).
+   */
+  applyRedactions(): RedactionResult {
+    const pdf = this.requirePdf();
+    const pages: number[] = [];
+    for (let i = 0; i < pdf.countPages(); i++) {
+      if (redactionRegions(pdf.findPage(i)).length > 0) pages.push(i);
+    }
+    if (pages.length === 0) throw new Error("Nothing is marked for redaction");
+
+    // A form field's value lives in the form, not only on the page: deleting its box would
+    // leave the value in the file. Refuse rather than leave something behind.
+    for (const index of pages) {
+      const page = pdf.findPage(index);
+      const regions = redactionRegions(page);
+      const annots = page.get("Annots");
+      for (let i = 0; i < annots.length; i++) {
+        const item = annots.get(i);
+        if (subtype(item) === "Widget" && item.get("Rect").isArray()) {
+          if (regions.some((r) => overlaps(r, readRect(item)))) {
+            throw new Error(
+              `A redaction mark on page ${index + 1} covers a form field. Redacting form fields isn't supported yet: move or remove that mark.`,
+            );
+          }
+        }
+      }
+    }
+
+    type PageState = Map<string, mupdf.PDFObject | null>;
+    const KEYS = ["Contents", "Resources", "Annots"] as const;
+    const capture = (index: number): PageState => {
+      const page = pdf.findPage(index);
+      const state: PageState = new Map();
+      for (const key of KEYS) {
+        const v = page.get(key);
+        state.set(key, v.isNull() ? null : copyDirect(pdf, v));
+      }
+      return state;
+    };
+    const putBack = (index: number, state: PageState) => {
+      const page = pdf.findPage(index);
+      for (const [key, v] of state) {
+        if (v === null) page.delete(key);
+        else page.put(key, copyDirect(pdf, v));
+      }
+    };
+
+    const before = pages.map(capture);
+    let removedAnnotations = 0;
+    try {
+      for (const index of pages) {
+        const page = pdf.findPage(index);
+        const regions = redactionRegions(page);
+        // Annotations under a mark go first (and a note's pop-up with it).
+        const annots = page.get("Annots");
+        const doomed = new Set<number>();
+        for (let i = 0; i < annots.length; i++) {
+          const item = annots.get(i);
+          const type = subtype(item);
+          if (type === "Redact" || type === "Popup" || !item.get("Rect").isArray()) continue;
+          if (regions.some((r) => overlaps(r, readRect(item)))) doomed.add(item.asIndirect());
+        }
+        for (let i = annots.length - 1; i >= 0; i--) {
+          const item = annots.get(i);
+          const parent = item.get("Parent");
+          const ownPopup =
+            subtype(item) === "Popup" && parent.isIndirect() && doomed.has(parent.asIndirect());
+          if (doomed.has(item.asIndirect()) || ownPopup) {
+            annots.delete(i);
+            if (!ownPopup) removedAnnotations++;
+          }
+        }
+        const loaded = pdf.loadPage(index);
+        try {
+          loaded.applyRedactions(
+            true,
+            mupdf.PDFPage.REDACT_IMAGE_PIXELS,
+            mupdf.PDFPage.REDACT_LINE_ART_REMOVE_IF_COVERED,
+            mupdf.PDFPage.REDACT_TEXT_REMOVE,
+          );
+        } finally {
+          loaded.destroy();
+        }
+      }
+    } catch (err) {
+      pages.forEach((index, i) => {
+        putBack(index, before[i] as PageState);
+      });
+      throw err;
+    }
+    const after = pages.map(capture);
+    this.redacted = true;
+
+    let applied = true;
+    const result = this.run({
+      label: "Apply redactions",
+      redo: () => {
+        if (applied) return;
+        pages.forEach((index, i) => {
+          putBack(index, after[i] as PageState);
+        });
+        applied = true;
+      },
+      undo: () => {
+        pages.forEach((index, i) => {
+          putBack(index, before[i] as PageState);
+        });
+        applied = false;
+      },
+    });
+    return { ...result, pages: pages.length, annotationsRemoved: removedAnnotations };
+  }
+
+  /** How many redaction marks there are on all pages. */
+  private countRedactionMarks(): number {
+    const pdf = this.doc?.asPDF();
+    if (!pdf) return 0;
+    let count = 0;
+    for (let i = 0; i < pdf.countPages(); i++) {
+      const annots = pdf.findPage(i).get("Annots");
+      if (!annots.isArray()) continue;
+      for (let j = 0; j < annots.length; j++) {
+        if (subtype(annots.get(j)) === "Redact") count++;
+      }
+    }
+    return count;
   }
 
   /** The annotation with this object number on a page, if it's one that can be edited. */
@@ -1460,6 +1689,38 @@ function checkText(text: string): string {
   if (!t) throw new Error("Type some text first");
   if (t.length > MAX_ANNOTATION_TEXT) throw new Error("The text is too long");
   return t;
+}
+
+/** The areas a page's redaction marks cover, in PDF space: each quad's box, or the mark's box. */
+function redactionRegions(page: mupdf.PDFObject): [number, number, number, number][] {
+  const annots = page.get("Annots");
+  const regions: [number, number, number, number][] = [];
+  if (!annots.isArray()) return regions;
+  for (let i = 0; i < annots.length; i++) {
+    const item = annots.get(i);
+    if (subtype(item) !== "Redact") continue;
+    const quads = item.get("QuadPoints");
+    if (quads.isArray() && quads.length >= 8) {
+      for (let q = 0; q + 8 <= quads.length; q += 8) {
+        const xs = [0, 2, 4, 6].map((k) => quads.get(q + k).asNumber());
+        const ys = [1, 3, 5, 7].map((k) => quads.get(q + k).asNumber());
+        regions.push([Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]);
+      }
+    } else if (item.get("Rect").isArray()) {
+      regions.push(readRect(item));
+    }
+  }
+  return regions;
+}
+
+/** Whether two boxes [x0, y0, x1, y1] overlap (touching edges don't count). */
+function overlaps(a: readonly number[], b: readonly number[]): boolean {
+  return (
+    (a[0] as number) < (b[2] as number) &&
+    (b[0] as number) < (a[2] as number) &&
+    (a[1] as number) < (b[3] as number) &&
+    (b[1] as number) < (a[3] as number)
+  );
 }
 
 /** The page's /Annots array, created if the page has none. */

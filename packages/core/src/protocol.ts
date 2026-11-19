@@ -13,6 +13,7 @@ import type {
   PagePoint,
   PageSize,
   PdfSource,
+  RedactionResult,
   RenderedPage,
   RotationDelta,
   SearchHit,
@@ -39,6 +40,8 @@ export type WorkerRequest =
   | { id: number; type: "addAnnotation"; spec: AnnotationSpec }
   | { id: number; type: "selectText"; page: number; from: PagePoint; to: PagePoint }
   | { id: number; type: "listAnnotations"; page: number }
+  | { id: number; type: "markForRedaction"; marks: { page: number; quads: number[][] }[] }
+  | { id: number; type: "applyRedactions" }
   | { id: number; type: "deleteAnnotation"; page: number; annotation: number }
   | {
       id: number;
@@ -72,6 +75,8 @@ export interface WorkerResults {
   addAnnotation: EditResult;
   selectText: number[][];
   listAnnotations: AnnotationInfo[];
+  markForRedaction: EditResult;
+  applyRedactions: RedactionResult;
   deleteAnnotation: EditResult;
   editAnnotation: EditResult;
   undo: EditResult | null;

@@ -145,7 +145,10 @@ function isWhiteout(object: mupdf.PDFObject): boolean {
 }
 
 export function canResize(object: mupdf.PDFObject): boolean {
-  return RESIZABLE.has(subtype(object));
+  const type = subtype(object);
+  // A redaction mark of an area can be resized; one over words (quads) can only be moved.
+  if (type === "Redact") return !object.get("QuadPoints").isArray();
+  return RESIZABLE.has(type);
 }
 
 export function canRecolor(object: mupdf.PDFObject): boolean {
