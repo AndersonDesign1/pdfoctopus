@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // Making a smaller copy of a PDF: pictures larger than the pages need are scaled down and
-// saved as JPEG, and the file is rebuilt (unused objects dropped, duplicates merged, streams
-// and fonts compressed, objects packed into object streams). MuPDF's own image rewriting isn't
+// saved as JPEG, and the file is rebuilt (unused objects dropped, streams and fonts
+// compressed, objects packed into object streams). MuPDF's own image rewriting isn't
 // in its JavaScript build, so pictures are re-encoded here, one at a time.
 
 import * as mupdf from "mupdf";
@@ -25,9 +25,12 @@ const PRESETS: Record<CompressPreset, ImagePolicy | null> = {
   smallest: { dpi: 120, quality: 60, photosToJpeg: true },
 };
 
-/** MuPDF writer options for a rebuilt, compressed file. */
-export const REBUILD_OPTIONS =
-  "garbage=deduplicate,compress,compress-fonts,compress-images,objstms";
+/**
+ * MuPDF writer options for a rebuilt, compressed file. Not "garbage=deduplicate": merging
+ * duplicates takes time that grows with the square of the number of objects (84 seconds on a
+ * 44,000-object form) and saved under 1% on the files tried.
+ */
+export const REBUILD_OPTIONS = "garbage,compress,compress-fonts,compress-images,objstms";
 
 /** Pictures bigger than this (in pixels) are left alone: decoding them could exhaust memory. */
 const MAX_PIXELS = 100_000_000;

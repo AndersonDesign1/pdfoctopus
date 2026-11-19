@@ -377,8 +377,8 @@ digital signatures stop being valid), and it's one undoable step until then.
 ### 13. Phase 3: compress (2026-11-19)
 
 **Compress** (page tools row) opens a dialog with three presets: **High quality** (the file is
-rebuilt: unused objects dropped, duplicates merged, streams and fonts compressed, objects packed
-into object streams; pictures untouched), **Balanced** (also pictures scaled to at most 200 dpi
+rebuilt: unused objects dropped, streams and fonts compressed, objects packed into object
+streams; pictures untouched), **Balanced** (also pictures scaled to at most 200 dpi
 over the largest page, JPEG quality 80) and **Smallest** (120 dpi, quality 60, and photos stored
 losslessly become JPEG). It shows the size now and the copy's size, and saves the copy as a new
 file ("name (compressed).pdf"). The open document isn't changed, so the rule about rewriting
@@ -388,6 +388,8 @@ files doesn't come into it.
   `compress.ts`. MuPDF's image rewriting isn't in its JavaScript build, so each picture is
   decoded, scaled with `Pixmap.warp`, encoded as JPEG and written back into the same object,
   and only kept if it's at least 10% smaller.
+- **No duplicate merging** (`garbage=deduplicate`): it took 84 seconds on the 44,000-object
+  SF86 form and saved under 1%; without it that form compresses in about a second.
 - **Left alone:** masks and pictures used as masks, 1-bit pictures (scans, JBIG2, CCITT),
   pictures with decode arrays or colour key masks, DeviceN and Lab pictures, and pictures over
   100 megapixels.
