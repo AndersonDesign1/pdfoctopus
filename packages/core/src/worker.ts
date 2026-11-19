@@ -127,6 +127,8 @@ async function handle(req: WorkerRequest): Promise<WorkerSuccess> {
       return success(req.id, "setPassword", engine.setPassword(req.spec));
     case "removePassword":
       return success(req.id, "removePassword", engine.removePassword());
+    case "compressedCopy":
+      return success(req.id, "compressedCopy", engine.compressedCopy(req.preset));
     case "unlockPermissions":
       return success(req.id, "unlockPermissions", engine.unlockPermissions(req.password));
     case "listFieldNames":
@@ -160,6 +162,7 @@ function transferables(res: WorkerSuccess): Transferable[] {
     return [res.result.buffer as ArrayBuffer];
   }
   if (res.type === "splitPages") return res.result.map((b) => b.buffer as ArrayBuffer);
+  if (res.type === "compressedCopy") return [res.result.bytes.buffer as ArrayBuffer];
   return [];
 }
 

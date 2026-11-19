@@ -2,10 +2,12 @@
 //
 // Messages exchanged between the UI thread and the PDF worker.
 
+import type { CompressPreset } from "./compress";
 import type {
   AnnotationChange,
   AnnotationInfo,
   AnnotationSpec,
+  CompressResult,
   DocumentInfo,
   EditResult,
   FormField,
@@ -55,6 +57,7 @@ export type WorkerRequest =
   | { id: number; type: "setPassword"; spec: PasswordSpec }
   | { id: number; type: "removePassword" }
   | { id: number; type: "unlockPermissions"; password: string }
+  | { id: number; type: "compressedCopy"; preset: CompressPreset }
   | { id: number; type: "deleteAnnotation"; page: number; annotation: number }
   | {
       id: number;
@@ -100,6 +103,7 @@ export interface WorkerResults {
   setPassword: EditResult;
   removePassword: EditResult;
   unlockPermissions: DocumentInfo | null;
+  compressedCopy: CompressResult;
   deleteAnnotation: EditResult;
   editAnnotation: EditResult;
   undo: EditResult | null;

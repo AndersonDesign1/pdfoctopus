@@ -2,6 +2,7 @@
 //
 // Promise-based client for the PDF worker. Use this from the UI thread.
 
+import type { CompressPreset } from "./compress";
 import type {
   AnnotationChange,
   AnnotationSpec,
@@ -295,6 +296,11 @@ export class PdfWorkerClient {
   /** Save the file without its password, as one undoable step. */
   removePassword() {
     return this.call<"removePassword">({ type: "removePassword" });
+  }
+
+  /** A smaller copy of the document; the open document isn't changed. */
+  compressedCopy(preset: CompressPreset) {
+    return this.call<"compressedCopy">({ type: "compressedCopy", preset });
   }
 
   /** Unlock the file's permissions with its permissions password (null if it's wrong). */

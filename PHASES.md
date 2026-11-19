@@ -374,6 +374,39 @@ digital signatures stop being valid), and it's one undoable step until then.
 - **Not yet checked:** Adobe Acrobat and Reader (see TESTING.md). PDFoctopus doesn't yet
   enforce a file's own limits on what can be done in it, besides changing its password.
 
+### 13. Phase 3: compress (2026-11-19)
+
+**Compress** (page tools row) opens a dialog with three presets: **High quality** (the file is
+rebuilt: unused objects dropped, streams and fonts compressed, objects packed into object
+streams; pictures untouched), **Balanced** (also pictures scaled to at most 200 dpi
+over the largest page, JPEG quality 80) and **Smallest** (120 dpi, quality 60, and photos stored
+losslessly become JPEG). It shows the size now and the copy's size, and saves the copy as a new
+file ("name (compressed).pdf"). The open document isn't changed, so the rule about rewriting
+files doesn't come into it.
+
+- **Engine:** `compressedCopy(preset)` in `packages/core/src/engine.ts`, helpers in
+  `compress.ts`. MuPDF's image rewriting isn't in its JavaScript build, so each picture is
+  decoded, scaled with `Pixmap.warp`, encoded as JPEG and written back into the same object,
+  and only kept if it's at least 10% smaller.
+- **No duplicate merging** (`garbage=deduplicate`): it took 84 seconds on the 44,000-object
+  SF86 form and saved under 1%; without it that form compresses in about a second.
+- **Left alone:** masks and pictures used as masks, 1-bit pictures (scans, JBIG2, CCITT),
+  pictures with decode arrays or colour key masks, DeviceN and Lab pictures, and pictures over
+  100 megapixels.
+- **Passwords:** a password set (or removed) in the Password dialog applies to the copy. A file
+  with a password that isn't being changed is refused, as its passwords aren't known to protect
+  the copy the same way.
+- **MuPDF's memory moves when it grows,** so bytes it returns (`asUint8Array`, `asJPEG`) are
+  copied before anything else runs; two bugs of that kind were found by the browser test on a
+  21 MB file and fixed before committing.
+- **Tests:** `compress.test.ts`: big pictures scaled down for Smallest (and less for
+  Balanced), High leaves them alone, masks and 1-bit pictures untouched, unsaved changes
+  included, the open document unchanged, and passwords carried over or refused.
+- **Checked:** in Chromium (a 21 MB photo PDF to 95 KB with Smallest; High says it can't be
+  made smaller; the copy saved), and on the larger fixtures.
+- **Not covered yet:** a picture shown small on its page is only scaled down to the page's
+  size, not to the size it's shown at; fonts aren't subset.
+
 ### Where things are
 
 - **Engine:** `packages/core` (MuPDF in a Web Worker, plus a promise-based client). Tests:
@@ -573,10 +606,10 @@ digital signatures stop being valid), and it's one undoable step until then.
 
 ### Compress
 
-- [ ] Presets: High quality, Balanced, Smallest
-- [ ] Image downsampling for the "Smallest" preset
-- [ ] Show file size before and after
-- [ ] Optional "optimise and rebuild" save
+- [x] Presets: High quality, Balanced, Smallest
+- [x] Image downsampling for the "Smallest" preset (and "Balanced", at a higher resolution)
+- [x] Show file size before and after
+- [x] Optional "optimise and rebuild" save (High quality: rebuilt, pictures untouched)
 
 ### Create
 

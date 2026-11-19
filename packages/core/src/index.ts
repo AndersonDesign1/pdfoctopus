@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 export { PdfWorkerClient, type PdfWorkerClientOptions } from "./client";
+export type { CompressPreset } from "./compress";
 export type {
   AnnotationChange,
   AnnotationInfo,

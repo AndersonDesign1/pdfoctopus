@@ -1253,3 +1253,28 @@ textarea.pdfo-form-text {
   flex-direction: column;
   gap: 4px;
 }
+
+/* ---- Compress ---- */
+
+.pdfo-presets {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pdfo-preset {
+  align-items: flex-start;
+}
+
+.pdfo-preset > span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pdfo-compress-result {
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--surface-2, rgb(107 60 245 / 0.08));
+}

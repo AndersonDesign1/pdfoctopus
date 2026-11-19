@@ -4,6 +4,7 @@ import {
   type AnnotationChange,
   type AnnotationInfo,
   type AnnotationSpec,
+  type CompressPreset,
   type DocumentInfo,
   describePages,
   type EditResult,
@@ -41,6 +42,7 @@ import {
   toolById,
   WIDTHS,
 } from "./annotate/tools";
+import { CompressDialog, type CompressOutcome, formatSize } from "./compress/CompressDialog";
 import { FieldDrawLayer, FieldEditLayer } from "./form/BuildLayers";
 import { FIELD_KIND_NAMES, FieldDialog, type FieldProperties } from "./form/FieldDialog";
 import { FlattenDialog } from "./form/FlattenDialog";
@@ -329,6 +331,13 @@ export function App() {
   const [showProperties, setShowProperties] = useState(false);
   /** The password and permissions dialog, if open, with the last error from applying it. */
   const [passwordDialog, setPasswordDialog] = useState<{ error?: string }>();
+  /** The compress dialog, if open: the last compressed copy made, or an error. */
+  const [compressDialog, setCompressDialog] = useState<{
+    outcome?: CompressOutcome;
+    error?: string;
+  }>();
+  /** The last compressed copy's bytes, kept out of state (they can be large). */
+  const compressedBytes = useRef<Uint8Array | null>(null);
   const [sidebar, setSidebar] = useState(true);
   const [dragging, setDragging] = useState(false);
   const [theme, setTheme] = useTheme();
@@ -365,6 +374,8 @@ export function App() {
     setPage(0);
     setShowProperties(false);
     setPasswordDialog(undefined);
+    setCompressDialog(undefined);
+    compressedBytes.current = null;
     setSelection(EMPTY_SELECTION);
     setHistory(NO_HISTORY);
     setDirty(false);
@@ -1011,6 +1022,53 @@ export function App() {
     });
   }
 
+  // ---- Compress ----
+
+  function openCompress() {
+    compressedBytes.current = null;
+    setCompressDialog({});
+  }
+
+  function closeCompress() {
+    compressedBytes.current = null;
+    setCompressDialog(undefined);
+  }
+
+  function compressNow(preset: CompressPreset) {
+    void runTask("compress the file", async (pdf) => {
+      try {
+        const result = await pdf.compressedCopy(preset);
+        compressedBytes.current = result.bytes;
+        setCompressDialog({
+          outcome: { preset, size: result.bytes.byteLength, images: result.images },
+        });
+      } catch (err) {
+        if (isFatalEngineError(err)) throw err;
+        compressedBytes.current = null;
+        setCompressDialog({ error: messageOf(err) });
+      }
+    });
+  }
+
+  function saveCompressed() {
+    const bytes = compressedBytes.current;
+    const fileName = doc?.fileName ?? "document.pdf";
+    if (!bytes) return;
+    void runTask("save the compressed copy", async () => {
+      const destination = await chooseDestination(derivedName(fileName, "compressed"));
+      if (!destination) {
+        setStatus("Not saved.");
+        return;
+      }
+      const outcome = await writeToDestination(destination, bytes);
+      closeCompress();
+      setStatus(
+        `Saved the compressed copy (${formatSize(bytes.byteLength)}) as ` +
+          `${outcome.fileName ?? "a new PDF"}. The open file isn't changed.`,
+      );
+    });
+  }
+
   // ---- Building forms ----
 
   function pickFormTool(id: NewFieldKind | "edit") {
@@ -1339,6 +1397,7 @@ export function App() {
         passwordPrompt ||
         showProperties ||
         passwordDialog ||
+        compressDialog ||
         signDialog ||
         stampDialog ||
         redactDialog ||
@@ -1926,6 +1985,15 @@ export function App() {
                 ? "🔒 Password"
                 : "Password"}
             </button>
+            <button
+              type="button"
+              className="tool"
+              disabled={locked}
+              onClick={openCompress}
+              title="Save a smaller copy of the file"
+            >
+              Compress
+            </button>
             <input
               ref={imageInput}
               className="visually-hidden"
@@ -2271,6 +2339,18 @@ export function App() {
         />
       )}
 
+      {compressDialog && doc && (
+        <CompressDialog
+          sizeNow={doc.fileSize}
+          edited={dirty}
+          outcome={compressDialog.outcome}
+          error={compressDialog.error}
+          busy={busy}
+          onCompress={compressNow}
+          onSave={saveCompressed}
+          onClose={closeCompress}
+        />
+      )}
       {passwordDialog && doc && (
         <SecurityDialog
           security={doc.info.security}
