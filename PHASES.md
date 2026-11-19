@@ -299,8 +299,6 @@ saving appends the changes to the file (an incremental save). **Flatten form**
   dropdown, save, flatten, undo) and the IRS W-9.
 - **Not yet checked:** the saved files in Adobe Reader and other viewers; see the forms list in
   TESTING.md.
-- **Next in Phase 2:** building forms (adding fields and editing their properties), as a
-  separate PR.
 
 ### 11. Phase 2: building forms (2026-11-19, issue #21)
 
@@ -331,7 +329,8 @@ it. Each change is one undoable step, and saving stays incremental.
 - **Undo** snapshots the entries a change touches (the page's `/Annots`, the form's `/Fields`
   and resources, a group's `/Kids`, or the field's `/T`, `/Ff`, `/DV`, `/Opt` and value) and
   puts them back.
-- **Tests:** `formBuild.test.ts`: each kind on a blank PDF and on a file with a form, saving
+- **Tests:** `formBuild.test.ts`: each kind on a blank PDF, adding a text field to (and
+  deleting one from) a file with a form, saving
   (incremental, reopens without repair, the new fields can be filled in), radio groups,
   defaults, date scripts, a rotated page, renaming and other changes, deleting (one radio
   button, a whole group, a file's own field), undo/redo, and refusals.

@@ -1953,7 +1953,8 @@ export function App() {
             <button
               type="button"
               className="tool"
-              disabled={locked || doc.info.form.fields === 0}
+              // Still enabled while picked, so it can be put down after deleting the last field.
+              disabled={locked || (doc.info.form.fields === 0 && formTool !== "edit")}
               aria-pressed={formTool === "edit"}
               title="Change or delete a field"
               onClick={() => pickFormTool("edit")}

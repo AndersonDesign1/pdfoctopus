@@ -84,7 +84,10 @@ export function FieldDialog(props: Props) {
       return;
     }
     const changes: FieldChanges = { name, required };
-    if (hasDefault) changes.defaultValue = defaultValue;
+    // A default that's no longer one of the options is cleared with them.
+    if (hasDefault) {
+      changes.defaultValue = hasOptions && !optionList.includes(defaultValue) ? "" : defaultValue;
+    }
     // Options are only sent when they change, so a field's own option labels are left alone.
     const before = field?.options.map((o) => o.value) ?? [];
     const same = before.length === optionList.length && before.every((o, i) => o === optionList[i]);
@@ -95,7 +98,10 @@ export function FieldDialog(props: Props) {
   return (
     <Modal
       title={props.mode === "add" ? `Add a ${what}` : `${FIELD_KIND_NAMES[kind]} properties`}
-      onClose={props.onCancel}
+      // Closing while the change is being made would hide its result (or its error).
+      onClose={() => {
+        if (!props.busy) props.onCancel();
+      }}
     >
       <form className="pdfo-field-form" onSubmit={submit}>
         <label className="pdfo-field">
@@ -196,7 +202,12 @@ export function FieldDialog(props: Props) {
               Delete field
             </button>
           )}
-          <button type="button" className="button secondary" onClick={props.onCancel}>
+          <button
+            type="button"
+            className="button secondary"
+            disabled={props.busy}
+            onClick={props.onCancel}
+          >
             Cancel
           </button>
           <button type="submit" className="button" disabled={props.busy}>

@@ -190,12 +190,16 @@ export function entriesForAdd(
     [page, "Annots"],
     [root, "AcroForm"],
   ];
-  if (group) entries.push([group, "Kids"]);
+  // Joining a group can make it required.
+  if (group) entries.push([group, "Kids"], [group, "Ff"]);
   if (form.isDictionary()) {
     entries.push([form, "Fields"], [form, "DA"], [form, "DR"], [form, "XFA"]);
+    // A direct /DR is copied whole by its snapshot; an indirect one (or font dictionary) is
+    // shared, so the entries Helvetica is added to are snapshot themselves.
     const dr = form.get("DR");
-    // DR is snapshot as a copy, but its font dictionary may be its own object.
-    if (dr.isDictionary() && dr.get("Font").isIndirect()) entries.push([dr.get("Font"), "Helv"]);
+    if (dr.isIndirect()) entries.push([dr, "Font"]);
+    const fonts = dr.isDictionary() ? dr.get("Font") : null;
+    if (fonts?.isIndirect()) entries.push([fonts, "Helv"]);
   }
   return entries;
 }
@@ -298,6 +302,10 @@ export function buildField(
     ap.put("N", n);
     widget.put("AP", ap);
     let parent = group;
+    if (parent && spec.required) {
+      const ff = parent.get("Ff");
+      parent.put("Ff", (ff.isNumber() ? ff.asNumber() : 0) | FF_REQUIRED);
+    }
     let field: mupdf.PDFObject | null = null;
     if (!parent) {
       parent = pdf.addObject(pdf.newDictionary());

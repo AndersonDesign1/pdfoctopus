@@ -176,6 +176,56 @@ describe("addField", () => {
     expect(saved.map((r) => r.checked)).toEqual([false, true]);
   });
 
+  it("makes a radio group required when a button added to it is", () => {
+    const engine = blank();
+    engine.addField(field({ kind: "radio", name: "Size", value: "S", rect: [72, 72, 90, 90] }));
+    expect(engine.listFields(0)[0]?.required).toBe(false);
+    engine.addField(
+      field({ kind: "radio", name: "Size", value: "L", rect: [100, 72, 118, 90], required: true }),
+    );
+    expect(engine.listFields(0).map((f) => f.required)).toEqual([true, true]);
+    engine.undo();
+    expect(engine.listFields(0).map((f) => f.required)).toEqual([false]);
+  });
+
+  it("undoes adding Helvetica to a form whose resources are their own object", () => {
+    const engine = blank();
+    engine.addField(field({ kind: "text", name: "A" }));
+    // Make /DR an indirect object without Helvetica, as some files have it.
+    const bytes = (() => {
+      const doc = mupdf.Document.openDocument(engine.save(), "application/pdf");
+      const pdf = doc.asPDF() as mupdf.PDFDocument;
+      const form = pdf.getTrailer().get("Root").get("AcroForm");
+      const dr = pdf.newDictionary();
+      dr.put("Font", pdf.newDictionary());
+      form.put("DR", pdf.addObject(dr));
+      const out = pdf.saveToBuffer("").asUint8Array().slice();
+      doc.destroy();
+      return out;
+    })();
+    const check = open(bytes);
+    const fontsOf = (e: PdfEngine) => {
+      const doc = mupdf.Document.openDocument(e.save({ incremental: false }), "application/pdf");
+      const fonts = (doc.asPDF() as mupdf.PDFDocument)
+        .getTrailer()
+        .get("Root")
+        .get("AcroForm")
+        .get("DR")
+        .get("Font");
+      const keys: string[] = [];
+      fonts.forEach((_v, k) => {
+        keys.push(String(k));
+      });
+      doc.destroy();
+      return keys;
+    };
+    expect(fontsOf(check)).toEqual([]);
+    check.addField(field({ kind: "text", name: "B", rect: [72, 120, 252, 144] }));
+    expect(fontsOf(check)).toEqual(["Helv"]);
+    check.undo();
+    expect(fontsOf(check)).toEqual([]);
+  });
+
   it("starts a dropdown at its default value, which must be one of the options", () => {
     const engine = blank();
     const spec = field({ kind: "combobox", name: "Colour", options: ["Red", "Green", " "] });
@@ -352,6 +402,18 @@ describe("updateField", () => {
       { label: "New York", value: "NY" },
       { label: "TX", value: "TX" },
     ]);
+  });
+
+  it("clears a default that's no longer one of the options", () => {
+    const engine = blank();
+    engine.addField(
+      field({ kind: "combobox", name: "Colour", options: ["Red", "Green"], defaultValue: "Green" }),
+    );
+    const colour = byName(engine, "Colour");
+    engine.updateField(0, colour.id, { options: ["Red", "Blue"] });
+    expect(byName(engine, "Colour").defaultValue).toBe("");
+    engine.undo();
+    expect(byName(engine, "Colour").defaultValue).toBe("Green");
   });
 
   it("keeps a typed answer in a dropdown that takes them", () => {

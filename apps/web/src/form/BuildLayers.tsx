@@ -52,7 +52,9 @@ export function FieldDrawLayer({
   const finish = (a: [number, number], b: [number, number]) => {
     let rect: Rect;
     if (Math.abs(b[0] - a[0]) < CLICK && Math.abs(b[1] - a[1]) < CLICK) {
-      const [w, h] = DEFAULT_SIZE[kind];
+      // No bigger than the page (a small label, a ticket).
+      const w = Math.min(DEFAULT_SIZE[kind][0], page.width);
+      const h = Math.min(DEFAULT_SIZE[kind][1], page.height);
       // The click is the box's top-left corner, kept on the page.
       const x = Math.min(a[0], page.width - w);
       const y = Math.min(a[1], page.height - h);

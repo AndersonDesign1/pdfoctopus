@@ -1593,6 +1593,9 @@ export class PdfEngine {
             } else opt.push(pdf.newString(o));
           }
           field.put("Opt", opt);
+          // A default that's no longer an option is cleared (unless a new one is given).
+          const dv = textOf(inherited(widget.getObject(), "DV"));
+          if (defaultValue === null && dv && !options.includes(dv)) field.delete("DV");
           // An answer that's no longer an option is cleared, unless the dropdown takes typed
           // answers.
           const editable = (flags & mupdf.PDFWidget.CH_FIELD_IS_EDIT) !== 0;

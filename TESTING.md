@@ -234,7 +234,8 @@ Use `fixtures/generated/contract-libreoffice.pdf` (no form) and
 - [ ] A name that's already used: the dialog says so and stays open
 - [ ] **Edit fields:** every field is outlined; click one, rename it, tick Required, Save. Change
       a dropdown's options. Delete a field. Undo and redo each change
-- [ ] Press Escape (or pick the tool again) to put a form tool down; the new fields can then be
+- [ ] Press Escape (or pick the tool again) to put a form tool down; the new fields (all but the
+      signature field, which is signed in an app that supports digital signatures) can then be
       filled in as usual
 - [ ] **Save**, then open the file in **Adobe Acrobat Reader**, **Chrome/Edge** and **Firefox**:
       every field is there and can be filled in, radio buttons in a group turn each other off,
@@ -244,7 +245,8 @@ Use `fixtures/generated/contract-libreoffice.pdf` (no form) and
 - [ ] Add a field to the form that already has fields; open the saved file in Acrobat: the old
       fields still work
 - [ ] On a rotated page, the field goes where it was drawn
-- [ ] **Phone or tablet:** drawing a field's box with a finger works, and the Form row shows
+- [ ] **Phone or tablet:** drawing a field's box with a finger works, and the Form row shows all
+      six field tools and **Edit fields**; the field dialog fits the screen
 
 ## Problems found
 
