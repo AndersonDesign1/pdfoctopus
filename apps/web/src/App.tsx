@@ -407,9 +407,10 @@ export function App() {
       setStatus(`${file.name} isn't a PDF.`);
       return;
     }
-    // Opening replaces the document and its undo history: never drop unsaved edits silently.
+    // Opening replaces the document and its undo history: never drop unsaved edits silently
+    // (an answer still being typed in a form field counts).
     if (
-      dirtyRef.current &&
+      (dirtyRef.current || formDraft.current !== null) &&
       !window.confirm(
         `You have unsaved changes to ${docRef.current?.fileName ?? "this PDF"}.\n\n` +
           `Open ${file.name} anyway? Your changes will be lost.`,
@@ -1013,15 +1014,16 @@ export function App() {
     if (!modifiers.toggle && !modifiers.range) goToPage(index);
   }
 
-  // Warn before leaving with unsaved changes.
+  // Warn before leaving with unsaved changes, or an answer still being typed in a form field.
+  const unsaved = dirty || formDraftPage !== null;
   useEffect(() => {
-    if (!dirty) return;
+    if (!unsaved) return;
     const warn = (e: BeforeUnloadEvent) => {
       e.preventDefault();
     };
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
-  }, [dirty]);
+  }, [unsaved]);
 
   // Desktop: open the PDF the app was launched with ("Open with", double-click), once.
   const startupFileHandled = useRef(false);

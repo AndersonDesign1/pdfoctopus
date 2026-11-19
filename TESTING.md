@@ -192,8 +192,10 @@ form, a job application).
 - [ ] Opening a form PDF says "This PDF has a form" in the status line; fields have a light
       purple tint
 - [ ] **Text field:** click, type, press Tab: the text stays and the next field has the focus.
-      Enter also saves; Escape puts back what was there. A long text in a small box shrinks or
-      is cut off the way the PDF draws it
+      Enter also does in a one-line field; Escape puts back what was there. A long text in a
+      small box shrinks or is cut off the way the PDF draws it
+- [ ] Type in a field without leaving it, then drop another PDF on the window or close the
+      tab: you're warned about unsaved changes
 - [ ] **Checkbox** ticks and unticks; **radio buttons:** choosing one turns the others in its
       group off; **dropdown:** pick an option
 - [ ] Type in a text field and press **Ctrl+S** without leaving it: the saved file has the text.
