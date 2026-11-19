@@ -9,12 +9,14 @@ import {
   type EditResult,
   EngineCrashedError,
   EngineLoadError,
+  type FieldChanges,
   type FormField,
   type FormInfo,
   type HistoryState,
   IncrementalSaveError,
   isFatalEngineError,
   type LoadProgress,
+  type NewFieldKind,
   PasswordRequiredError,
   PdfWorkerClient,
   type RgbColor,
@@ -38,6 +40,8 @@ import {
   toolById,
   WIDTHS,
 } from "./annotate/tools";
+import { FieldDrawLayer, FieldEditLayer } from "./form/BuildLayers";
+import { FIELD_KIND_NAMES, FieldDialog, type FieldProperties } from "./form/FieldDialog";
 import { FlattenDialog } from "./form/FlattenDialog";
 import { FormLayer } from "./form/FormLayer";
 import {
@@ -205,6 +209,16 @@ function articled(noun: string): string {
  */
 const READABLE_LABEL = /^\p{L}[\p{L}\p{N} '’.,:?()/-]{0,60}$/u;
 
+/** The kinds of field the Form row adds, in order. */
+const FORM_TOOLS: readonly NewFieldKind[] = [
+  "text",
+  "checkbox",
+  "radio",
+  "combobox",
+  "date",
+  "signature",
+];
+
 /** What to say about a form when its file is opened, if anything. */
 function formNotice(form: FormInfo): string {
   if (form.xfa === "dynamic") {
@@ -266,6 +280,25 @@ export function App() {
   const [pending, setPending] = useState<PendingStamp>();
   /** The annotation tool picked, if any: dragging on a page then draws with it. */
   const [tool, setTool] = useState<ToolId>();
+  /**
+   * The form-building tool picked, if any: a kind of field (drag on a page to add one), or
+   * "edit" (click a field to change it).
+   */
+  const [formTool, setFormTool] = useState<NewFieldKind | "edit">();
+  /** The dialog for a field's properties: one being added (its box drawn), or one to change. */
+  const [fieldDialog, setFieldDialog] = useState<
+    | {
+        mode: "add";
+        kind: NewFieldKind;
+        page: number;
+        rect: [number, number, number, number];
+        suggestedName: string;
+        error?: string;
+      }
+    | { mode: "edit"; page: number; field: FormField; error?: string }
+  >();
+  /** The last radio group a button was added to, offered for the next one. */
+  const lastRadioGroup = useRef<string | null>(null);
   /** The colour chosen for each tool (until then, the tool's own default). */
   const [toolColors, setToolColors] = useState<Partial<Record<ToolId, RgbColor>>>({});
   const [lineWidth, setLineWidth] = useState(2);
@@ -336,6 +369,9 @@ export function App() {
     setRedactDialog(false);
     setFlattenDialog(false);
     setFocusedField(null);
+    setFormTool(undefined);
+    setFieldDialog(undefined);
+    lastRadioGroup.current = null;
     formDraft.current = null;
     setFormDraftPage(null);
     setPending(undefined);
@@ -663,6 +699,7 @@ export function App() {
     const centre = viewer.current?.visibleCentre(page) ?? undefined;
     const rect = initialRect(size, image.width / image.height, kind, centre);
     setTool(undefined); // Placing a stamp and drawing don't mix.
+    setFormTool(undefined);
     setSelecting(false);
     setSelectedAnnot(null);
     setPending({ kind, image, text, textStamp, page, rect });
@@ -756,6 +793,7 @@ export function App() {
     }
     setSelecting(false);
     setSelectedAnnot(null);
+    setFormTool(undefined);
     setTool(id);
     setStatus(`${toolById(id).hint}. Press Escape when you're done.`);
   }
@@ -769,6 +807,7 @@ export function App() {
       return;
     }
     setTool(undefined);
+    setFormTool(undefined);
     setSelecting(true);
     setStatus("Click an annotation to select it. Press Escape when you're done.");
   }
@@ -901,6 +940,107 @@ export function App() {
         "Flattened the form: what was filled in is now part of the pages and can't be changed. " +
           "Undo with Ctrl+Z.",
       );
+    });
+  }
+
+  // ---- Building forms ----
+
+  function pickFormTool(id: NewFieldKind | "edit") {
+    if (formTool === id) {
+      setFormTool(undefined);
+      setStatus("");
+      return;
+    }
+    setTool(undefined);
+    setSelecting(false);
+    setSelectedAnnot(null);
+    setFormTool(id);
+    setStatus(
+      id === "edit"
+        ? "Click a field to change its name, options or default, or to delete it. Press Escape when you're done."
+        : `Drag on a page where the ${FIELD_KIND_NAMES[id].toLowerCase()} goes, or click for the usual size. Press Escape when you're done.`,
+    );
+  }
+
+  /**
+   * Open the dialog for a new field whose box was just drawn, with a name no field has yet
+   * ("Text field 3"), or for a radio button, the group the last one joined if it's still there.
+   */
+  function openAddDialog(kind: NewFieldKind, page: number, rect: [number, number, number, number]) {
+    void (async () => {
+      let names: Set<string>;
+      try {
+        names = new Set(await getClient().listFieldNames());
+      } catch {
+        names = new Set();
+      }
+      let suggestedName = "";
+      if (kind === "radio" && lastRadioGroup.current && names.has(lastRadioGroup.current)) {
+        suggestedName = lastRadioGroup.current;
+      } else {
+        const base = kind === "radio" ? "Group" : FIELD_KIND_NAMES[kind];
+        for (let n = 1; !suggestedName || names.has(suggestedName); n++)
+          suggestedName = `${base} ${n}`;
+      }
+      setFieldDialog({ mode: "add", kind, page, rect, suggestedName });
+    })();
+  }
+
+  /** Run a field change from the dialog: an error keeps the dialog open and shows there. */
+  function runFieldTask(action: string, task: (pdf: PdfWorkerClient) => Promise<void>) {
+    void runTask(action, async (pdf) => {
+      try {
+        await task(pdf);
+      } catch (err) {
+        if (isFatalEngineError(err)) throw err;
+        setFieldDialog((d) => (d ? { ...d, error: messageOf(err) } : d));
+      }
+    });
+  }
+
+  function addFieldNow(props: FieldProperties) {
+    const d = fieldDialog;
+    if (d?.mode !== "add") return;
+    const noun = FIELD_KIND_NAMES[d.kind].toLowerCase();
+    runFieldTask(`add the ${noun}`, async (pdf) => {
+      const result = await pdf.addField({
+        page: d.page,
+        kind: d.kind,
+        rect: d.rect,
+        name: props.name,
+        required: props.required,
+        defaultValue: props.defaultValue,
+        options: props.options,
+        value: props.value,
+        multiline: props.multiline,
+      });
+      if (d.kind === "radio") lastRadioGroup.current = props.name.trim();
+      setFieldDialog(undefined);
+      applyEdit(result, `Added ${articled(noun)} to page ${d.page + 1}. Undo with Ctrl+Z.`);
+    });
+  }
+
+  function saveFieldNow(changes: FieldChanges) {
+    const d = fieldDialog;
+    if (d?.mode !== "edit") return;
+    runFieldTask("change the field", async (pdf) => {
+      const result = await pdf.updateField(d.page, d.field.id, changes);
+      // The group the next radio button is offered follows a rename.
+      if (d.field.kind === "radio" && changes.name && lastRadioGroup.current === d.field.name) {
+        lastRadioGroup.current = changes.name.trim();
+      }
+      setFieldDialog(undefined);
+      applyEdit(result, `Changed "${changes.name ?? d.field.name}". Undo with Ctrl+Z.`);
+    });
+  }
+
+  function deleteFieldNow() {
+    const d = fieldDialog;
+    if (d?.mode !== "edit") return;
+    runFieldTask("delete the field", async (pdf) => {
+      const result = await pdf.deleteField(d.page, d.field.id);
+      setFieldDialog(undefined);
+      applyEdit(result, `Deleted "${d.field.name}" from page ${d.page + 1}. Undo with Ctrl+Z.`);
     });
   }
 
@@ -1133,7 +1273,8 @@ export function App() {
         signDialog ||
         stampDialog ||
         redactDialog ||
-        flattenDialog
+        flattenDialog ||
+        fieldDialog
       ) {
         return;
       }
@@ -1143,12 +1284,18 @@ export function App() {
         return;
       }
       if (!doc) return;
-      if ((tool || selecting) && !drafting && e.key === "Escape" && !typingInField(e.target)) {
+      if (
+        (tool || selecting || formTool) &&
+        !drafting &&
+        e.key === "Escape" &&
+        !typingInField(e.target)
+      ) {
         // The first Escape lets go of the selection, the next puts the tool down.
         if (selectedAnnot) setSelectedAnnot(null);
         else {
           setTool(undefined);
           setSelecting(false);
+          setFormTool(undefined);
         }
         setStatus("");
         return;
@@ -1808,6 +1955,36 @@ export function App() {
             )}
           </div>
         )}
+        {doc && (
+          <div className="toolbar form-tools" role="toolbar" aria-label="Form">
+            <span className="toolbar-label">Form</span>
+            {FORM_TOOLS.map((kind) => (
+              <button
+                key={kind}
+                type="button"
+                className="tool"
+                disabled={locked}
+                aria-pressed={formTool === kind}
+                title={`Add ${articled(FIELD_KIND_NAMES[kind].toLowerCase())}`}
+                onClick={() => pickFormTool(kind)}
+              >
+                {FIELD_KIND_NAMES[kind]}
+              </button>
+            ))}
+            <span className="divider" />
+            <button
+              type="button"
+              className="tool"
+              // Still enabled while picked, so it can be put down after deleting the last field.
+              disabled={locked || (doc.info.form.fields === 0 && formTool !== "edit")}
+              aria-pressed={formTool === "edit"}
+              title="Change or delete a field"
+              onClick={() => pickFormTool("edit")}
+            >
+              Edit fields
+            </button>
+          </div>
+        )}
       </header>
 
       {(engine.status !== "ready" || status) && (
@@ -1914,6 +2091,28 @@ export function App() {
                       onEdit={(a, change) => editAnnotation(index, a, change)}
                       onDelete={(a) => deleteAnnotation(index, a)}
                       onDraftChange={setDraftPage}
+                    />
+                  );
+                }
+                if (formTool === "edit") {
+                  return (
+                    <FieldEditLayer
+                      key={`${editVersion}:${index}`}
+                      scale={viewScale}
+                      busy={busy}
+                      list={() => getClient().listFields(index)}
+                      onPick={(field) => setFieldDialog({ mode: "edit", page: index, field })}
+                    />
+                  );
+                }
+                if (formTool) {
+                  return (
+                    <FieldDrawLayer
+                      kind={formTool}
+                      page={size}
+                      scale={viewScale}
+                      busy={busy}
+                      onDraw={(rect) => openAddDialog(formTool, index, rect)}
                     />
                   );
                 }
@@ -2026,6 +2225,32 @@ export function App() {
           marks={doc.info.redactionMarks}
           onApply={applyRedactionsNow}
           onCancel={() => setRedactDialog(false)}
+        />
+      )}
+      {fieldDialog?.mode === "add" && doc && (
+        <FieldDialog
+          // A fresh dialog for each box drawn.
+          key={`add:${fieldDialog.page}:${fieldDialog.rect.join(",")}`}
+          mode="add"
+          kind={fieldDialog.kind}
+          suggestedName={fieldDialog.suggestedName}
+          suggestedValue={`Choice${(doc.info.form.fields ?? 0) + 1}`}
+          error={fieldDialog.error}
+          busy={busy}
+          onSubmit={addFieldNow}
+          onCancel={() => setFieldDialog(undefined)}
+        />
+      )}
+      {fieldDialog?.mode === "edit" && doc && (
+        <FieldDialog
+          key={`edit:${fieldDialog.field.id}`}
+          mode="edit"
+          field={fieldDialog.field}
+          error={fieldDialog.error}
+          busy={busy}
+          onSubmit={saveFieldNow}
+          onDelete={deleteFieldNow}
+          onCancel={() => setFieldDialog(undefined)}
         />
       )}
       {flattenDialog && doc && (

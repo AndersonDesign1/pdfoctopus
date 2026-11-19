@@ -26,6 +26,25 @@ import {
 } from "./annotationObjects";
 import { IncrementalSaveError, PasswordRequiredError } from "./errors";
 import {
+  buildField,
+  checkFieldName,
+  checkOptions,
+  checkRadioValue,
+  ensureForm,
+  entriesForAdd,
+  FIELD_FLAGS,
+  type FieldChanges,
+  fieldNames,
+  MIN_FIELD_SIZE,
+  type NewField,
+  radioGroup,
+  radioValues,
+  removeFrom,
+  renamed,
+  restoreEntries,
+  snapshotEntries,
+} from "./formBuild";
+import {
   acroForm,
   type FieldKind,
   type FieldSnapshot,
@@ -249,6 +268,12 @@ export interface FormField {
   editable: boolean;
   /** Most characters a text field takes, if it has a limit. */
   maxLength: number | null;
+  /** The field's own name (the last part of its full name), which renaming changes. */
+  partialName: string;
+  /** What the field starts with and resets to (its /DV), as text. */
+  defaultValue: string;
+  /** A text field formatted as a date (by Acrobat's date scripts). */
+  date: boolean;
 }
 
 /** What applyRedactions did, with the document as it is now. */
@@ -1216,6 +1241,9 @@ export class PdfEngine {
           multiline: kind === "text" && w.isMultiline(),
           editable: kind === "combobox" && (flags & mupdf.PDFWidget.CH_FIELD_IS_EDIT) !== 0,
           maxLength: maxLength > 0 ? maxLength : null,
+          partialName: textOf(fieldOf(object).get("T")),
+          defaultValue: textOf(inherited(object, "DV")),
+          date: kind === "text" && isDateField(object),
         };
       });
     } finally {
@@ -1392,6 +1420,328 @@ export class PdfEngine {
       throw err;
     }
     return snapshot;
+  }
+
+  // ---------------------------------------------------------------------------------------
+  // Building forms: add fields, change their properties, delete them; each one undoable step.
+
+  /** Add a form field (a box on a page), as one undoable step. */
+  addField(spec: NewField): EditResult {
+    const pdf = this.requirePdf();
+    const [index] = this.checkPages([spec.page]) as [number];
+    const [x0, y0, x1, y1] = checkRect(spec.rect);
+    if (x1 - x0 < MIN_FIELD_SIZE || y1 - y0 < MIN_FIELD_SIZE) {
+      throw new Error("The field is too small");
+    }
+    const name = checkFieldName(spec.name);
+    const existingForm = acroForm(pdf);
+    const group = spec.kind === "radio" ? radioGroup(existingForm, name) : null;
+    if (!group && fieldNames(existingForm).has(name)) {
+      throw new Error(`There's already a field called "${name}"`);
+    }
+    if (group) {
+      const value = checkRadioValue(spec.value);
+      if (radioValues(group).includes(value)) {
+        throw new Error(`The group "${name}" already has a button with the value "${value}"`);
+      }
+    }
+    const defaultValue = spec.defaultValue?.trim() ?? "";
+    if (defaultValue.length > MAX_ANNOTATION_TEXT) throw new Error("The default value is too long");
+    if (
+      spec.kind === "combobox" &&
+      defaultValue &&
+      !checkOptions(spec.options).includes(defaultValue)
+    ) {
+      throw new Error("The default value must be one of the options");
+    }
+
+    const pageObject = pdf.findPage(index);
+    const before = snapshotEntries(pdf, entriesForAdd(pdf, pageObject, group));
+    let widget: mupdf.PDFObject | null = null;
+    try {
+      const form = ensureForm(pdf);
+      // A hybrid form's XFA copy would show the form as it was (in Adobe Reader).
+      form.delete("XFA");
+      const rect = transformRect(invert(this.shownTransform(index)), [x0, y0, x1, y1]);
+      const built = buildField(pdf, pageObject, { ...spec, name }, name, rect, group);
+      widget = built.widget;
+      if (built.field) form.get("Fields").push(built.field);
+      let annots = pageObject.get("Annots");
+      if (!annots.isArray()) {
+        annots = pdf.newArray();
+        pageObject.put("Annots", annots);
+      }
+      annots.push(widget);
+      // Draw the field, with its default value if it has one.
+      const page = pdf.loadPage(index);
+      try {
+        const w = page
+          .getWidgets()
+          .find((x) => x.getObject().asIndirect() === widget?.asIndirect());
+        if (!w) throw new Error("The new field couldn't be found on the page");
+        if (
+          defaultValue &&
+          spec.kind !== "checkbox" &&
+          spec.kind !== "radio" &&
+          spec.kind !== "signature"
+        ) {
+          widget.put("DV", pdf.newString(defaultValue));
+          if (spec.kind === "combobox") w.setChoiceValue(defaultValue);
+          else w.setTextValue(defaultValue);
+        }
+        w.setRect(w.getRect()); // so MuPDF draws it
+        w.update();
+      } finally {
+        page.destroy();
+      }
+    } catch (err) {
+      restoreEntries(pdf, before);
+      throw err;
+    }
+    const after = snapshotEntries(pdf, entriesForAdd(pdf, pageObject, group));
+    return this.entryStep(
+      spec.kind === "radio" && group ? "Add radio button" : "Add form field",
+      before,
+      after,
+    );
+  }
+
+  /** Change a field's name, whether it's required, its default value or its options. */
+  updateField(pageIndex: number, id: number, changes: FieldChanges): EditResult {
+    const pdf = this.requirePdf();
+    const [index] = this.checkPages([pageIndex]) as [number];
+    const page = pdf.loadPage(index);
+    try {
+      const widget = page.getWidgets().find((w) => w.getObject().asIndirect() === id);
+      if (!widget) throw new Error("That form field is not on the page");
+      const kind = fieldKind(widget);
+      const field = fieldOf(widget.getObject());
+      const objects = fieldObjects(field);
+
+      // Check everything before changing anything.
+      let name: string | null = null;
+      if (changes.name !== undefined) {
+        name = checkFieldName(changes.name);
+        const full = renamed(field, name);
+        const other = fieldNames(acroForm(pdf)).get(full);
+        if (other && other.asIndirect() !== field.asIndirect()) {
+          throw new Error(`There's already a field called "${full}"`);
+        }
+        if (textOf(field.get("T")) === name) name = null;
+      }
+      let options: string[] | null = null;
+      if (changes.options !== undefined) {
+        if (kind !== "combobox" && kind !== "listbox")
+          throw new Error("Only a dropdown or list has options");
+        options = checkOptions(changes.options);
+        const now = widget.getOptions(true);
+        if (now.length === options.length && now.every((o, i) => o === options?.[i]))
+          options = null;
+      }
+      let defaultValue: string | null = null;
+      if (changes.defaultValue !== undefined) {
+        if (kind !== "text" && kind !== "combobox" && kind !== "listbox") {
+          throw new Error("Only a text field, dropdown or list has a default value");
+        }
+        defaultValue = changes.defaultValue.trim();
+        if (defaultValue.length > MAX_ANNOTATION_TEXT)
+          throw new Error("The default value is too long");
+        const allowed = options ?? widget.getOptions(true);
+        if (kind !== "text" && defaultValue && !allowed.includes(defaultValue)) {
+          throw new Error("The default value must be one of the options");
+        }
+        if (textOf(inherited(widget.getObject(), "DV")) === defaultValue) defaultValue = null;
+      }
+      const ffNow = inherited(widget.getObject(), "Ff");
+      const flags = ffNow.isNumber() ? ffNow.asNumber() : 0;
+      const required =
+        changes.required !== undefined &&
+        changes.required !== ((flags & FIELD_FLAGS.required) !== 0)
+          ? changes.required
+          : null;
+      if (name === null && options === null && defaultValue === null && required === null) {
+        return this.run({ label: "", undo() {}, redo() {} }, true);
+      }
+
+      const form = acroForm(pdf);
+      const keys: [mupdf.PDFObject, string][] = [
+        [field, "T"],
+        [field, "Ff"],
+        [field, "DV"],
+        [field, "Opt"],
+      ];
+      if (form) keys.push([form, "XFA"]);
+      const beforeEntries = snapshotEntries(pdf, keys);
+      const beforeValue = snapshotField(pdf, objects);
+      try {
+        // A hybrid form's XFA copy would show the form as it was (in Adobe Reader).
+        form?.delete("XFA");
+        if (name !== null) field.put("T", pdf.newString(name));
+        if (required !== null) {
+          field.put("Ff", required ? flags | FIELD_FLAGS.required : flags & ~FIELD_FLAGS.required);
+        }
+        if (options !== null) {
+          // An option kept from before keeps its label, if it had its own (["CA", "California"]).
+          const values = widget.getOptions(true);
+          const labels = widget.getOptions(false);
+          const opt = pdf.newArray();
+          for (const o of options) {
+            const i = values.indexOf(o);
+            const label = i >= 0 ? labels[i] : undefined;
+            if (label !== undefined && label !== o) {
+              const pair = pdf.newArray();
+              pair.push(pdf.newString(o));
+              pair.push(pdf.newString(label));
+              opt.push(pair);
+            } else opt.push(pdf.newString(o));
+          }
+          field.put("Opt", opt);
+          // A default that's no longer an option is cleared (unless a new one is given).
+          const dv = textOf(inherited(widget.getObject(), "DV"));
+          if (defaultValue === null && dv && !options.includes(dv)) field.delete("DV");
+          // An answer that's no longer an option is cleared, unless the dropdown takes typed
+          // answers.
+          const editable = (flags & mupdf.PDFWidget.CH_FIELD_IS_EDIT) !== 0;
+          if (!editable && widget.getValue() && !options.includes(widget.getValue())) {
+            widget.setChoiceValue("");
+          }
+        }
+        if (defaultValue !== null) {
+          const old = textOf(inherited(widget.getObject(), "DV"));
+          if (defaultValue) field.put("DV", pdf.newString(defaultValue));
+          else field.delete("DV");
+          // A field still showing its old default (or nothing) shows the new one.
+          const now = widget.getValue();
+          if (now === "" || now === old) {
+            if (kind === "text") widget.setTextValue(defaultValue);
+            else widget.setChoiceValue(defaultValue);
+          }
+        }
+        widget.setRect(widget.getRect());
+        widget.update();
+      } catch (err) {
+        restoreEntries(pdf, beforeEntries);
+        restoreField(pdf, beforeValue);
+        throw err;
+      }
+      const afterEntries = snapshotEntries(pdf, keys);
+      const afterValue = snapshotField(pdf, objects);
+      let applied = true;
+      return this.run({
+        label: "Change form field",
+        redo: () => {
+          if (applied) return;
+          restoreEntries(pdf, afterEntries);
+          restoreField(pdf, afterValue);
+          applied = true;
+        },
+        undo: () => {
+          restoreEntries(pdf, beforeEntries);
+          restoreField(pdf, beforeValue);
+          applied = false;
+        },
+      });
+    } finally {
+      page.destroy();
+    }
+  }
+
+  /**
+   * Delete a form field's box, as one undoable step. A field with no boxes left (a radio
+   * group whose last button goes) is removed from the form too.
+   */
+  deleteField(pageIndex: number, id: number): EditResult {
+    const pdf = this.requirePdf();
+    const [index] = this.checkPages([pageIndex]) as [number];
+    const pageObject = pdf.findPage(index);
+    const annots = pageObject.get("Annots");
+    let widget: mupdf.PDFObject | null = null;
+    if (annots.isArray()) {
+      for (let i = 0; i < annots.length; i++) {
+        const a = annots.get(i);
+        const subtype = a.get("Subtype");
+        if (a.asIndirect() === id && subtype.isName() && subtype.asName() === "Widget") widget = a;
+      }
+    }
+    if (!widget) throw new Error("That form field is not on the page");
+    const form = acroForm(pdf);
+    // Going up from the box: each node is removed from its parent's /Kids (or the form's
+    // /Fields) while that leaves the parent with no kids.
+    const removals: { node: mupdf.PDFObject; container: mupdf.PDFObject; key: string }[] = [];
+    let node = widget;
+    for (let depth = 0; depth < 32; depth++) {
+      const parent = node.get("Parent");
+      if (parent.isNull()) {
+        if (form) removals.push({ node, container: form, key: "Fields" });
+        break;
+      }
+      removals.push({ node, container: parent, key: "Kids" });
+      const kids = parent.get("Kids");
+      if (!kids.isArray() || kids.length > 1) break;
+      node = parent;
+    }
+    const entries: [mupdf.PDFObject, string][] = [[pageObject, "Annots"]];
+    for (const r of removals) entries.push([r.container, r.key]);
+    // A radio group whose chosen button goes has no choice left.
+    // A radio group whose chosen button goes has no choice left. (A checkbox with several boxes
+    // keeps its value: the others still show it.)
+    const parent = widget.get("Parent");
+    const parentFlags = parent.isNull() ? null : parent.get("Ff");
+    const group =
+      parentFlags?.isNumber() && (parentFlags.asNumber() & mupdf.PDFWidget.BTN_FIELD_IS_RADIO) !== 0
+        ? parent
+        : null;
+    if (group) entries.push([group, "V"]);
+    if (form) entries.push([form, "XFA"]);
+    const before = snapshotEntries(pdf, entries);
+    try {
+      // A hybrid form's XFA copy would show the form as it was (in Adobe Reader).
+      form?.delete("XFA");
+      removeFrom(pageObject.get("Annots"), widget);
+      for (const r of removals) removeFrom(r.container.get(r.key), r.node);
+      const state = widget.get("AS");
+      const v = group ? group.get("V") : null;
+      if (
+        v?.isName() &&
+        state.isName() &&
+        v.asName() === state.asName() &&
+        state.asName() !== "Off"
+      ) {
+        group?.put("V", pdf.newName("Off"));
+      }
+    } catch (err) {
+      restoreEntries(pdf, before);
+      throw err;
+    }
+    const after = snapshotEntries(pdf, entries);
+    return this.entryStep("Delete form field", before, after);
+  }
+
+  /** The full names of every field in the form, to suggest a new one that isn't taken. */
+  listFieldNames(): string[] {
+    return [...fieldNames(acroForm(this.requirePdf())).keys()];
+  }
+
+  /** An undoable step that puts dictionary entries back as they were (and forward again). */
+  private entryStep(
+    label: string,
+    before: ReturnType<typeof snapshotEntries>,
+    after: ReturnType<typeof snapshotEntries>,
+  ): EditResult {
+    const pdf = this.requirePdf();
+    let applied = true;
+    return this.run({
+      label,
+      redo: () => {
+        if (applied) return;
+        restoreEntries(pdf, after);
+        applied = true;
+      },
+      undo: () => {
+        restoreEntries(pdf, before);
+        applied = false;
+      },
+    });
   }
 
   /** How many form field boxes there are, and whether the form has XFA. */
@@ -1993,6 +2343,32 @@ function checkText(text: string): string {
   if (!t) throw new Error("Type some text first");
   if (t.length > MAX_ANNOTATION_TEXT) throw new Error("The text is too long");
   return t;
+}
+
+/** Whether a text field is formatted as a date (Acrobat's AFDate scripts). */
+function isDateField(object: mupdf.PDFObject): boolean {
+  const aa = inherited(object, "AA");
+  const format = aa.isDictionary() ? aa.get("F") : null;
+  const js = format?.isDictionary() ? format.get("JS") : null;
+  return js?.isString() === true && js.asString().includes("AFDate_");
+}
+
+/** A string or name as text ("" for anything else). */
+function textOf(value: mupdf.PDFObject): string {
+  if (value.isString()) return value.asString();
+  if (value.isName()) return value.asName();
+  return "";
+}
+
+/** An entry a form field inherits: from the box itself, or the nearest parent that has it. */
+function inherited(object: mupdf.PDFObject, key: string): mupdf.PDFObject {
+  let node = object;
+  for (let depth = 0; depth < 32 && !node.isNull(); depth++) {
+    const value = node.get(key);
+    if (!value.isNull()) return value;
+    node = node.get("Parent");
+  }
+  return node.isNull() ? node : node.get(key);
 }
 
 /** A page's content, resources and annotations, copied so later changes can't reach them. */

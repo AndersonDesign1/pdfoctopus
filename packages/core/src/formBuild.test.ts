@@ -1,0 +1,593 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
+// Building forms: adding fields of each kind (to a blank PDF and to one that has a form),
+// changing their properties and deleting them, each one undoable, and saved files that reopen
+// cleanly with fields that can be filled in.
+
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import * as mupdf from "mupdf";
+import { afterEach, describe, expect, it } from "vitest";
+import { createBlankPdf, type FormField, PdfEngine } from "./engine";
+import type { NewField } from "./formBuild";
+
+const fixtures = join(import.meta.dirname, "..", "..", "..", "fixtures");
+const LIBREOFFICE = join(fixtures, "third-party/py-pdf/012-libreoffice-form_libreoffice-form.pdf");
+const W9 = join(fixtures, "public-domain/irs-form-w9.pdf");
+
+/** Change a saved file's first field with MuPDF (to give it something PDFoctopus can't make). */
+function tweakFirstField(
+  bytes: Uint8Array,
+  change: (pdf: mupdf.PDFDocument, field: mupdf.PDFObject) => void,
+): Uint8Array {
+  const doc = mupdf.Document.openDocument(bytes, "application/pdf");
+  const pdf = doc.asPDF() as mupdf.PDFDocument;
+  const field = pdf.getTrailer().get("Root").get("AcroForm").get("Fields").get(0);
+  change(pdf, field);
+  const out = pdf.saveToBuffer("").asUint8Array().slice();
+  doc.destroy();
+  return out;
+}
+
+const opened: PdfEngine[] = [];
+afterEach(() => {
+  for (const engine of opened.splice(0)) engine.close();
+});
+
+function open(bytes: Uint8Array): PdfEngine {
+  const engine = new PdfEngine();
+  opened.push(engine);
+  engine.open(bytes);
+  return engine;
+}
+
+const blank = () => open(createBlankPdf(2));
+
+function byName(engine: PdfEngine, name: string, page = 0): FormField {
+  const found = engine.listFields(page).find((f) => f.name === name);
+  if (!found) throw new Error(`No field called ${name}`);
+  return found;
+}
+
+/** Reopen saved bytes and list page 0's fields, checking the file didn't need repair. */
+function reopened(bytes: Uint8Array): FormField[] {
+  const check = open(bytes);
+  const doc = mupdf.Document.openDocument(bytes, "application/pdf");
+  expect((doc.asPDF() as mupdf.PDFDocument).wasRepaired()).toBe(false);
+  doc.destroy();
+  return check.listFields(0);
+}
+
+const field = (spec: Partial<NewField> & Pick<NewField, "kind" | "name">): NewField => ({
+  page: 0,
+  rect: [72, 72, 252, 96],
+  ...spec,
+});
+
+describe("addField", () => {
+  it("adds each kind of field to a PDF with no form, as one undoable step", () => {
+    const engine = blank();
+    expect(engine.info().form.fields).toBe(0);
+    engine.addField(field({ kind: "text", name: "Full name" }));
+    engine.addField(field({ kind: "checkbox", name: "Agree", rect: [72, 120, 90, 138] }));
+    engine.addField(
+      field({
+        kind: "combobox",
+        name: "Colour",
+        rect: [72, 150, 200, 170],
+        options: ["Red", "Green"],
+      }),
+    );
+    engine.addField(field({ kind: "date", name: "Date", rect: [72, 180, 200, 200] }));
+    const last = engine.addField(
+      field({ kind: "signature", name: "Signature", rect: [300, 600, 500, 660] }),
+    );
+    expect(last.history.undoLabel).toBe("Add form field");
+    expect(last.info.form.fields).toBe(5);
+
+    const kinds = Object.fromEntries(engine.listFields(0).map((f) => [f.name, f.kind]));
+    expect(kinds).toEqual({
+      "Full name": "text",
+      Agree: "checkbox",
+      Colour: "combobox",
+      Date: "text",
+      Signature: "signature",
+    });
+    expect(byName(engine, "Full name").rect).toEqual([72, 72, 252, 96]);
+    expect(byName(engine, "Colour").options.map((o) => o.label)).toEqual(["Red", "Green"]);
+
+    engine.undo();
+    expect(engine.info().form.fields).toBe(4);
+    for (let i = 0; i < 4; i++) engine.undo();
+    expect(engine.info().form.fields).toBe(0);
+    for (let i = 0; i < 5; i++) engine.redo();
+    expect(engine.info().form.fields).toBe(5);
+  });
+
+  it("saves fields that reopen cleanly and can be filled in", () => {
+    const original = createBlankPdf(1);
+    const engine = open(original.slice());
+    engine.addField(field({ kind: "text", name: "Name", required: true }));
+    engine.addField(field({ kind: "checkbox", name: "Agree", rect: [72, 120, 90, 138] }));
+    const saved = engine.save();
+    expect(saved.subarray(0, original.length)).toEqual(original);
+
+    const check = open(saved);
+    const fields = check.listFields(0);
+    const name = fields.find((f) => f.name === "Name");
+    expect(name?.required).toBe(true);
+    check.setFieldValue(0, name?.id ?? 0, "Jane Example");
+    const agree = fields.find((f) => f.name === "Agree");
+    check.setFieldValue(0, agree?.id ?? 0, true);
+    const again = reopened(check.save());
+    expect(again.find((f) => f.name === "Name")?.value).toBe("Jane Example");
+    expect(again.find((f) => f.name === "Agree")?.checked).toBe(true);
+  });
+
+  it("draws each new field, so it shows in other apps", () => {
+    const engine = blank();
+    engine.addField(field({ kind: "text", name: "Name", defaultValue: "Jane" }));
+    engine.addField(field({ kind: "checkbox", name: "Agree", rect: [72, 120, 90, 138] }));
+    engine.addField(field({ kind: "radio", name: "Size", value: "S", rect: [72, 150, 90, 168] }));
+    engine.addField(
+      field({ kind: "combobox", name: "Colour", rect: [72, 180, 200, 200], options: ["Red"] }),
+    );
+    engine.addField(field({ kind: "date", name: "Date", rect: [72, 210, 200, 230] }));
+    engine.addField(field({ kind: "signature", name: "Sign", rect: [72, 240, 272, 290] }));
+    const doc = mupdf.Document.openDocument(engine.save(), "application/pdf");
+    const widgets = (doc.asPDF() as mupdf.PDFDocument).loadPage(0).getWidgets();
+    expect(widgets).toHaveLength(6);
+    for (const widget of widgets) {
+      const n = widget.getObject().get("AP").get("N");
+      // A checkbox or radio button has an appearance for each state; the rest have one.
+      if (widget.isCheckbox() || widget.isRadioButton()) {
+        expect(n.isDictionary()).toBe(true);
+        expect(n.get("Off").isStream()).toBe(true);
+      } else {
+        expect(n.isStream(), widget.getName()).toBe(true);
+      }
+    }
+    expect(widgets[0]?.getValue()).toBe("Jane");
+    doc.destroy();
+  });
+
+  it("lists every field's name, and says which text fields are dates", () => {
+    const engine = blank();
+    engine.addField(field({ kind: "text", name: "Name" }));
+    engine.addField(field({ kind: "date", name: "Born", rect: [72, 120, 200, 140] }));
+    expect(engine.listFieldNames().sort()).toEqual(["Born", "Name"]);
+    expect(byName(engine, "Born").date).toBe(true);
+    expect(byName(engine, "Name").date).toBe(false);
+  });
+
+  it("adds a field to a form that already has fields, and refuses a name in use", () => {
+    const engine = open(new Uint8Array(readFileSync(LIBREOFFICE)));
+    const before = engine.info().form.fields;
+    engine.addField(field({ kind: "text", name: "Email", rect: [72, 300, 252, 320] }));
+    expect(engine.info().form.fields).toBe(before + 1);
+    expect(() => engine.addField(field({ kind: "text", name: "Email" }))).toThrow(
+      /already a field called "Email"/,
+    );
+    expect(() => engine.addField(field({ kind: "checkbox", name: "First Name" }))).toThrow(
+      /already a field/,
+    );
+    expect(reopened(engine.save()).some((f) => f.name === "Email")).toBe(true);
+  });
+
+  it("groups radio buttons by name, and keeps only one chosen", () => {
+    const engine = blank();
+    engine.addField(field({ kind: "radio", name: "Size", value: "Small", rect: [72, 72, 90, 90] }));
+    const second = engine.addField(
+      field({ kind: "radio", name: "Size", value: "Large", rect: [100, 72, 118, 90] }),
+    );
+    expect(second.history.undoLabel).toBe("Add radio button");
+    const radios = engine.listFields(0).filter((f) => f.kind === "radio");
+    expect(radios.map((r) => [r.name, r.value])).toEqual([
+      ["Size", "Small"],
+      ["Size", "Large"],
+    ]);
+    const [small, large] = radios as [FormField, FormField];
+    engine.setFieldValue(0, small.id, true);
+    engine.setFieldValue(0, large.id, true);
+    const now = engine.listFields(0).filter((f) => f.kind === "radio");
+    expect(now.map((r) => r.checked)).toEqual([false, true]);
+    expect(() =>
+      engine.addField(
+        field({ kind: "radio", name: "Size", value: "Large", rect: [130, 72, 148, 90] }),
+      ),
+    ).toThrow(/already has a button with the value "Large"/);
+
+    const saved = reopened(engine.save()).filter((f) => f.kind === "radio");
+    expect(saved.map((r) => r.checked)).toEqual([false, true]);
+  });
+
+  it("makes a radio group required when a button added to it is", () => {
+    const engine = blank();
+    engine.addField(field({ kind: "radio", name: "Size", value: "S", rect: [72, 72, 90, 90] }));
+    expect(engine.listFields(0)[0]?.required).toBe(false);
+    engine.addField(
+      field({ kind: "radio", name: "Size", value: "L", rect: [100, 72, 118, 90], required: true }),
+    );
+    expect(engine.listFields(0).map((f) => f.required)).toEqual([true, true]);
+    engine.undo();
+    expect(engine.listFields(0).map((f) => f.required)).toEqual([false]);
+  });
+
+  it("undoes adding Helvetica to a form whose resources are their own object", () => {
+    const engine = blank();
+    engine.addField(field({ kind: "text", name: "A" }));
+    // Make /DR an indirect object without Helvetica, as some files have it.
+    const bytes = (() => {
+      const doc = mupdf.Document.openDocument(engine.save(), "application/pdf");
+      const pdf = doc.asPDF() as mupdf.PDFDocument;
+      const form = pdf.getTrailer().get("Root").get("AcroForm");
+      const dr = pdf.newDictionary();
+      dr.put("Font", pdf.newDictionary());
+      form.put("DR", pdf.addObject(dr));
+      const out = pdf.saveToBuffer("").asUint8Array().slice();
+      doc.destroy();
+      return out;
+    })();
+    const check = open(bytes);
+    const fontsOf = (e: PdfEngine) => {
+      const doc = mupdf.Document.openDocument(e.save({ incremental: false }), "application/pdf");
+      const fonts = (doc.asPDF() as mupdf.PDFDocument)
+        .getTrailer()
+        .get("Root")
+        .get("AcroForm")
+        .get("DR")
+        .get("Font");
+      const keys: string[] = [];
+      fonts.forEach((_v, k) => {
+        keys.push(String(k));
+      });
+      doc.destroy();
+      return keys;
+    };
+    expect(fontsOf(check)).toEqual([]);
+    check.addField(field({ kind: "text", name: "B", rect: [72, 120, 252, 144] }));
+    expect(fontsOf(check)).toEqual(["Helv"]);
+    check.undo();
+    expect(fontsOf(check)).toEqual([]);
+  });
+
+  it("starts a dropdown at its default value, which must be one of the options", () => {
+    const engine = blank();
+    const spec = field({ kind: "combobox", name: "Colour", options: ["Red", "Green", " "] });
+    expect(() => engine.addField({ ...spec, defaultValue: "Blue" })).toThrow(/one of the options/);
+    engine.addField({ ...spec, defaultValue: "Green" });
+    const colour = byName(engine, "Colour");
+    expect(colour.value).toBe("Green");
+    expect(colour.defaultValue).toBe("Green");
+    expect(colour.options.map((o) => o.value)).toEqual(["Red", "Green"]); // blank option dropped
+  });
+
+  it("formats a date field with Acrobat's date scripts", () => {
+    const engine = blank();
+    engine.addField(field({ kind: "date", name: "Born" }));
+    const doc = mupdf.Document.openDocument(engine.save(), "application/pdf");
+    const widget = (doc.asPDF() as mupdf.PDFDocument)
+      .loadPage(0)
+      .getWidgets()[0] as mupdf.PDFWidget;
+    const aa = widget.getObject().get("AA");
+    expect(aa.get("F").get("JS").asString()).toContain("AFDate_FormatEx");
+    expect(aa.get("K").get("JS").asString()).toContain("AFDate_KeystrokeEx");
+    doc.destroy();
+  });
+
+  it("puts a field where it was drawn on a rotated page", () => {
+    const engine = blank();
+    engine.rotatePages([0], 90);
+    const rect: [number, number, number, number] = [100, 50, 300, 80];
+    engine.addField(field({ kind: "text", name: "Rotated", rect }));
+    const got = byName(engine, "Rotated").rect.map((v) => Math.round(v));
+    expect(got).toEqual(rect);
+  });
+
+  it("refuses bad input, changing nothing", () => {
+    const engine = blank();
+    const history = engine.history();
+    expect(() => engine.addField(field({ kind: "text", name: "  " }))).toThrow(/needs a name/);
+    expect(() => engine.addField(field({ kind: "text", name: "a.b" }))).toThrow(/dot/);
+    expect(() => engine.addField(field({ kind: "text", name: "x", rect: [0, 0, 3, 3] }))).toThrow(
+      /too small/,
+    );
+    expect(() => engine.addField(field({ kind: "combobox", name: "x", options: [] }))).toThrow(
+      /at least one option/,
+    );
+    expect(() =>
+      engine.addField(field({ kind: "combobox", name: "x", options: ["A", "A"] })),
+    ).toThrow(/same/);
+    expect(() => engine.addField(field({ kind: "radio", name: "x", value: "Off" }))).toThrow(/Off/);
+    expect(() => engine.addField(field({ kind: "text", name: "x", page: 9 }))).toThrow();
+    expect(engine.history()).toEqual(history);
+    expect(engine.info().form.fields).toBe(0);
+  });
+});
+
+describe("undo and redo of the first field", () => {
+  it("puts the form back on redo, so names are still checked", () => {
+    const engine = blank();
+    engine.addField(field({ kind: "text", name: "Name" }));
+    engine.undo();
+    expect(engine.info().form.fields).toBe(0);
+    engine.redo();
+    expect(engine.info().form.fields).toBe(1);
+    expect(() => engine.addField(field({ kind: "text", name: "Name" }))).toThrow(/already a field/);
+    const doc = mupdf.Document.openDocument(engine.save(), "application/pdf");
+    const fields = (doc.asPDF() as mupdf.PDFDocument)
+      .getTrailer()
+      .get("Root")
+      .get("AcroForm")
+      .get("Fields");
+    expect(fields.length).toBe(1);
+    doc.destroy();
+  });
+});
+
+describe("hybrid (XFA) forms", () => {
+  it("removes the XFA copy when a field is added, changed or deleted, and undo puts it back", () => {
+    const engine = open(new Uint8Array(readFileSync(W9)));
+    expect(engine.info().form.xfa).toBe("hybrid");
+    engine.addField(field({ kind: "text", name: "Extra", rect: [72, 700, 200, 720] }));
+    expect(engine.info().form.xfa).toBe("none");
+    engine.undo();
+    expect(engine.info().form.xfa).toBe("hybrid");
+
+    const first = engine.listFields(0).find((f) => f.kind === "text") as FormField;
+    engine.updateField(0, first.id, { required: true });
+    expect(engine.info().form.xfa).toBe("none");
+    engine.undo();
+    expect(engine.info().form.xfa).toBe("hybrid");
+
+    engine.deleteField(0, first.id);
+    expect(engine.info().form.xfa).toBe("none");
+    engine.undo();
+    expect(engine.info().form.xfa).toBe("hybrid");
+  });
+});
+
+describe("updateField", () => {
+  it("renames a field, makes it required and gives it a default value, undoably", () => {
+    const engine = blank();
+    engine.addField(field({ kind: "text", name: "Name" }));
+    const name = byName(engine, "Name");
+    const result = engine.updateField(0, name.id, {
+      name: "Full name",
+      required: true,
+      defaultValue: "Jane",
+    });
+    expect(result.history.undoLabel).toBe("Change form field");
+    const changed = byName(engine, "Full name");
+    expect(changed.required).toBe(true);
+    expect(changed.defaultValue).toBe("Jane");
+    expect(changed.value).toBe("Jane"); // it was empty, so it shows the default
+
+    engine.undo();
+    const back = byName(engine, "Name");
+    expect(back.required).toBe(false);
+    expect(back.value).toBe("");
+    engine.redo();
+    expect(reopened(engine.save()).find((f) => f.name === "Full name")?.value).toBe("Jane");
+  });
+
+  it("keeps an answer that isn't the old default when the default changes", () => {
+    const engine = blank();
+    engine.addField(field({ kind: "text", name: "Name", defaultValue: "Jane" }));
+    const name = byName(engine, "Name");
+    engine.setFieldValue(0, name.id, "Sam");
+    engine.updateField(0, name.id, { defaultValue: "Alex" });
+    expect(byName(engine, "Name").value).toBe("Sam");
+  });
+
+  it("changes a dropdown's options, clearing an answer that's no longer offered", () => {
+    const engine = blank();
+    engine.addField(field({ kind: "combobox", name: "Colour", options: ["Red", "Green"] }));
+    const colour = byName(engine, "Colour");
+    engine.setFieldValue(0, colour.id, "Green");
+    engine.updateField(0, colour.id, { options: ["Red", "Blue"] });
+    const now = byName(engine, "Colour");
+    expect(now.options.map((o) => o.label)).toEqual(["Red", "Blue"]);
+    expect(now.value).toBe("");
+    engine.undo();
+    expect(byName(engine, "Colour").value).toBe("Green");
+  });
+
+  it("keeps options' own labels, and leaves options alone when they don't change", () => {
+    const engine = blank();
+    engine.addField(field({ kind: "combobox", name: "State", options: ["CA", "NY"] }));
+    const bytes = tweakFirstField(engine.save(), (pdf, f) => {
+      const opt = pdf.newArray();
+      for (const [value, label] of [
+        ["CA", "California"],
+        ["NY", "New York"],
+      ] as const) {
+        const pair = pdf.newArray();
+        pair.push(pdf.newString(value));
+        pair.push(pdf.newString(label));
+        opt.push(pair);
+      }
+      f.put("Opt", opt);
+    });
+    const check = open(bytes);
+    const state = byName(check, "State");
+    expect(state.options).toEqual([
+      { label: "California", value: "CA" },
+      { label: "New York", value: "NY" },
+    ]);
+    // What the dialog sends when only the name changes: the same option values.
+    check.updateField(0, state.id, { name: "Home state", options: ["CA", "NY"] });
+    expect(byName(check, "Home state").options.map((o) => o.label)).toEqual([
+      "California",
+      "New York",
+    ]);
+    check.updateField(0, state.id, { options: ["CA", "NY", "TX"] });
+    expect(byName(check, "Home state").options).toEqual([
+      { label: "California", value: "CA" },
+      { label: "New York", value: "NY" },
+      { label: "TX", value: "TX" },
+    ]);
+  });
+
+  it("clears a default that's no longer one of the options", () => {
+    const engine = blank();
+    engine.addField(
+      field({ kind: "combobox", name: "Colour", options: ["Red", "Green"], defaultValue: "Green" }),
+    );
+    const colour = byName(engine, "Colour");
+    engine.updateField(0, colour.id, { options: ["Red", "Blue"] });
+    expect(byName(engine, "Colour").defaultValue).toBe("");
+    engine.undo();
+    expect(byName(engine, "Colour").defaultValue).toBe("Green");
+  });
+
+  it("keeps a typed answer in a dropdown that takes them", () => {
+    const engine = blank();
+    engine.addField(field({ kind: "combobox", name: "Colour", options: ["Red", "Green"] }));
+    const bytes = tweakFirstField(engine.save(), (_pdf, f) => {
+      f.put("Ff", f.get("Ff").asNumber() | mupdf.PDFWidget.CH_FIELD_IS_EDIT);
+    });
+    const check = open(bytes);
+    const colour = byName(check, "Colour");
+    expect(colour.editable).toBe(true);
+    check.setFieldValue(0, colour.id, "Teal");
+    check.updateField(0, colour.id, { required: true, options: ["Red", "Green"] });
+    expect(byName(check, "Colour").value).toBe("Teal");
+    check.updateField(0, colour.id, { options: ["Red", "Blue"] });
+    expect(byName(check, "Colour").value).toBe("Teal");
+  });
+
+  it("renames a whole radio group from any of its buttons", () => {
+    const engine = blank();
+    engine.addField(field({ kind: "radio", name: "Size", value: "S", rect: [72, 72, 90, 90] }));
+    engine.addField(field({ kind: "radio", name: "Size", value: "L", rect: [100, 72, 118, 90] }));
+    const [, second] = engine.listFields(0) as [FormField, FormField];
+    engine.updateField(0, second.id, { name: "Shirt size" });
+    expect(engine.listFields(0).map((f) => f.name)).toEqual(["Shirt size", "Shirt size"]);
+  });
+
+  it("refuses a name in use and changes that don't fit the field, changing nothing", () => {
+    const engine = blank();
+    engine.addField(field({ kind: "text", name: "A" }));
+    engine.addField(field({ kind: "checkbox", name: "B", rect: [72, 120, 90, 138] }));
+    const history = engine.history();
+    const a = byName(engine, "A");
+    const b = byName(engine, "B");
+    expect(() => engine.updateField(0, a.id, { name: "B" })).toThrow(/already a field called "B"/);
+    expect(() => engine.updateField(0, b.id, { defaultValue: "x" })).toThrow(/default value/);
+    expect(() => engine.updateField(0, a.id, { options: ["x"] })).toThrow(/options/);
+    expect(() => engine.updateField(0, 99999, { required: true })).toThrow(/not on the page/);
+    expect(engine.history()).toEqual(history);
+    // Nothing that changes nothing is recorded either.
+    engine.updateField(0, a.id, { name: "A", required: false });
+    expect(engine.history()).toEqual(history);
+  });
+});
+
+describe("deleteField", () => {
+  it("deletes a field, and undo puts it back", () => {
+    const engine = blank();
+    engine.addField(field({ kind: "text", name: "Name" }));
+    engine.addField(field({ kind: "checkbox", name: "Agree", rect: [72, 120, 90, 138] }));
+    const result = engine.deleteField(0, byName(engine, "Name").id);
+    expect(result.history.undoLabel).toBe("Delete form field");
+    expect(engine.listFields(0).map((f) => f.name)).toEqual(["Agree"]);
+    const saved = engine.save();
+    const doc = mupdf.Document.openDocument(saved, "application/pdf");
+    const fields = (doc.asPDF() as mupdf.PDFDocument)
+      .getTrailer()
+      .get("Root")
+      .get("AcroForm")
+      .get("Fields");
+    expect(fields.length).toBe(1);
+    doc.destroy();
+    engine.undo();
+    expect(engine.listFields(0).map((f) => f.name)).toEqual(["Name", "Agree"]);
+  });
+
+  it("deletes one radio button, and the group with its last one", () => {
+    const engine = blank();
+    engine.addField(field({ kind: "radio", name: "Size", value: "S", rect: [72, 72, 90, 90] }));
+    engine.addField(field({ kind: "radio", name: "Size", value: "L", rect: [100, 72, 118, 90] }));
+    const [s, l] = engine.listFields(0) as [FormField, FormField];
+    engine.setFieldValue(0, l.id, true);
+    engine.deleteField(0, l.id);
+    expect(engine.listFields(0).map((f) => f.value)).toEqual(["S"]);
+    engine.deleteField(0, s.id);
+    expect(engine.info().form.fields).toBe(0);
+    expect(engine.listFields(0)).toEqual([]);
+    // Adding "Size" again starts a new group, as the old one is gone.
+    engine.addField(field({ kind: "radio", name: "Size", value: "S", rect: [72, 72, 90, 90] }));
+    engine.undo();
+    engine.undo();
+    engine.undo();
+    expect(engine.listFields(0).map((f) => f.value)).toEqual(["S", "L"]);
+  });
+
+  it("keeps a checkbox's value when one of its boxes is deleted", () => {
+    // A checkbox with two boxes (one question shown in two places), ticked.
+    const pdf = new mupdf.PDFDocument();
+    pdf.insertPage(-1, pdf.addPage([0, 0, 300, 300], 0, pdf.newDictionary(), ""));
+    const page = pdf.findPage(0);
+    const parent = pdf.addObject(pdf.newDictionary());
+    parent.put("FT", pdf.newName("Btn"));
+    parent.put("T", pdf.newString("agree"));
+    parent.put("V", pdf.newName("Yes"));
+    const kids = pdf.newArray();
+    const annots = pdf.newArray();
+    for (const x of [20, 60]) {
+      const w = pdf.addObject(pdf.newDictionary());
+      w.put("Type", pdf.newName("Annot"));
+      w.put("Subtype", pdf.newName("Widget"));
+      const rect = pdf.newArray();
+      for (const n of [x, 20, x + 20, 40]) rect.push(n);
+      w.put("Rect", rect);
+      w.put("P", page);
+      w.put("Parent", parent);
+      w.put("AS", pdf.newName("Yes"));
+      const n = pdf.newDictionary();
+      n.put("Yes", pdf.addStream("", pdf.newDictionary()));
+      n.put("Off", pdf.addStream("", pdf.newDictionary()));
+      const ap = pdf.newDictionary();
+      ap.put("N", n);
+      w.put("AP", ap);
+      kids.push(w);
+      annots.push(w);
+    }
+    parent.put("Kids", kids);
+    page.put("Annots", annots);
+    const form = pdf.newDictionary();
+    const fields = pdf.newArray();
+    fields.push(parent);
+    form.put("Fields", fields);
+    pdf.getTrailer().get("Root").put("AcroForm", pdf.addObject(form));
+    const bytes = pdf.saveToBuffer("").asUint8Array().slice();
+    pdf.destroy();
+
+    const engine = open(bytes);
+    const [first] = engine.listFields(0) as [FormField];
+    engine.deleteField(0, first.id);
+    const [left] = engine.listFields(0) as [FormField];
+    expect(left.checked).toBe(true);
+    const doc = mupdf.Document.openDocument(engine.save(), "application/pdf");
+    const v = (doc.asPDF() as mupdf.PDFDocument)
+      .getTrailer()
+      .get("Root")
+      .get("AcroForm")
+      .get("Fields")
+      .get(0)
+      .get("V");
+    expect(v.asName()).toBe("Yes");
+    doc.destroy();
+  });
+
+  it("deletes a field from a file's own form", () => {
+    const engine = open(new Uint8Array(readFileSync(LIBREOFFICE)));
+    const before = engine.listFields(0);
+    const target = before.find((f) => f.kind === "text") as FormField;
+    engine.deleteField(0, target.id);
+    const after = reopened(engine.save());
+    expect(after.length).toBe(before.length - 1);
+    expect(after.some((f) => f.id === target.id)).toBe(false);
+  });
+});
