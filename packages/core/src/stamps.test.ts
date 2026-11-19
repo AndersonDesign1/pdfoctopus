@@ -200,6 +200,49 @@ describe("addImageStamp", () => {
     ]);
   });
 
+  it("places a JPEG photo and keeps the file small", () => {
+    // A 1200 × 900 photo-like gradient, as a JPEG.
+    const w = 1200;
+    const h = 900;
+    const pix = new mupdf.Pixmap(mupdf.ColorSpace.DeviceRGB, [0, 0, w, h], false);
+    let jpeg: Uint8Array;
+    try {
+      const px = pix.getPixels();
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const i = (y * w + x) * 3;
+          px[i] = (x * 255) / w;
+          px[i + 1] = (y * 255) / h;
+          px[i + 2] = 128;
+        }
+      }
+      jpeg = pix.asJPEG(85);
+    } finally {
+      pix.destroy();
+    }
+    const original = createBlankPdf(1, 600, 800);
+    const engine = open(original.slice());
+    engine.addImageStamp(stamp({ kind: "image", rect: [100, 100, 500, 400], image: jpeg }));
+    // The photo is drawn where it was placed: the top-left corner is dark, the right reddish.
+    const [r0, g0] = pixel(engine, 0, 102, 102);
+    const [r1] = pixel(engine, 0, 495, 110);
+    expect(r0).toBeLessThan(40);
+    expect(g0).toBeLessThan(40);
+    expect(r1).toBeGreaterThan(200);
+    // Saved compressed: not much bigger than the JPEG itself (raw pixels would be 3.2 MB).
+    const added = engine.save().byteLength - original.byteLength;
+    expect(added).toBeLessThan(jpeg.byteLength * 4);
+  });
+
+  it("doesn't lock a picture, which is ordinary content", () => {
+    const engine = open(createBlankPdf(1, 300, 400));
+    engine.addImageStamp(stamp({ kind: "image", text: "Logo" }));
+    expect(stampsIn(engine.save())).toEqual([
+      { name: "PDFoctopusImage", flags: 4, contents: "Logo" },
+    ]);
+    expect(engine.listAnnotations(0)[0]?.label).toBe("image");
+  });
+
   it("stores the image compressed, so a signature doesn't bloat the file", () => {
     const original = createBlankPdf(1, 300, 400);
     // A large image of random noise: it can't be compressed, so the PNG is about as big as

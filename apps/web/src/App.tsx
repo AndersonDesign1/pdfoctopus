@@ -39,7 +39,7 @@ import { clampRect, formatToday, initialRect, type PageRect, placementKey } from
 import { Placement } from "./sign/Placement";
 import { SignDialog } from "./sign/SignDialog";
 import { StampDialog } from "./sign/StampDialog";
-import { dateToStamp, type StampImage } from "./sign/stampImage";
+import { dateToStamp, pictureToImage, type StampImage } from "./sign/stampImage";
 import {
   type ChosenPdf,
   InsertPdfDialog,
@@ -88,7 +88,7 @@ type PageDialog =
 
 /** A signature, initials or date being positioned on a page, before it's applied. */
 interface PendingStamp {
-  kind: Exclude<StampKind, "image"> | "stamp";
+  kind: StampKind | "stamp";
   /** The picture shown while placing it (and, except for text stamps, what's added). */
   image: StampImage;
   page: number;
@@ -104,6 +104,7 @@ const STAMP_NOUN: Record<PendingStamp["kind"], string> = {
   initials: "initials",
   date: "date",
   stamp: "stamp",
+  image: "image",
 };
 
 const NO_HISTORY: HistoryState = {
@@ -143,6 +144,14 @@ function formatProgress(progress: LoadProgress | null): string {
 
 function messageOf(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * Whether a file looks like a picture to place: by its type, or by its name when the browser
+ * doesn't know the type. pictureToImage checks what's really inside.
+ */
+function isPictureFile(file: File): boolean {
+  return file.type.startsWith("image/") || /\.(png|jpe?g|webp|gif|bmp|avif)$/i.test(file.name);
 }
 
 function isPdfFile(file: File): boolean {
@@ -187,6 +196,8 @@ export function App() {
   const client = useRef<PdfWorkerClient | null>(null);
   const viewer = useRef<ViewerHandle>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  /** The hidden file picker for a picture to put on the page. */
+  const imageInput = useRef<HTMLInputElement>(null);
   const searchInput = useRef<HTMLInputElement>(null);
 
   const [engine, setEngine] = useState<EngineState>({ status: "loading", progress: null });
@@ -243,6 +254,9 @@ export function App() {
   const [zoom, setZoom] = useState<Zoom>({ mode: "fit-width", scale: 1 });
   const [scale, setScale] = useState(1);
   const [page, setPage] = useState(0);
+  /** The latest page, for work that finishes after a wait (reading a picture). */
+  const pageRef = useRef(page);
+  pageRef.current = page;
   const [pageInput, setPageInput] = useState("1");
 
   const [query, setQuery] = useState("");
@@ -569,6 +583,8 @@ export function App() {
   ) {
     const current = docRef.current;
     if (!current) return;
+    // The page shown now: a picture may have taken a moment to read, and the view moved on.
+    const page = pageRef.current;
     const size = current.info.pages[page];
     if (!size) return;
     // In the middle of what's on screen, not of the whole page, which may be mostly scrolled away.
@@ -582,6 +598,31 @@ export function App() {
       `Drag your ${STAMP_NOUN[kind]} into place, or click where it should go. ` +
         "Press Apply (or Enter) when it's right.",
     );
+  }
+
+  /** Read a picture and start placing it on the current page. */
+  async function placePicture(file: File) {
+    const startedWith = docRef.current;
+    if (!startedWith || workingRef.current) return;
+    // Everything else waits while the picture is read (a big photo takes a moment), so no
+    // note, stamp or edit can start and then be swept away when it's ready.
+    workingRef.current = true;
+    setBusy(true);
+    setStatus(`Reading ${file.name}…`);
+    let image: StampImage;
+    try {
+      image = await pictureToImage(file);
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : `${file.name} couldn't be read.`);
+      return;
+    } finally {
+      workingRef.current = false;
+      setBusy(false);
+    }
+    // The document was closed or replaced meanwhile: the picture isn't for this one.
+    if (docRef.current !== startedWith) return;
+    // No description from the file: its name could say more than the reader should see.
+    startPlacing("image", image);
   }
 
   function addDate() {
@@ -1023,6 +1064,12 @@ export function App() {
   // a ref that always points at the latest openFile.
   const openFileRef = useRef(openFile);
   openFileRef.current = openFile;
+  /** Places a dropped picture, while a document is open and nothing else is in progress. */
+  const dropPictureRef = useRef<((file: File) => void) | null>(null);
+  dropPictureRef.current =
+    doc && !locked && !pageDialog && !signDialog && !stampDialog && !passwordPrompt
+      ? (file) => void placePicture(file)
+      : null;
   useEffect(() => {
     let depth = 0;
     const hasFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes("Files");
@@ -1048,8 +1095,11 @@ export function App() {
       depth = 0;
       setDragging(false);
       const files = Array.from(e.dataTransfer?.files ?? []);
-      const file = files.find(isPdfFile) ?? files[0];
-      if (file) void openFileRef.current(file);
+      const pdf = files.find(isPdfFile);
+      const picture = files.find(isPictureFile);
+      // A picture dropped on an open document goes on the page; anything else is opened.
+      if (!pdf && picture && dropPictureRef.current) dropPictureRef.current(picture);
+      else if (pdf ?? files[0]) void openFileRef.current((pdf ?? files[0]) as File);
     };
     window.addEventListener("dragenter", enter);
     window.addEventListener("dragover", over);
@@ -1445,6 +1495,28 @@ export function App() {
             >
               Stamp
             </button>
+            <button
+              type="button"
+              className="tool"
+              disabled={locked}
+              onClick={() => imageInput.current?.click()}
+              title="Add a picture, such as a logo or a photo (you can also drop one on the page)"
+            >
+              Image
+            </button>
+            <input
+              ref={imageInput}
+              className="visually-hidden"
+              type="file"
+              accept="image/png,image/jpeg,image/webp,image/gif,image/bmp,image/avif"
+              tabIndex={-1}
+              aria-hidden="true"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                e.target.value = "";
+                if (file) void placePicture(file);
+              }}
+            />
           </div>
         )}
         {doc && (
@@ -1658,7 +1730,9 @@ export function App() {
 
       {dragging && (
         <div className="drop-overlay" aria-hidden="true">
-          Drop a PDF to open it
+          {dropPictureRef.current
+            ? "Drop a PDF to open it, or a picture to put it on the page"
+            : "Drop a PDF to open it"}
         </div>
       )}
 

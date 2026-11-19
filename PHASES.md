@@ -16,7 +16,7 @@ tasks needed to finish it and the **exit criteria** that must be true before we 
 ## Next up
 
 Start here if you're picking the project up. Do these in order, and update this list in the
-same PR that changes it. Last updated: 2026-11-18, after text stamps.
+same PR that changes it. Last updated: 2026-11-18, after images.
 
 ### 0. Keep `main` green (2026-11-18)
 
@@ -195,7 +195,30 @@ deleted afterwards like any annotation.
   with a message, and "Today's date" falls back to English in locales that write dates in other
   scripts; embedding a font would lift that. Custom stamps aren't
   remembered between sessions yet.
-- **Next in Phase 2:** images (overlay edits), then redaction and forms.
+
+### 8. Phase 2: images (2026-11-18)
+
+**Image**, next to Stamp, puts a picture on the page: a logo, a photo, a screenshot. Choose a
+PNG, JPEG, WebP, GIF, BMP or AVIF file, or drop one onto the open document (a dropped PDF
+still opens instead). Then place it like a signature: drag, resize, Apply. Afterwards it can be
+selected, moved, resized (keeping its proportions) and deleted.
+
+- **In the browser** (`pictureToImage` in `apps/web/src/sign/stampImage.ts`): the camera's
+  orientation is applied, pictures are scaled down to 2,400 pixels on their longer side, pictures over
+  100 megapixels are refused before they're decoded (the size is read from the file's header),
+  photos become JPEG, pictures with transparency stay PNG, and PNG or GIF files normally stay PNG
+  (a large opaque one is re-encoded as JPEG if its PNG would be over the engine's 10 MB limit).
+  Anything still over the limit is made smaller. Nothing leaves the device.
+- **Engine:** the existing `addImageStamp` with kind `image`. Unlike signatures, pictures
+  aren't marked "locked", so other apps let them be moved too. New tests: a JPEG photo is
+  drawn where it was placed and saved compressed, and pictures aren't locked.
+- **Size:** a new picture fits a 220-point square (a portrait photo isn't page-high).
+- **Checked:** in Chromium end to end: a sideways camera photo comes in upright, a transparent
+  PNG dropped on the page keeps its transparency, a file that isn't a picture gets a message;
+  the saved file in pdf.js.
+- **Not yet checked:** real phone photos, and the saved files in Adobe Reader (see the images
+  list in TESTING.md).
+- **Next in Phase 2:** redaction, then forms.
 
 ### Where things are
 
@@ -350,7 +373,7 @@ deleted afterwards like any annotation.
 - [x] Sticky-note comments
 - [x] Freehand drawing
 - [x] Shapes (rectangle, ellipse, line, arrow)
-- [ ] Add text boxes and images (overlay edits). Text boxes are done; images are still to do
+- [x] Add text boxes and images (overlay edits)
 - [x] White-out
 - [x] Stamps (Approved, Draft, Confidential, custom)
 - [x] Edit and delete existing annotations

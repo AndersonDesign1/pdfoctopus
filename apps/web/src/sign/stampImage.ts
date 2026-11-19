@@ -9,6 +9,7 @@ import "@fontsource/dancing-script/latin-400.css";
 import "@fontsource/dancing-script/latin-ext-400.css";
 import "@fontsource/great-vibes/latin-400.css";
 import "@fontsource/great-vibes/latin-ext-400.css";
+import { HEADER_BYTES, readPictureHeader } from "./imageHeader";
 import {
   contentBounds,
   fitWithin,
@@ -22,7 +23,7 @@ import {
 
 /** A ready-to-stamp image. */
 export interface StampImage {
-  /** PNG bytes. */
+  /** Encoded image bytes: PNG, or JPEG for a placed photo (see pictureToImage). */
   png: Uint8Array;
   /** The same PNG as a data: URL, for previews and for saving it for reuse. */
   dataUrl: string;
@@ -182,6 +183,83 @@ export function dateToStamp(text: string, colour: string): StampImage | null {
   ctx.fillStyle = colour;
   ctx.fillText(text, px / 2, px * 1.15);
   return trimToStamp(canvas, 6);
+}
+
+/** Longest side a placed picture is kept at: sharp at any size it's likely to be printed. */
+const MAX_PICTURE_SIDE = 2400;
+/** The engine takes images up to 10 MB; stay a little under. */
+const MAX_PICTURE_BYTES = 9.5 * 1024 * 1024;
+/**
+ * Pictures with more pixels than this aren't decoded at all: a small file can claim billions
+ * of pixels, and decoding it would exhaust the browser's memory (100 megapixels already takes
+ * 400 MB). That covers ordinary phone and camera photos; the largest (some phones' 200 MP mode,
+ * medium-format cameras) are refused with a message asking for a smaller copy.
+ */
+const MAX_PICTURE_PIXELS = 100_000_000;
+
+/**
+ * A picture (a logo, a photo, a screenshot) to place on a page, as it is: no background
+ * removal or trimming. Large pictures are scaled down. Photos become JPEG; pictures with
+ * transparency, and PNG and GIF images (screenshots, drawings), stay PNG so they stay crisp.
+ * The photo's own orientation (from the camera) is applied.
+ */
+export async function pictureToImage(file: Blob): Promise<StampImage> {
+  if (file.size > MAX_UPLOAD_BYTES) {
+    throw new Error("That picture is too large (25 MB at most).");
+  }
+  // Check the size in the file's header before decoding anything.
+  const header = readPictureHeader(new Uint8Array(await file.slice(0, HEADER_BYTES).arrayBuffer()));
+  if (header?.width && header.height && header.width * header.height > MAX_PICTURE_PIXELS) {
+    throw new Error(
+      `That picture is too big to place (${header.width} × ${header.height} pixels; ` +
+        "100 megapixels at most). Try a smaller copy of it.",
+    );
+  }
+  // PNG and GIF (screenshots, drawings) stay PNG, judged by the contents, since a dropped
+  // file's type can be missing.
+  const losslessSource = header
+    ? header.format === "png" || header.format === "gif"
+    : file.type === "image/png" || file.type === "image/gif";
+  let bitmap: ImageBitmap;
+  try {
+    bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+  } catch {
+    throw new Error("That file couldn't be read as a picture. Try a PNG, JPEG or WebP image.");
+  }
+  try {
+    let side = MAX_PICTURE_SIDE;
+    for (;;) {
+      const size = fitWithin(bitmap.width, bitmap.height, side, side);
+      const canvas = newCanvas(size.width, size.height);
+      const ctx = context(canvas);
+      ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+      let transparent = false;
+      for (let i = 3; i < pixels.length; i += 4) {
+        if ((pixels[i] as number) < 255) {
+          transparent = true;
+          break;
+        }
+      }
+      const keepPng = transparent || losslessSource;
+      let dataUrl = canvas.toDataURL(keepPng ? "image/png" : "image/jpeg", 0.9);
+      // A big opaque PNG (a detailed screenshot) can be too large: a JPEG is far smaller.
+      if (dataUrl.length * 0.75 > MAX_PICTURE_BYTES && !transparent) {
+        dataUrl = canvas.toDataURL("image/jpeg", 0.9);
+      }
+      if (dataUrl.length * 0.75 <= MAX_PICTURE_BYTES || side < 400) {
+        return {
+          png: dataUrlToBytes(dataUrl),
+          dataUrl,
+          width: canvas.width,
+          height: canvas.height,
+        };
+      }
+      side = Math.round(side * 0.75);
+    }
+  } finally {
+    bitmap.close();
+  }
 }
 
 /**

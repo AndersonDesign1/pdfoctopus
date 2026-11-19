@@ -139,6 +139,19 @@ Pick the **Select** tool (first in the Annotate row):
       the comments list (Approved and Draft by their names), and print. Also in
       **Chrome/Edge** and **Firefox**
 
+## Phase 2: images
+
+- [ ] **Image:** a JPEG photo from a phone (taken upright and sideways), a PNG logo with a
+      transparent background, a screenshot, a WebP, a GIF, a BMP and an AVIF
+- [ ] Drop a picture on the open document: it's placed, and the document stays open
+- [ ] Place, resize (proportions kept) and apply; select, move and delete it; undo and redo
+- [ ] A very large photo (over 20 megapixels) is accepted and the saved file stays small
+- [ ] **Rotated page:** the picture lands where it was dragged and reads the right way up
+- [ ] A file that isn't a picture (a text file renamed to .png), picked or dropped, gets a
+      message and nothing else happens
+- [ ] **Saved file in Adobe Acrobat Reader:** the pictures look right, can be moved there, and
+      print. Also in **Chrome/Edge** and **Firefox**
+
 ## Problems found
 
 _None yet._
