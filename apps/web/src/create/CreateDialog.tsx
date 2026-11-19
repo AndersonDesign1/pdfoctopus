@@ -65,9 +65,13 @@ export function CreateDialog({
   const [textName, setTextName] = useState("");
   const [problem, setProblem] = useState<string | null>(null);
   const [preparing, setPreparing] = useState(false);
+  /** True while a text file is being read: the text can't be changed meanwhile. */
+  const [reading, setReading] = useState(false);
+  /** Counts file reads, so a slow one can't overwrite a later choice. */
+  const readCount = useRef(0);
   const pictureInput = useRef<HTMLInputElement>(null);
   const textInput = useRef<HTMLInputElement>(null);
-  const working = busy || preparing;
+  const working = busy || preparing || reading;
 
   const close = () => {
     if (!working) onCancel();
@@ -88,10 +92,20 @@ export function CreateDialog({
       setProblem("That file is too large (10 MB at most).");
       return;
     }
-    setText(await file.text());
-    setTextKind(textKindOf(file.name));
-    setTextName(file.name.replace(/\.[^.]+$/, ""));
-    setProblem(null);
+    const read = ++readCount.current;
+    setReading(true);
+    try {
+      const contents = await file.text();
+      if (read !== readCount.current) return;
+      setText(contents);
+      setTextKind(textKindOf(file.name));
+      setTextName(file.name.replace(/\.[^.]+$/, ""));
+      setProblem(null);
+    } catch {
+      if (read === readCount.current) setProblem("That file couldn't be read.");
+    } finally {
+      if (read === readCount.current) setReading(false);
+    }
   };
 
   const create = async () => {

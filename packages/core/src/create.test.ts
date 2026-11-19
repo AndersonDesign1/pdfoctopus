@@ -125,6 +125,22 @@ describe("text, Markdown and HTML to PDF", () => {
     expect(page?.text).toContain("two");
   });
 
+  it("keeps links clickable in the saved PDF", () => {
+    const bytes = createPdf({
+      kind: "text",
+      source: "See [the site](https://example.com/page) or [mail us](mailto:a@example.com).",
+      textKind: "markdown",
+      format,
+    });
+    const doc = mupdf.Document.openDocument(bytes, "application/pdf");
+    const uris = doc
+      .loadPage(0)
+      .getLinks()
+      .map((l) => l.getURI());
+    doc.destroy();
+    expect(uris.sort()).toEqual(["https://example.com/page", "mailto:a@example.com"]);
+  });
+
   it("lays out HTML without fetching anything, and keeps the file small", () => {
     const html =
       '<h1>Title</h1><p>Body 中文</p><img src="https://example.com/x.png">' +

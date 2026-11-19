@@ -29,6 +29,23 @@ describe("markdownToHtml", () => {
     );
   });
 
+  it("doesn't format inside link targets", () => {
+    expect(markdownToHtml("[site](https://example.com/a*b*c_d_e)")).toBe(
+      '<p><a href="https://example.com/a*b*c_d_e">site</a></p>',
+    );
+  });
+
+  it("breaks a line ending in two spaces", () => {
+    expect(markdownToHtml("first  \nsecond")).toBe("<p>first<br>\nsecond</p>");
+  });
+
+  it("copes with a huge number of blank lines quickly", () => {
+    const started = Date.now();
+    const html = markdownToHtml(`${"\n".repeat(300_000)}end`);
+    expect(html).toBe("<p>end</p>");
+    expect(Date.now() - started).toBeLessThan(2000);
+  });
+
   it("makes quotes, rules and tables", () => {
     expect(markdownToHtml("> quoted")).toBe("<blockquote><p>quoted</p></blockquote>");
     expect(markdownToHtml("---")).toBe("<hr>");

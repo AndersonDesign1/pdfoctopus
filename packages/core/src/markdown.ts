@@ -23,12 +23,13 @@ function safeUrl(url: string): string | null {
 
 /** Inline Markdown in an already-escaped line: code, links, pictures, bold and italic. */
 function inline(escaped: string): string {
-  // Code spans first, kept out of the other rules by a placeholder.
+  // Code spans and link targets are kept out of the later rules by placeholders.
   const codes: string[] = [];
-  let s = escaped.replace(/`([^`]+)`/g, (_, code: string) => {
-    codes.push(`<code>${code}</code>`);
+  const keep = (html: string) => {
+    codes.push(html);
     return `\uE000${codes.length - 1}\uE000`;
-  });
+  };
+  let s = escaped.replace(/`([^`]+)`/g, (_, code: string) => keep(`<code>${code}</code>`));
   // Pictures: their description, in brackets (nothing is fetched).
   // A URL can hold one level of brackets ("https://en.wikipedia.org/wiki/PDF_(format)").
   const url = String.raw`((?:[^()\s]|\([^()\s]*\))*)(?:\s+[^)]*)?`;
@@ -40,7 +41,8 @@ function inline(escaped: string): string {
     (_, text: string, url: string) => {
       // The URL was escaped with the rest of the line: unescape the ampersands for checking.
       const target = safeUrl(url.replaceAll("&amp;", "&"));
-      return target ? `<a href="${escapeHtml(target)}">${text}</a>` : text;
+      // The opening tag is kept whole: emphasis rules must not reach into the URL.
+      return target ? `${keep(`<a href="${escapeHtml(target)}">`)}${text}</a>` : text;
     },
   );
   // Underscores only count at word boundaries, so snake_case_names stay as they are.
@@ -63,6 +65,13 @@ export function markdownToHtml(markdown: string): string {
   let paragraph: string[] = [];
   // Open lists, innermost last: their indentation and tag.
   const lists: { indent: number; tag: "ul" | "ol" }[] = [];
+  // For each line, the next line that isn't blank (computed once, so a file of many blank
+  // lines doesn't take time that grows with their square).
+  const nextFilled: number[] = new Array(lines.length);
+  for (let i = lines.length - 1, next = -1; i >= 0; i--) {
+    nextFilled[i] = next;
+    if ((lines[i] ?? "").trim() !== "") next = i;
+  }
 
   const flushParagraph = () => {
     if (paragraph.length) out.push(`<p>${paragraph.map(inline).join("\n")}</p>`);
@@ -94,8 +103,11 @@ export function markdownToHtml(markdown: string): string {
     if (raw.trim() === "") {
       flushParagraph();
       // A blank line inside a list keeps it open if the list carries on.
-      const next = lines.slice(i + 1).find((l) => l.trim() !== "") ?? "";
-      if (!LIST_ITEM.test(next) && !/^\s{2,}\S/.test(next)) closeLists();
+      if (lists.length) {
+        const n = nextFilled[i] ?? -1;
+        const next = n >= 0 ? (lines[n] ?? "") : "";
+        if (!LIST_ITEM.test(next) && !/^\s{2,}\S/.test(next)) closeLists();
+      }
       continue;
     }
     const heading = raw.match(/^(#{1,6})\s+(.*?)\s*#*\s*$/);
@@ -177,7 +189,8 @@ export function markdownToHtml(markdown: string): string {
       continue;
     }
     closeLists();
-    paragraph.push(line.trim());
+    // Trailing spaces stay: two of them mark a line break.
+    paragraph.push(line.replace(/^\s+/, ""));
   }
   flushParagraph();
   closeLists();

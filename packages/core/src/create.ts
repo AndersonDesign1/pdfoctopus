@@ -187,12 +187,18 @@ function textPdf(source: string, kind: TextKind, format: PageFormat): Uint8Array
     doc.layout(w, h, 11);
     const writer = new mupdf.DocumentWriter(buffer, "pdf", "");
     const count = doc.countPages();
+    // Drawing a page doesn't carry its links over: they're added to the written pages after.
+    const links: { page: number; rect: mupdf.Rect; uri: string }[] = [];
     for (let i = 0; i < count; i++) {
       const page = doc.loadPage(i);
       try {
         const device = writer.beginPage(page.getBounds());
         page.run(device, mupdf.Matrix.identity);
         writer.endPage();
+        for (const link of page.getLinks()) {
+          const uri = link.getURI();
+          if (/^(https?:|mailto:)/i.test(uri)) links.push({ page: i, rect: link.getBounds(), uri });
+        }
       } finally {
         page.destroy();
       }
@@ -202,6 +208,14 @@ function textPdf(source: string, kind: TextKind, format: PageFormat): Uint8Array
     const written = mupdf.Document.openDocument(buffer.asUint8Array().slice(), "application/pdf");
     try {
       const pdf = written.asPDF() as mupdf.PDFDocument;
+      for (const { page, rect, uri } of links) {
+        const target = pdf.loadPage(page);
+        try {
+          target.createLink(rect, uri);
+        } finally {
+          target.destroy();
+        }
+      }
       pdf.subsetFonts();
       return save(pdf);
     } finally {
