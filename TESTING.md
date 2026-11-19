@@ -289,6 +289,24 @@ text-only one (`fixtures/generated/contract-libreoffice.pdf`).
 - [ ] A file with a password: Compress says to remove the password or set a new one first;
       after setting a new password, the compressed copy asks for it
 
+## Phase 3: create
+
+- [ ] **New** (top bar) → Blank pages: 3 A4 pages, then 1 landscape Letter page. The page
+      sizes are right (Properties, or Acrobat's Document Properties)
+- [ ] **Pictures:** add three photos from your phone (one portrait, one landscape), reorder them
+      with the arrows, Create. Each photo is the right way up and on its own page, in order.
+      Try "Each page the size of its picture" too
+- [ ] **Text:** paste a few paragraphs with accents and another alphabet (Greek, Chinese,
+      Arabic); open a .txt file. Long text flows onto more pages
+- [ ] **Markdown:** open a README.md (e.g. this project's): headings, lists, code and tables
+      look right; links work in the saved PDF
+- [ ] **HTML:** open a saved web page (.html): text and simple styling come through; pictures
+      from the web don't (that's on purpose)
+- [ ] The new PDF isn't saved: closing the tab warns; Save asks where to put it. Making another
+      new PDF with unsaved changes asks first
+- [ ] Open the saved new PDFs in **Adobe Acrobat Reader**, **Chrome/Edge** and **Firefox**
+- [ ] **Phone:** New works, and the dialog fits the screen
+
 ## Problems found
 
 _None yet._

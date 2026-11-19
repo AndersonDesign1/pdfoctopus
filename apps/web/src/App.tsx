@@ -5,6 +5,7 @@ import {
   type AnnotationInfo,
   type AnnotationSpec,
   type CompressPreset,
+  type CreateSpec,
   type DocumentInfo,
   describePages,
   type EditResult,
@@ -43,6 +44,7 @@ import {
   WIDTHS,
 } from "./annotate/tools";
 import { CompressDialog, type CompressOutcome, formatSize } from "./compress/CompressDialog";
+import { CreateDialog } from "./create/CreateDialog";
 import { FieldDrawLayer, FieldEditLayer } from "./form/BuildLayers";
 import { FIELD_KIND_NAMES, FieldDialog, type FieldProperties } from "./form/FieldDialog";
 import { FlattenDialog } from "./form/FlattenDialog";
@@ -336,6 +338,8 @@ export function App() {
     outcome?: CompressOutcome;
     error?: string;
   }>();
+  /** The New PDF dialog, if open, with the last error from making one. */
+  const [createDialog, setCreateDialog] = useState<{ error?: string }>();
   /** The last compressed copy's bytes, kept out of state (they can be large). */
   const compressedBytes = useRef<Uint8Array | null>(null);
   const [sidebar, setSidebar] = useState(true);
@@ -450,7 +454,11 @@ export function App() {
     }
   }
 
-  async function openFile(file: File) {
+  /**
+   * Open a PDF file. `fresh`: a PDF just made (New PDF), which isn't saved anywhere yet.
+   * `confirmed`: the user already agreed to drop unsaved changes.
+   */
+  async function openFile(file: File, { fresh = false, confirmed = false } = {}) {
     // A ref, not the `busy` state: callbacks holding an older render's openFile (the
     // desktop startup file, a drop) would otherwise see a stale `busy` and run in parallel
     // with another open or a save.
@@ -462,6 +470,7 @@ export function App() {
     // Opening replaces the document and its undo history: never drop unsaved edits silently
     // (an answer still being typed in a form field counts).
     if (
+      !confirmed &&
       (dirtyRef.current || formDraft.current !== null) &&
       !window.confirm(
         `You have unsaved changes to ${docRef.current?.fileName ?? "this PDF"}.\n\n` +
@@ -500,7 +509,15 @@ export function App() {
         renderer: new PageRenderer(pdf),
       });
       setZoom({ mode: "fit-width", scale: 1 });
-      setStatus(formNotice(info.form));
+      if (fresh) {
+        // Not saved anywhere yet: closing warns, and the first Save asks where to put it.
+        setDirty(true);
+        setStatus(
+          `New PDF, ${countPages(info.pageCount)}. It isn't saved yet: Save it to keep it.`,
+        );
+      } else {
+        setStatus(formNotice(info.form));
+      }
     } catch (err) {
       reportError("open this file", err);
     } finally {
@@ -1022,6 +1039,38 @@ export function App() {
     });
   }
 
+  // ---- New PDF ----
+
+  async function createNow(spec: CreateSpec, name: string) {
+    if (workingRef.current) return;
+    // Asked before making anything, as the new PDF replaces the open one.
+    if (
+      (dirtyRef.current || formDraft.current !== null) &&
+      !window.confirm(
+        `You have unsaved changes to ${docRef.current?.fileName ?? "this PDF"}.\n\n` +
+          "Make a new PDF anyway? Your changes will be lost.",
+      )
+    ) {
+      return;
+    }
+    workingRef.current = true;
+    setBusy(true);
+    let bytes: Uint8Array;
+    try {
+      bytes = await getClient().createPdf(spec);
+    } catch (err) {
+      if (isFatalEngineError(err)) reportError("make the PDF", err);
+      else setCreateDialog({ error: messageOf(err) });
+      return;
+    } finally {
+      workingRef.current = false;
+      setBusy(false);
+    }
+    setCreateDialog(undefined);
+    const file = new File([bytes as BlobPart], `${name}.pdf`, { type: "application/pdf" });
+    await openFile(file, { fresh: true, confirmed: true });
+  }
+
   // ---- Compress ----
 
   function openCompress() {
@@ -1398,6 +1447,7 @@ export function App() {
         showProperties ||
         passwordDialog ||
         compressDialog ||
+        createDialog ||
         signDialog ||
         stampDialog ||
         redactDialog ||
@@ -1573,6 +1623,18 @@ export function App() {
   const progress = engine.status === "loading" ? engine.progress : null;
   const label = doc?.info.labels[page];
 
+  const newButton = (
+    <button
+      type="button"
+      className="tool"
+      disabled={busy}
+      onClick={() => setCreateDialog({})}
+      title="Make a new PDF: blank pages, pictures, or text"
+    >
+      New
+    </button>
+  );
+
   const openButton = (
     <label className="button" aria-disabled={busy}>
       <input
@@ -1611,6 +1673,7 @@ export function App() {
             </button>
           )}
           {openButton}
+          {newButton}
           {doc && (
             <button
               type="button"
@@ -2308,6 +2371,15 @@ export function App() {
             <p className="empty-title">Open a PDF to get started</p>
             <p className="status">Drag a file here, or</p>
             {openButton}
+            <p className="status">or</p>
+            <button
+              type="button"
+              className="button secondary"
+              disabled={busy}
+              onClick={() => setCreateDialog({})}
+            >
+              Make a new PDF
+            </button>
             <p className="status">Your files stay on your device.</p>
           </div>
         )}
@@ -2339,6 +2411,14 @@ export function App() {
         />
       )}
 
+      {createDialog && (
+        <CreateDialog
+          busy={busy}
+          error={createDialog.error}
+          onCreate={(spec, name) => void createNow(spec, name)}
+          onCancel={() => setCreateDialog(undefined)}
+        />
+      )}
       {compressDialog && doc && (
         <CompressDialog
           sizeNow={doc.fileSize}

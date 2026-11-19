@@ -2,6 +2,7 @@
 
 export { PdfWorkerClient, type PdfWorkerClientOptions } from "./client";
 export type { CompressPreset } from "./compress";
+export type { CreateSpec, PaperSize, PictureLayout, PictureSpec, TextKind } from "./create";
 export type {
   AnnotationChange,
   AnnotationInfo,

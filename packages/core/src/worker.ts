@@ -127,6 +127,11 @@ async function handle(req: WorkerRequest): Promise<WorkerSuccess> {
       return success(req.id, "setPassword", engine.setPassword(req.spec));
     case "removePassword":
       return success(req.id, "removePassword", engine.removePassword());
+    case "createPdf": {
+      // Loaded with the engine (after it), like everything that uses MuPDF.
+      const { createPdf } = await import("./create");
+      return success(req.id, "createPdf", createPdf(req.spec));
+    }
     case "compressedCopy":
       return success(req.id, "compressedCopy", engine.compressedCopy(req.preset));
     case "unlockPermissions":
@@ -158,7 +163,7 @@ async function handle(req: WorkerRequest): Promise<WorkerSuccess> {
 /** Large binary results are transferred, not copied, back to the UI thread. */
 function transferables(res: WorkerSuccess): Transferable[] {
   if (res.type === "render") return [res.result.pixels.buffer as ArrayBuffer];
-  if (res.type === "save" || res.type === "extractPages") {
+  if (res.type === "save" || res.type === "extractPages" || res.type === "createPdf") {
     return [res.result.buffer as ArrayBuffer];
   }
   if (res.type === "splitPages") return res.result.map((b) => b.buffer as ArrayBuffer);
