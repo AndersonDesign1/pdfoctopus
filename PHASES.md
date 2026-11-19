@@ -260,14 +260,15 @@ saved; saving a redacted file clears the undo history, so the removal is final f
 - **Not yet checked:** the saved file in Adobe Reader (search for and copy around a redacted
   word), and real documents; see the redaction list in TESTING.md.
   A mark removes every letter it touches, even partly.
-- **Next in Phase 2:** forms.
 
 ### 10. Phase 2: filling in forms (2026-11-19)
 
-Opening a PDF with a form says so in the status line. With no tool picked, every field has a
-real input over it: click a text field and type (Tab goes to the next field, Enter or leaving
-the field saves it, Escape puts back what was there), click a checkbox or radio button, or pick
-from a dropdown. Each change is one undoable step and saves incrementally. **Flatten form**
+Opening a PDF with a form says so in the status line. With no tool picked, every field that can
+be filled in (not read-only, signature or button fields) has a real input over it: click a text
+field and type (Tab goes to the next field; leaving the field, or Enter in a one-line field,
+puts the text in; Escape puts back what was there), click a checkbox or radio button, or pick
+from a dropdown (or type, if it takes typed answers). Each change is one undoable step, and
+saving appends the changes to the file (an incremental save). **Flatten form**
 (shown when the file has fields) asks first, then turns every field into ordinary page content.
 
 - **Engine:** `listFields`, `setFieldValue` and `flattenForm` in `packages/core/src/engine.ts`,

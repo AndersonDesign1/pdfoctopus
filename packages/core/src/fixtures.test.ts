@@ -396,8 +396,9 @@ describe("forms on every fixture", () => {
         try {
           const reopened = check.open(saved);
           if (reopened.needsPassword) check.authenticate(password ?? "");
-          if (text)
-            expect(check.listFields(page).find((f) => f.name === text.name)?.value).toBe("Test");
+          const after = check.listFields(page);
+          if (text) expect(after.find((f) => f.id === text.id)?.value).toBe("Test");
+          if (box) expect(after.find((f) => f.id === box.id)?.checked).toBe(!box.checked);
         } finally {
           check.close();
         }

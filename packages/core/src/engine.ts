@@ -1276,7 +1276,8 @@ export class PdfEngine {
       before = snapshotField(pdf, objects);
       change();
       widget.update();
-      // The field's other boxes on this page show the new value too.
+      // The field's other boxes on this page show the new value too. (MuPDF already redraws a
+      // text field's boxes on every page; forms.test.ts checks that.)
       const ids = new Set(objects.map((o) => o.asIndirect()));
       for (const other of page.getWidgets()) {
         if (other !== widget && ids.has(other.getObject().asIndirect())) other.update();

@@ -156,6 +156,80 @@ describe("setFieldValue", () => {
     expect(engine.info().form.fields).toBeGreaterThan(0);
   });
 
+  it("shows a field's new value in its boxes on other pages, and undo puts them back", () => {
+    // A two-page form whose one text field has a box on each page.
+    const pdf = new mupdf.PDFDocument();
+    const font = pdf.addSimpleFont(new mupdf.Font("Helvetica"));
+    const resources = pdf.newDictionary();
+    const fonts = pdf.newDictionary();
+    fonts.put("Helv", font);
+    resources.put("Font", fonts);
+    const parent = pdf.addObject(pdf.newDictionary());
+    parent.put("FT", pdf.newName("Tx"));
+    parent.put("T", pdf.newString("name"));
+    parent.put("DA", pdf.newString("/Helv 12 Tf 0 g"));
+    parent.put("V", pdf.newString("Old Value"));
+    const kids = pdf.newArray();
+    for (let i = 0; i < 2; i++) {
+      pdf.insertPage(-1, pdf.addPage([0, 0, 300, 300], 0, resources, ""));
+      const page = pdf.findPage(i);
+      const box = pdf.addObject(pdf.newDictionary());
+      box.put("Type", pdf.newName("Annot"));
+      box.put("Subtype", pdf.newName("Widget"));
+      const rect = pdf.newArray();
+      for (const n of [20, 20, 200, 50]) rect.push(n);
+      box.put("Rect", rect);
+      box.put("F", 4);
+      // Each box already shows an old value, as a file filled in elsewhere would.
+      const look = pdf.newDictionary();
+      const bbox = pdf.newArray();
+      for (const n of [0, 0, 180, 30]) bbox.push(n);
+      look.put("BBox", bbox);
+      look.put("Resources", resources);
+      const ap = pdf.newDictionary();
+      ap.put("N", pdf.addStream("BT /Helv 12 Tf 2 10 Td (Old Value) Tj ET", look));
+      box.put("AP", ap);
+      box.put("P", page);
+      box.put("Parent", parent);
+      const annots = pdf.newArray();
+      annots.push(box);
+      page.put("Annots", annots);
+      kids.push(box);
+    }
+    parent.put("Kids", kids);
+    const form = pdf.newDictionary();
+    const fieldsArray = pdf.newArray();
+    fieldsArray.push(parent);
+    form.put("Fields", fieldsArray);
+    form.put("DA", pdf.newString("/Helv 12 Tf 0 g"));
+    form.put("DR", resources);
+    pdf.getTrailer().get("Root").put("AcroForm", pdf.addObject(form));
+    const bytes = pdf.saveToBuffer("").asUint8Array().slice();
+    pdf.destroy();
+
+    const engine = open(bytes);
+    const first = field(engine, (f) => f.kind === "text", 0);
+    engine.setFieldValue(0, first.id, "Repeated Value");
+    const textOf = (page: number) => {
+      const doc = mupdf.Document.openDocument(
+        engine.save({ incremental: false }),
+        "application/pdf",
+      );
+      try {
+        const pdfDoc = doc.asPDF() as mupdf.PDFDocument;
+        pdfDoc.bake(false, true);
+        return doc.loadPage(page).toStructuredText("preserve-whitespace").asText();
+      } finally {
+        doc.destroy();
+      }
+    };
+    expect(textOf(1)).toContain("Repeated Value");
+    expect(textOf(1)).not.toContain("Old Value");
+    engine.undo();
+    expect(textOf(1)).toContain("Old Value");
+    expect(textOf(1)).not.toContain("Repeated Value");
+  });
+
   it("ticks and unticks a checkbox", () => {
     const engine = open(read(LIBREOFFICE));
     const box = field(engine, (f) => f.kind === "checkbox");

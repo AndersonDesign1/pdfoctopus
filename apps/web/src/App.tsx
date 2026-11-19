@@ -1130,7 +1130,8 @@ export function App() {
         showProperties ||
         signDialog ||
         stampDialog ||
-        redactDialog
+        redactDialog ||
+        flattenDialog
       ) {
         return;
       }
