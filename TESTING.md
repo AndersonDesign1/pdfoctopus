@@ -307,6 +307,18 @@ text-only one (`fixtures/generated/contract-libreoffice.pdf`).
 - [ ] Open the saved new PDFs in **Adobe Acrobat Reader**, **Chrome/Edge** and **Firefox**
 - [ ] **Phone:** New works, and the dialog fits the screen
 
+## Page labels
+
+- [ ] Open a PDF whose pages are numbered "i, ii, iii, 1, 2, 3…" (many books and reports;
+      the page box in the top bar shows the label). Delete page "ii": the pages now read
+      "i, ii, 1, 2…". Undo brings back "i, ii, iii"
+- [ ] Move the last page to the front: it keeps its style (a number among the numbers), and
+      both sections count up in order
+- [ ] Insert a blank page in the middle of the numbered pages: it gets the next number
+- [ ] Save, and open the file in Acrobat Reader: its page box shows the same labels
+- [ ] A PDF without labels: move and insert pages, and the page box shows plain numbers
+      (1, 2, 3), never "1, 1, 2"
+
 ## Problems found
 
 _None yet._
@@ -317,4 +329,3 @@ _None yet._
   because a file opened from the file picker or by drag-and-drop can't be written back to.
   Doing it needs `showOpenFilePicker` in Chrome/Edge and the file's path on desktop. Planned
   for later.
-- **Page labels** (like "i, ii, 1, 2") aren't renumbered after pages are moved or deleted.

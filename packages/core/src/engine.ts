@@ -57,6 +57,7 @@ import {
   restoreField,
   snapshotField,
 } from "./forms";
+import { applyLabels, planLabels, removeLabels, restoreLabels } from "./pageLabels";
 import {
   ALL_PERMISSIONS,
   checkPasswordSpec,
@@ -780,13 +781,15 @@ export class PdfEngine {
       throw new Error("A PDF needs at least one page, so not every page can be deleted");
     }
     let removed: PageEntry[] = [];
-    return this.run({
-      label: `Delete ${countLabel(indices.length)}`,
-      redo: () => {
-        removed = this.removePages(indices);
-      },
-      undo: () => this.insertPages(removed),
-    });
+    return this.run(
+      this.labelled({
+        label: `Delete ${countLabel(indices.length)}`,
+        redo: () => {
+          removed = this.removePages(indices);
+        },
+        undo: () => this.insertPages(removed),
+      }),
+    );
   }
 
   /**
@@ -804,7 +807,7 @@ export class PdfEngine {
     const unchanged = indices.every((p, i) => p === to + i);
     let original: PageEntry[] = [];
     return this.run(
-      {
+      this.labelled({
         label: `Move ${countLabel(indices.length)}`,
         redo: () => {
           original = this.removePages(indices);
@@ -819,7 +822,7 @@ export class PdfEngine {
             })),
           );
         },
-      },
+      }),
       unchanged,
     );
   }
@@ -2273,11 +2276,48 @@ export class PdfEngine {
 
   private insertStep(label: string, at: number, objects: mupdf.PDFObject[]): EditResult {
     const entries = objects.map((object, i) => ({ index: at + i, object }));
-    return this.run({
-      label,
-      redo: () => this.insertPages(entries),
-      undo: () => this.removePages(entries.map((e) => e.index)),
-    });
+    return this.run(
+      this.labelled({
+        label,
+        redo: () => this.insertPages(entries),
+        undo: () => this.removePages(entries.map((e) => e.index)),
+      }),
+    );
+  }
+
+  /**
+   * A step that changes which pages are where, made to keep page labels with their pages:
+   * each page stays in its label section, and sections are numbered again in order. Undo
+   * puts back the labels exactly as they were.
+   */
+  private labelled(step: Step): Step {
+    const pdf = this.requirePdf();
+    const plan = planLabels(pdf);
+    if (!plan) {
+      // No labels: keep it that way (MuPDF adds some when it inserts pages).
+      return {
+        label: step.label,
+        redo: () => {
+          step.redo();
+          removeLabels(pdf);
+        },
+        undo: () => {
+          step.undo();
+          removeLabels(pdf);
+        },
+      };
+    }
+    return {
+      label: step.label,
+      redo: () => {
+        step.redo();
+        applyLabels(pdf, plan);
+      },
+      undo: () => {
+        step.undo();
+        restoreLabels(pdf, plan);
+      },
+    };
   }
 
   private editResult(): EditResult {
