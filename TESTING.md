@@ -271,6 +271,24 @@ Use any PDF, e.g. `fixtures/generated/contract-libreoffice.pdf`.
 - [ ] A digitally signed PDF: the dialog warns signatures stop being valid; Acrobat agrees after
       saving
 
+## Phase 3: compress
+
+Use a PDF with photos (a scanned document, a brochure, a phone photo turned into a PDF) and a
+text-only one (`fixtures/generated/contract-libreoffice.pdf`).
+
+- [ ] **Compress** (page tools row): try each preset. The dialog shows the size now and the
+      compressed size; a text-only file may say it can't be made smaller
+- [ ] **Save compressed copy**: it's saved as "name (compressed).pdf"; the open file isn't
+      changed (its title bar and Save behave as before)
+- [ ] Open the compressed copies in **Adobe Acrobat Reader**, **Chrome/Edge** and **Firefox**:
+      every page looks right; photos are a little softer with Smallest, and text, links and
+      form fields still work
+- [ ] Print a page from the Balanced copy: photos look fine on paper
+- [ ] A big scan (100+ pages): compressing finishes (it may take a while) and the app stays
+      responsive enough to show it's working
+- [ ] A file with a password: Compress says to remove the password or set a new one first;
+      after setting a new password, the compressed copy asks for it
+
 ## Problems found
 
 _None yet._

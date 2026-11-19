@@ -24,6 +24,7 @@ import {
   subtype,
   transformRect,
 } from "./annotationObjects";
+import { type CompressPreset, REBUILD_OPTIONS, shrinkImages } from "./compress";
 import { IncrementalSaveError, PasswordRequiredError } from "./errors";
 import {
   buildField,
@@ -287,6 +288,13 @@ export interface FormField {
   date: boolean;
 }
 
+/** A compressed copy of the document. */
+export interface CompressResult {
+  bytes: Uint8Array;
+  /** How many pictures were made smaller. */
+  images: number;
+}
+
 /** What applyRedactions did, with the document as it is now. */
 export interface RedactionResult extends EditResult {
   /** How many pages had marks. */
@@ -483,6 +491,52 @@ export class PdfEngine {
       throw new Error("This file has no password");
     }
     return this.securityStep("Remove password", security.encrypted ? { kind: "remove" } : null);
+  }
+
+  // ---------------------------------------------------------------------------------------
+  // Compress: a smaller copy of the document, which is left as it is.
+
+  /**
+   * A smaller copy of the document as it is now (with any edits): rebuilt, and with "balanced"
+   * or "smallest", its pictures scaled down and saved as JPEG. The open document isn't
+   * changed. A password set or removed in the Password dialog applies to the copy too. A file
+   * with a password that isn't being changed can't be compressed: its passwords aren't known,
+   * so the copy couldn't be protected the same way.
+   */
+  compressedCopy(preset: CompressPreset): CompressResult {
+    const pdf = this.requirePdf();
+    if (!["high", "balanced", "smallest"].includes(preset)) throw new Error("Unknown preset");
+    const security = this.securityInfo();
+    if (security.encrypted && security.pending === "none") {
+      throw new Error(
+        "This file has a password. To compress it, remove its password or set a new one first " +
+          "(Password).",
+      );
+    }
+    if (!security.canChange) {
+      throw new Error("Unlock the permissions with the permissions password first");
+    }
+    // A plain, unencrypted copy to work on, so the open document isn't touched. Its bytes are
+    // copied out of MuPDF's memory, which moves as it grows (opening the copy grows it).
+    const plain = pdf.saveToBuffer("encrypt=none");
+    let copy: mupdf.Document | null = null;
+    try {
+      const bytes = plain.asUint8Array().slice();
+      plain.destroy();
+      copy = mupdf.Document.openDocument(bytes, "application/pdf");
+      const copyPdf = copy.asPDF() as mupdf.PDFDocument;
+      const { images } = shrinkImages(copyPdf, preset);
+      const change = this.securityChange;
+      const protect = change?.kind === "protect" ? `,${encryptOptions(change.spec)}` : "";
+      const out = copyPdf.saveToBuffer(`${REBUILD_OPTIONS}${protect}`);
+      try {
+        return { bytes: out.asUint8Array().slice(), images };
+      } finally {
+        out.destroy();
+      }
+    } finally {
+      copy?.destroy();
+    }
   }
 
   private securityStep(label: string, next: PdfEngine["securityChange"]): EditResult {

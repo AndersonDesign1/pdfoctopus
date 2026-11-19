@@ -409,3 +409,36 @@ describe("forms on every fixture", () => {
     60_000,
   );
 });
+
+describe("compress on every fixture", () => {
+  const editable = files.filter((f) => !(f.name in EXPECTED_TO_FAIL) && !(f.name in NOT_EDITABLE));
+  it.each(editable.map((f) => [f.name, f.path]))(
+    "%s: the smallest copy is a valid file with every page",
+    (name, path) => {
+      const engine = new PdfEngine();
+      try {
+        const opened = engine.open(new Uint8Array(readFileSync(path)));
+        if (opened.needsPassword && !engine.authenticate(PASSWORDS[name] ?? "")) {
+          throw new Error(`No working password for ${name}`);
+        }
+        // A file with a password is compressed once its password is set to be removed.
+        const security = engine.info().security;
+        if (security.encrypted) {
+          if (!security.canChange) return;
+          engine.removePassword();
+        }
+        const copy = engine.compressedCopy("smallest").bytes;
+        const doc = mupdf.Document.openDocument(copy, "application/pdf");
+        try {
+          expect((doc.asPDF() as mupdf.PDFDocument).wasRepaired()).toBe(false);
+          expect(doc.countPages()).toBe(engine.pageCount);
+        } finally {
+          doc.destroy();
+        }
+      } finally {
+        engine.close();
+      }
+    },
+    120_000,
+  );
+});
