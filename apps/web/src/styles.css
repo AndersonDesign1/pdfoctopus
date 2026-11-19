@@ -1029,7 +1029,7 @@ input {
   bottom: calc(100% + 12px);
 }
 
-.pdfo-selection-actions .button.danger {
+.button.danger {
   background: #c62828;
   border-color: #c62828;
   color: #ffffff;

@@ -312,3 +312,49 @@ describe("page tools on every fixture", () => {
     (name, path) => expect(() => runPageTools(name, path)).toThrow(/Not a PDF/),
   );
 });
+
+describe("redaction on every fixture", () => {
+  const editable = files.filter((f) => !(f.name in EXPECTED_TO_FAIL) && !(f.name in NOT_EDITABLE));
+  it.each(editable.map((f) => [f.name, f.path]))(
+    "%s can be redacted and saved as a valid rewritten file",
+    (name, path) => {
+      const original = new Uint8Array(readFileSync(path));
+      const password = PASSWORDS[name];
+      const engine = new PdfEngine();
+      try {
+        const opened = engine.open(original.slice());
+        if (opened.needsPassword && !engine.authenticate(password ?? "")) {
+          throw new Error(`No working password for ${name}`);
+        }
+        const count = engine.pageCount;
+        // Mark the middle of the first page, whatever its size.
+        const { width, height } = engine.info().pages[0] as { width: number; height: number };
+        const w = Math.max(1, width / 3);
+        const h = Math.max(1, height / 6);
+        engine.addAnnotation({
+          kind: "redact",
+          page: 0,
+          rect: [(width - w) / 2, (height - h) / 2, (width + w) / 2, (height + h) / 2],
+        });
+        try {
+          engine.applyRedactions();
+        } catch (err) {
+          // A form field under the mark is refused on purpose (see redaction.test.ts).
+          if (err instanceof Error && /covers a form field/.test(err.message)) {
+            expect(engine.info()).toMatchObject({ redactionMarks: 1, redacted: false });
+            return;
+          }
+          throw err;
+        }
+        expect(engine.info()).toMatchObject({ redacted: true, redactionMarks: 0 });
+        const saved = engine.save();
+        expect(saved.subarray(0, original.length)).not.toEqual(original);
+        expect(needsRepair(saved, password)).toBe(false);
+        expect(reopenedPageCount(saved, password)).toBe(count);
+      } finally {
+        engine.close();
+      }
+    },
+    60_000,
+  );
+});

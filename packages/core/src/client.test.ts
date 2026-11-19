@@ -122,7 +122,14 @@ describe("PdfWorkerClient", () => {
     expect(FakeWorker.last.transfers[0]?.[0]).toBe(shared.buffer);
     expect(FakeWorker.last.transfers[0]?.[1]).toBe(third.buffer);
     const result = {
-      info: { pageCount: 1, pages: [{ width: 1, height: 1 }], labels: [null], metadata: {} },
+      info: {
+        pageCount: 1,
+        pages: [{ width: 1, height: 1 }],
+        labels: [null],
+        metadata: {},
+        redactionMarks: 0,
+        redacted: false,
+      },
       history: { canUndo: true, canRedo: false, undoLabel: "Insert 2 files", redoLabel: null },
     };
     FakeWorker.last.reply({ id: req.id, ok: true, type: "insertPdfs", result });

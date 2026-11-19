@@ -198,8 +198,10 @@ export function AnnotateLayer({
           });
         } else if (!click) {
           const rect = dragRect(start, end, page);
-          if (tool.id === "whiteout") onCommit({ ...base, kind: "whiteout", rect });
-          else onCommit({ ...base, kind: tool.id as "rectangle" | "ellipse", rect, color, width });
+          if (tool.id === "whiteout" || tool.id === "redact") {
+            onCommit({ ...base, kind: tool.id, rect });
+          } else
+            onCommit({ ...base, kind: tool.id as "rectangle" | "ellipse", rect, color, width });
         }
         break;
       case "point":
@@ -241,8 +243,14 @@ export function AnnotateLayer({
             y={y0 * s}
             width={(x1 - x0) * s}
             height={(y1 - y0) * s}
-            fill={tool.id === "whiteout" ? "#ffffff" : "none"}
-            stroke={tool.id === "rectangle" ? stroke : "#8a8fa3"}
+            fill={
+              tool.id === "whiteout"
+                ? "#ffffff"
+                : tool.id === "redact"
+                  ? "rgb(0 0 0 / 0.35)"
+                  : "none"
+            }
+            stroke={tool.id === "rectangle" ? stroke : tool.id === "redact" ? "#c62828" : "#8a8fa3"}
             strokeDasharray={tool.id === "rectangle" ? undefined : "4 3"}
             strokeWidth={tool.id === "rectangle" ? strokeWidth : 1}
           />

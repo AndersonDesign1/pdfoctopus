@@ -16,7 +16,7 @@ tasks needed to finish it and the **exit criteria** that must be true before we 
 ## Next up
 
 Start here if you're picking the project up. Do these in order, and update this list in the
-same PR that changes it. Last updated: 2026-11-18, after images.
+same PR that changes it. Last updated: 2026-11-19, after redaction.
 
 ### 0. Keep `main` green (2026-11-18)
 
@@ -218,7 +218,49 @@ selected, moved, resized (keeping its proportions) and deleted.
   the saved file in pdf.js.
 - **Not yet checked:** real phone photos, and the saved files in Adobe Reader (see the images
   list in TESTING.md).
-- **Next in Phase 2:** redaction, then forms.
+
+### 9. Phase 2: redaction (2026-11-19)
+
+The **Redact** tool in the Annotate row marks an area; **Redact all** next to the search box
+marks every match. Marks are red outlines and remove nothing. **Apply redactions** (shown
+while there are marks) asks for confirmation, then removes the text, pictures and drawings
+under every mark for good and draws black boxes in their place. Annotations under a mark
+(comments, highlights, links) are deleted too. Applying is one undoable step until the file is
+saved; saving a redacted file clears the undo history, so the removal is final from then on.
+
+- **Saving after a redaction rewrites the whole file.** An incremental save keeps the original
+  bytes, and with them the removed text (checked: the original section of an incremental save
+  still read "Secret agent Bond here"). The engine forces a full save once redactions are
+  applied (`DocumentInfo.redacted`), whatever it's asked for, and the confirmation says so,
+  including that digital signatures stop being valid. That's the user's agreement the
+  "incremental unless agreed" rule asks for.
+- **Engine:** `addAnnotation({ kind: "redact" })`, `markForRedaction` and `applyRedactions` in
+  `packages/core/src/engine.ts`, using MuPDF's redaction (text removed, image pixels blacked
+  out, and any drawing a mark touches removed entirely, so nothing partly covered is left to
+  recover; a table border crossing a mark goes with it). MuPDF writes the pages' new content as new objects, so
+  undo puts the old `/Contents`, `/Resources` and `/Annots` back. MuPDF leaves other
+  annotations alone, so the engine deletes those under a mark itself, and empties each deleted
+  one: a reply (/IRT) or a tagged PDF's structure tree can still point at it, and a full save
+  keeps whatever is pointed at. Its entries are kept in memory for undo.
+- **Form fields are refused:** a field's value lives in the form, not only on the page, so
+  deleting its box would leave the value in the file. Apply says which page and does nothing.
+  Proper field redaction can come with the forms work.
+- **Tests:** `redaction.test.ts` covers marking areas and search results (text inside form
+  XObjects too), the black box, annotations and pop-ups under a mark, undo/redo, rotated pages,
+  the form-field refusal, bad input, and that the saved file isn't incremental and doesn't
+  contain the word even fully decompressed. The fixture sweep redacts the middle of the first
+  page of every editable fixture, saves, and checks it reopens without repair; where the mark
+  covers a form field, it checks the refusal left the mark and the page as they were.
+- **Checked:** in Chromium end to end (Redact all on a name, a box mark, apply, search finds
+  nothing, save), and the saved file in MuPDF (no trace of the name) and pdf.js.
+- **Redact all** refuses when the search stopped at its 5,000-match limit, rather than mark
+  only some matches.
+- **Not covered yet:** the document's title and other metadata, bookmarks, attachments and
+  hidden layers aren't changed (the dialog says so); a later version could offer to clear them.
+- **Not yet checked:** the saved file in Adobe Reader (search for and copy around a redacted
+  word), and real documents; see the redaction list in TESTING.md.
+  A mark removes every letter it touches, even partly.
+- **Next in Phase 2:** forms.
 
 ### Where things are
 
@@ -380,9 +422,10 @@ selected, moved, resized (keeping its proportions) and deleted.
 
 ### Redaction
 
-- [ ] Mark areas or search results for redaction
-- [ ] Apply redactions (true removal of text and images underneath, not black boxes)
-- [ ] Test: redacted text can't be found or copied afterwards
+- [x] Mark areas or search results for redaction
+- [x] Apply redactions (true removal of text and images underneath, not black boxes)
+- [ ] Test: redacted text can't be found or copied afterwards (automated tests pass; the
+      search-and-copy check in Adobe Reader, in TESTING.md, is still to do)
 
 ### Forms
 

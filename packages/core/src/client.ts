@@ -247,6 +247,19 @@ export class PdfWorkerClient {
     return this.call<"selectText">({ type: "selectText", page, from, to });
   }
 
+  /** Mark text (such as every search result) for redaction, as one undoable step. */
+  markForRedaction(marks: { page: number; quads: number[][] }[]) {
+    return this.call<"markForRedaction">({ type: "markForRedaction", marks });
+  }
+
+  /**
+   * Apply every redaction mark: what's under them is removed for good, and every later save
+   * rewrites the whole file. One undoable step until saved.
+   */
+  applyRedactions() {
+    return this.call<"applyRedactions">({ type: "applyRedactions" });
+  }
+
   /** The annotations on a page that can be selected, bottom first. */
   listAnnotations(page: number) {
     return this.call<"listAnnotations">({ type: "listAnnotations", page });

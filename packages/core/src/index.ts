@@ -15,6 +15,7 @@ export type {
   PagePoint,
   PageSize,
   PdfSource,
+  RedactionResult,
   RenderedPage,
   RgbColor,
   RotationDelta,

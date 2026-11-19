@@ -145,7 +145,10 @@ function isWhiteout(object: mupdf.PDFObject): boolean {
 }
 
 export function canResize(object: mupdf.PDFObject): boolean {
-  return RESIZABLE.has(subtype(object));
+  const type = subtype(object);
+  // A redaction mark of an area can be resized; one over words (quads) can only be moved.
+  if (type === "Redact") return !object.get("QuadPoints").isArray();
+  return RESIZABLE.has(type);
 }
 
 export function canRecolor(object: mupdf.PDFObject): boolean {
@@ -303,6 +306,34 @@ export function copyDirect(pdf: mupdf.PDFDocument, value: mupdf.PDFObject): mupd
   if (value.isDictionary()) {
     const copy = pdf.newDictionary();
     value.forEach((item, key) => {
+      copy.put(key, copyDirect(pdf, item));
+    });
+    return copy;
+  }
+  return value;
+}
+
+/**
+ * A copy of an array or dictionary even when it's an indirect (shared) object: its own entries
+ * are copied, while the objects they point to are shared. Anything else is copied as copyDirect
+ * would.
+ */
+export function copyContainer(pdf: mupdf.PDFDocument, value: mupdf.PDFObject): mupdf.PDFObject {
+  if (!value.isIndirect()) return copyDirect(pdf, value);
+  // A stream (page content) is shared, never copied: its data can't be copied this way, and
+  // changes to content replace the stream rather than editing it.
+  if (value.isStream()) return value;
+  const resolved = value.resolve();
+  if (resolved.isArray()) {
+    const copy = pdf.newArray();
+    resolved.forEach((item) => {
+      copy.push(copyDirect(pdf, item));
+    });
+    return copy;
+  }
+  if (resolved.isDictionary() && !resolved.isStream()) {
+    const copy = pdf.newDictionary();
+    resolved.forEach((item, key) => {
       copy.put(key, copyDirect(pdf, item));
     });
     return copy;
