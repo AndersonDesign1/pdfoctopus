@@ -8,6 +8,7 @@ import type {
   AnnotationSpec,
   DocumentInfo,
   EditResult,
+  FormField,
   ImageStamp,
   OpenResult,
   PagePoint,
@@ -42,6 +43,9 @@ export type WorkerRequest =
   | { id: number; type: "listAnnotations"; page: number }
   | { id: number; type: "markForRedaction"; marks: { page: number; quads: number[][] }[] }
   | { id: number; type: "applyRedactions" }
+  | { id: number; type: "listFields"; page: number }
+  | { id: number; type: "setFieldValue"; page: number; field: number; value: string | boolean }
+  | { id: number; type: "flattenForm" }
   | { id: number; type: "deleteAnnotation"; page: number; annotation: number }
   | {
       id: number;
@@ -77,6 +81,9 @@ export interface WorkerResults {
   listAnnotations: AnnotationInfo[];
   markForRedaction: EditResult;
   applyRedactions: RedactionResult;
+  listFields: FormField[];
+  setFieldValue: EditResult;
+  flattenForm: EditResult;
   deleteAnnotation: EditResult;
   editAnnotation: EditResult;
   undo: EditResult | null;

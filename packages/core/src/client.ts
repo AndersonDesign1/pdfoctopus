@@ -260,6 +260,21 @@ export class PdfWorkerClient {
     return this.call<"applyRedactions">({ type: "applyRedactions" });
   }
 
+  /** The form field boxes on a page. */
+  listFields(page: number) {
+    return this.call<"listFields">({ type: "listFields", page });
+  }
+
+  /** Fill in a form field (by its id from listFields), as one undoable step. */
+  setFieldValue(page: number, field: number, value: string | boolean) {
+    return this.call<"setFieldValue">({ type: "setFieldValue", page, field, value });
+  }
+
+  /** Turn the form into ordinary page content, as one undoable step. */
+  flattenForm() {
+    return this.call<"flattenForm">({ type: "flattenForm" });
+  }
+
   /** The annotations on a page that can be selected, bottom first. */
   listAnnotations(page: number) {
     return this.call<"listAnnotations">({ type: "listAnnotations", page });

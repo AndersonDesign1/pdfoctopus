@@ -9,6 +9,8 @@ export type {
   DocumentInfo,
   DocumentMetadata,
   EditResult,
+  FormField,
+  FormInfo,
   HistoryState,
   ImageStamp,
   OpenResult,
@@ -31,6 +33,7 @@ export {
   PasswordRequiredError,
   type PdfErrorCode,
 } from "./errors";
+export type { FieldKind } from "./forms";
 export { describePages, parsePageRanges, splitEvery, splitSingle } from "./pageRanges";
 export type {
   LoadProgress,
