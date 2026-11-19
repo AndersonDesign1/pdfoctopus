@@ -302,6 +302,43 @@ saving appends the changes to the file (an incremental save). **Flatten form**
 - **Next in Phase 2:** building forms (adding fields and editing their properties), as a
   separate PR.
 
+### 11. Phase 2: building forms (2026-11-19, issue #21)
+
+A **Form** row of tools: **Text field**, **Checkbox**, **Radio button**, **Dropdown**,
+**Date** and **Signature field**. Pick one and drag a box on a page (a click gives a box of the
+usual size); a dialog asks for the name (one is suggested), whether it's required, a default
+value, a dropdown's options, or a radio button's group and value. **Edit fields** outlines every
+field; click one to rename it, change whether it's required, its default or options, or delete
+it. Each change is one undoable step, and saving stays incremental.
+
+- **Engine:** `addField`, `updateField` and `deleteField` in `packages/core/src/engine.ts`,
+  helpers in `formBuild.ts`. MuPDF's JavaScript API can't create widgets, so the field and
+  widget dictionaries are built by hand (and the AcroForm, with Helvetica as `/Helv`, if the
+  file has none); calling `setRect` before `update()` makes MuPDF draw the new field.
+- **Radio buttons** with the same name join one group; each has its own value (its "on" state),
+  and two in a group can't share one. Deleting a group's last button removes the group.
+- **Dates** are text fields with Acrobat's `AFDate_FormatEx`/`AFDate_KeystrokeEx("yyyy-mm-dd")`
+  scripts, for apps that run them. **Signature fields** are empty `/Sig` boxes, to sign in an
+  app that supports digital signatures (signing in PDFoctopus is Phase 5).
+- **Names** must be unique (a radio group's buttons share theirs) and can't contain a dot,
+  which separates the parts of a full name. A new default value is shown in a field that's
+  empty or still shows the old default; changing a dropdown's options clears an answer that's
+  no longer offered.
+- **Undo** snapshots the entries a change touches (the page's `/Annots`, the form's `/Fields`
+  and resources, a group's `/Kids`, or the field's `/T`, `/Ff`, `/DV`, `/Opt` and value) and
+  puts them back.
+- **Tests:** `formBuild.test.ts`: each kind on a blank PDF and on a file with a form, saving
+  (incremental, reopens without repair, the new fields can be filled in), radio groups,
+  defaults, date scripts, a rotated page, renaming and other changes, deleting (one radio
+  button, a whole group, a file's own field), undo/redo, and refusals.
+- **Checked:** in Chromium end to end: each kind added to the generated contract, a duplicate
+  name refused in the dialog, a field renamed and made required, one deleted, the renamed field
+  filled in and saved; the saved file checked in MuPDF.
+- **Not covered yet:** moving and resizing fields, tab order, fonts and text alignment,
+  maximum length, calculations and validation scripts.
+- **Not yet checked:** the saved files in Adobe Reader and other viewers; see the list in
+  TESTING.md.
+
 ### Where things are
 
 - **Engine:** `packages/core` (MuPDF in a Web Worker, plus a promise-based client). Tests:
@@ -471,8 +508,9 @@ saving appends the changes to the file (an incremental save). **Flatten form**
 
 - [x] Fill AcroForm fields (text, checkbox, radio, dropdown, date) (date fields are filled in
       as text; form scripts don't run)
-- [ ] Create new fields: text, checkbox, radio, dropdown, signature, date
-- [ ] Edit field properties (name, required, default value)
+- [x] Create new fields: text, checkbox, radio, dropdown, signature, date
+- [x] Edit field properties (name, required, default value) (moving and resizing fields come
+      later)
 - [x] Flatten forms
 - [x] Detect XFA forms and show a clear warning (hybrid forms are filled in and their XFA copy
       removed; XFA-only forms get a warning when opened)

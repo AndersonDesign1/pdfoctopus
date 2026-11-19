@@ -221,6 +221,31 @@ form, a job application).
       other viewers): opening it shows a warning that it can't be filled in
 - [ ] Zoomed in and out, and on a rotated page: the inputs sit over the boxes on the page
 
+## Phase 2: building forms
+
+Use `fixtures/generated/contract-libreoffice.pdf` (no form) and
+`fixtures/third-party/py-pdf/012-libreoffice-form_libreoffice-form.pdf` (has one).
+
+- [ ] **Form row:** pick **Text field** and drag a box; the dialog suggests a name. Add it. Do
+      the same with a click instead of a drag (a box of the usual size)
+- [ ] Add a **Checkbox**, two **Radio buttons** in one group (the second one offers the same
+      group name), a **Dropdown** with three options and a default, a **Date** and a
+      **Signature field**
+- [ ] A name that's already used: the dialog says so and stays open
+- [ ] **Edit fields:** every field is outlined; click one, rename it, tick Required, Save. Change
+      a dropdown's options. Delete a field. Undo and redo each change
+- [ ] Press Escape (or pick the tool again) to put a form tool down; the new fields can then be
+      filled in as usual
+- [ ] **Save**, then open the file in **Adobe Acrobat Reader**, **Chrome/Edge** and **Firefox**:
+      every field is there and can be filled in, radio buttons in a group turn each other off,
+      the dropdown offers its options, required fields are marked (Acrobat outlines them in
+      red), and the date field in Acrobat takes a date like 2026-11-19
+- [ ] **Signature field** in Acrobat: it offers to sign there
+- [ ] Add a field to the form that already has fields; open the saved file in Acrobat: the old
+      fields still work
+- [ ] On a rotated page, the field goes where it was drawn
+- [ ] **Phone or tablet:** drawing a field's box with a finger works, and the Form row shows
+
 ## Problems found
 
 _None yet._

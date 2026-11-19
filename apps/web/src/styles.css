@@ -491,8 +491,9 @@ input {
     display: none;
   }
 
-  /* The annotation tools are toggle buttons too, but they're the only way to annotate. */
-  .annotate-tools .tool[aria-pressed] {
+  /* The annotation and form tools are toggle buttons too, but they're the only way in. */
+  .annotate-tools .tool[aria-pressed],
+  .form-tools .tool[aria-pressed] {
     display: inline-flex;
   }
 
@@ -876,7 +877,8 @@ input {
 
 /* ---- Annotations ---- */
 
-.annotate-tools {
+.annotate-tools,
+.form-tools {
   flex-basis: 100%;
 }
 
@@ -1165,4 +1167,64 @@ textarea.pdfo-form-text {
 
 .pdfo-form-field:disabled {
   cursor: progress;
+}
+
+/* ---- Building forms ---- */
+
+/* Drawn over each page while a field tool is picked: drag where the field goes. */
+.pdfo-field-draw-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.pdfo-field-draft {
+  position: absolute;
+  border: 1.5px dashed var(--accent);
+  background: rgb(107 60 245 / 0.1);
+  pointer-events: none;
+}
+
+/* Every field outlined, in Edit fields mode. */
+.pdfo-field-edit-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+
+.pdfo-field-outline {
+  position: absolute;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  border: 1.5px solid var(--accent);
+  border-radius: 2px;
+  background: rgb(107 60 245 / 0.12);
+  cursor: pointer;
+}
+
+.pdfo-field-outline:hover,
+.pdfo-field-outline:focus-visible {
+  background: rgb(107 60 245 / 0.25);
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.pdfo-field-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: min(360px, 80vw);
+}
+
+.pdfo-field-form textarea {
+  resize: vertical;
+  font: inherit;
+}
+
+/* Delete sits apart from Cancel and Save. */
+.pdfo-field-delete {
+  margin-right: auto;
 }
