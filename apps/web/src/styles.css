@@ -196,7 +196,7 @@ input {
 }
 
 .search input {
-  width: 170px;
+  width: 130px;
 }
 
 .search-count {
@@ -1277,4 +1277,62 @@ textarea.pdfo-form-text {
   padding: 8px 12px;
   border-radius: 8px;
   background: var(--surface-2, rgb(107 60 245 / 0.08));
+}
+
+/* ---- New PDF ---- */
+
+.pdfo-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.pdfo-tab {
+  padding: 6px 12px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.pdfo-tab[aria-selected="true"] {
+  border-bottom-color: var(--accent);
+  color: var(--fg);
+}
+
+.pdfo-create-paper {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.pdfo-create-text {
+  min-height: 160px;
+  resize: vertical;
+  font-family: ui-monospace, monospace;
+  font-size: 0.9em;
+}
+
+.pdfo-picture-list {
+  margin: 0;
+  padding-left: 24px;
+  max-height: 200px;
+  overflow: auto;
+}
+
+.pdfo-picture-list li {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.pdfo-picture-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

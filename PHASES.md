@@ -407,6 +407,40 @@ files doesn't come into it.
 - **Not covered yet:** a picture shown small on its page is only scaled down to the page's
   size, not to the size it's shown at; fonts aren't subset.
 
+### 14. Phase 3: create (2026-11-19)
+
+**New** (top bar, and "Make a new PDF" on the start screen) opens a dialog with three tabs:
+**Blank pages** (how many, paper size, landscape), **Pictures** (add several, put them in
+order, then either on paper with a margin, turned to suit each picture, or each page the size
+of its picture at 96 dpi) and **Text** (type, paste or open a .txt, .md or .html file, and say
+which it is). Paper defaults to US Letter in the Americas' Letter countries and A4 elsewhere.
+The new PDF opens as an unsaved document: closing warns, and the first Save asks where to put
+it.
+
+- **Engine:** `createPdf(spec)` in `packages/core/src/create.ts`, run in the worker (loaded
+  lazily, after the engine, like everything that uses MuPDF: a static import loaded MuPDF
+  before the engine and left "Loading the PDF engine…" showing for good).
+- **Text and Markdown** become HTML with a simple style sheet (sans-serif 11 pt, ¾-inch
+  margins); **HTML** is used as it is, with only the margin added. MuPDF lays it out and
+  `DocumentWriter` writes the pages; then fonts are subset (an HTML page with a few Chinese
+  characters went from 3.8 MB to 55 KB). Pictures, style sheets and fonts linked from elsewhere
+  aren't fetched, and scripts don't run.
+- **Markdown** (`markdown.ts`): headings, paragraphs, emphasis (not inside snake_case words),
+  code spans and fenced blocks, block quotes, nested lists, links (http, https, mailto and #
+  only; one level of brackets in a URL), horizontal rules and pipe tables. Raw HTML is shown
+  as text, and pictures become their description.
+- **Pictures** are read in the browser with the Image tool's `pictureToImage` (100-megapixel
+  limit, the camera's orientation applied, larger ones scaled to 2400 pixels), then placed by
+  the engine.
+- **Tests:** `create.test.ts` (each paper size and orientation, page limits, pictures at their
+  own size and on paper in order, text across several pages with non-Latin text, Markdown, HTML
+  with remote links and scripts, small output) and `markdown.test.ts`.
+- **Checked:** in Chromium: three blank pages, a Markdown shopping list with a table, and two
+  pictures reordered (portrait page first, then landscape), saved as "Pictures.pdf".
+- **Not covered yet:** HTML layout is MuPDF's (no flexbox or grid; nested lists are indented
+  oddly), there's no page numbering or headers, and pictures can't be cropped or rotated in the
+  dialog.
+
 ### Where things are
 
 - **Engine:** `packages/core` (MuPDF in a Web Worker, plus a promise-based client). Tests:
@@ -613,11 +647,11 @@ files doesn't come into it.
 
 ### Create
 
-- [ ] Blank PDF (choose page size and count)
-- [ ] Images → PDF (JPG, PNG, multiple images, page order)
-- [ ] HTML → PDF
-- [ ] Plain text → PDF
-- [ ] Markdown → PDF
+- [x] Blank PDF (choose page size and count)
+- [x] Images → PDF (JPG, PNG, multiple images, page order)
+- [x] HTML → PDF (laid out by MuPDF's HTML engine: basic CSS, nothing fetched)
+- [x] Plain text → PDF
+- [x] Markdown → PDF
 
 ### Exit criteria
 

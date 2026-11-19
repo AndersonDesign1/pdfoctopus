@@ -3,6 +3,7 @@
 // Promise-based client for the PDF worker. Use this from the UI thread.
 
 import type { CompressPreset } from "./compress";
+import type { CreateSpec } from "./create";
 import type {
   AnnotationChange,
   AnnotationSpec,
@@ -296,6 +297,11 @@ export class PdfWorkerClient {
   /** Save the file without its password, as one undoable step. */
   removePassword() {
     return this.call<"removePassword">({ type: "removePassword" });
+  }
+
+  /** A new PDF (blank pages, pictures, or text laid out on pages), as bytes. */
+  createPdf(spec: CreateSpec) {
+    return this.call<"createPdf">({ type: "createPdf", spec });
   }
 
   /** A smaller copy of the document; the open document isn't changed. */
