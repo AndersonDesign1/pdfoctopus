@@ -196,6 +196,11 @@ form, a job application).
       is cut off the way the PDF draws it
 - [ ] **Checkbox** ticks and unticks; **radio buttons:** choosing one turns the others in its
       group off; **dropdown:** pick an option
+- [ ] Type in a text field and press **Ctrl+S** without leaving it: the saved file has the text.
+      Type, then **Escape**: the old text comes back and nothing is saved. Type, scroll several
+      pages away and back: the text is still there
+- [ ] A dropdown that also takes typed answers (Acrobat's "Allow user to enter custom text"):
+      you can type an answer or pick one of the options
 - [ ] **Undo/redo** (Ctrl+Z, Ctrl+Y) step through each field change
 - [ ] **Save**, then open the saved file in **Adobe Acrobat Reader**, **Chrome/Edge** and
       **Firefox**: every value is there and can still be changed

@@ -4,7 +4,8 @@
 // typed in and tabbed through. The page underneath shows each field as the PDF draws it; an
 // input shows its own text only while it has the focus, so the two never overlap. A field's
 // new value goes into the document when the input loses the focus (or on Enter), as one
-// undoable step.
+// undoable step. Text typed but not yet in the document is reported with onDraft, so saving
+// can put it in first and its page stays loaded.
 
 import type { FormField } from "@pdfoctopus/core";
 import { useEffect, useRef, useState } from "react";
@@ -17,6 +18,8 @@ export interface FormLayerProps {
   /** Reads this page's fields; called once each time the layer appears. */
   list(): Promise<FormField[]>;
   onSet(field: FormField, value: string | boolean): void;
+  /** Text typed in a field that isn't in the document yet, or null once it is (or is undone). */
+  onDraft(field: FormField, value: string | null): void;
   /** The field to put the focus back on when the layer appears (after a change redraws it). */
   focusId: number | null;
   onFocusField(id: number | null): void;
@@ -28,6 +31,7 @@ export function FormLayer({
   busy,
   list,
   onSet,
+  onDraft,
   focusId,
   onFocusField,
 }: FormLayerProps) {
@@ -102,7 +106,7 @@ export function FormLayer({
             />
           );
         }
-        if (field.kind === "combobox" || field.kind === "listbox") {
+        if (field.kind === "listbox" || (field.kind === "combobox" && !field.editable)) {
           return (
             <select
               key={field.id}
@@ -131,6 +135,7 @@ export function FormLayer({
             busy={busy}
             fontSize={Math.max(8, Math.min((y1 - y0) * s * 0.62, 13 * s))}
             onSet={onSet}
+            onDraft={onDraft}
             common={common}
           />
         );
@@ -147,12 +152,14 @@ function TextField({
   busy,
   fontSize,
   onSet,
+  onDraft,
   common,
 }: {
   field: FormField;
   busy: boolean;
   fontSize: number;
   onSet(field: FormField, value: string): void;
+  onDraft(field: FormField, value: string | null): void;
   common: {
     ref: (el: HTMLElement | null) => void;
     style: React.CSSProperties;
@@ -163,9 +170,18 @@ function TextField({
   };
 }) {
   const [draft, setDraft] = useState(field.value);
-  const save = () => {
-    if (draft !== field.value) onSet(field, draft);
+  // The latest text, for handlers that run before a re-render (Escape, then blur).
+  const latest = useRef(field.value);
+  const change = (value: string) => {
+    latest.current = value;
+    setDraft(value);
+    onDraft(field, value === field.value ? null : value);
   };
+  const save = () => {
+    if (latest.current !== field.value) onSet(field, latest.current);
+  };
+  // An editable dropdown: type anything, or pick one of the options.
+  const listId = field.kind === "combobox" ? `pdfo-field-options-${field.id}` : undefined;
   const props = {
     ...common,
     className: "pdfo-form-field pdfo-form-text",
@@ -174,7 +190,7 @@ function TextField({
     readOnly: busy,
     maxLength: field.maxLength ?? undefined,
     onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
-      setDraft(e.target.value),
+      change(e.target.value),
     onBlur: () => {
       common.onBlur();
       save();
@@ -183,7 +199,7 @@ function TextField({
       if (e.key === "Escape") {
         e.preventDefault();
         e.stopPropagation();
-        setDraft(field.value);
+        change(field.value);
         e.currentTarget.blur();
       } else if (e.key === "Enter" && !field.multiline) {
         e.preventDefault();
@@ -191,9 +207,19 @@ function TextField({
       }
     },
   };
-  return field.multiline ? (
-    <textarea {...props} ref={common.ref} />
-  ) : (
-    <input type="text" {...props} ref={common.ref} />
+  if (field.multiline) return <textarea {...props} ref={common.ref} />;
+  return (
+    <>
+      <input type="text" list={listId} {...props} ref={common.ref} />
+      {listId && (
+        <datalist id={listId}>
+          {field.options.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </datalist>
+      )}
+    </>
   );
 }

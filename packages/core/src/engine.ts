@@ -245,6 +245,8 @@ export interface FormField {
   readOnly: boolean;
   required: boolean;
   multiline: boolean;
+  /** For a dropdown: whether it also takes an answer that isn't one of its options. */
+  editable: boolean;
   /** Most characters a text field takes, if it has a limit. */
   maxLength: number | null;
 }
@@ -1212,6 +1214,7 @@ export class PdfEngine {
           readOnly: w.isReadOnly(),
           required: (flags & mupdf.PDFWidget.FIELD_IS_REQUIRED) !== 0,
           multiline: kind === "text" && w.isMultiline(),
+          editable: kind === "combobox" && (flags & mupdf.PDFWidget.CH_FIELD_IS_EDIT) !== 0,
           maxLength: maxLength > 0 ? maxLength : null,
         };
       });
@@ -1366,20 +1369,26 @@ export class PdfEngine {
     const need = form?.get("NeedAppearances");
     if (!need?.isBoolean() || !need.asBoolean()) return [];
     const snapshot: FieldSnapshot = [];
-    for (let i = 0; i < pdf.countPages(); i++) {
-      const page = pdf.loadPage(i);
-      try {
-        for (const w of page.getWidgets()) {
-          const kind = fieldKind(w);
-          if (kind !== "text" && kind !== "combobox" && kind !== "listbox") continue;
-          const object = w.getObject();
-          snapshot.push(...snapshotField(pdf, [object]));
-          object.delete("AP");
-          w.update();
+    try {
+      for (let i = 0; i < pdf.countPages(); i++) {
+        const page = pdf.loadPage(i);
+        try {
+          for (const w of page.getWidgets()) {
+            const kind = fieldKind(w);
+            if (kind !== "text" && kind !== "combobox" && kind !== "listbox") continue;
+            const object = w.getObject();
+            snapshot.push(...snapshotField(pdf, [object]));
+            object.delete("AP");
+            w.update();
+          }
+        } finally {
+          page.destroy();
         }
-      } finally {
-        page.destroy();
       }
+    } catch (err) {
+      // Put back the appearances already redrawn, so a failure changes nothing.
+      restoreField(pdf, snapshot);
+      throw err;
     }
     return snapshot;
   }

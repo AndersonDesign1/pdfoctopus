@@ -254,6 +254,14 @@ export function App() {
   const [flattenDialog, setFlattenDialog] = useState(false);
   /** The form field that has the focus, so it gets it back after a change redraws the page. */
   const [focusedField, setFocusedField] = useState<number | null>(null);
+  /**
+   * Text typed in a form field that isn't in the document yet: saving puts it in first, and its
+   * page stays loaded (scrolling it away would otherwise lose the text).
+   */
+  const formDraft = useRef<{ page: number; field: FormField; value: string } | null>(null);
+  const [formDraftPage, setFormDraftPage] = useState<number | null>(null);
+  /** The task running now (see runTask), for saving to wait for. */
+  const currentTask = useRef<Promise<void>>(Promise.resolve());
   /** A stamp being positioned. Page tools wait until it's applied or cancelled. */
   const [pending, setPending] = useState<PendingStamp>();
   /** The annotation tool picked, if any: dragging on a page then draws with it. */
@@ -328,6 +336,8 @@ export function App() {
     setRedactDialog(false);
     setFlattenDialog(false);
     setFocusedField(null);
+    formDraft.current = null;
+    setFormDraftPage(null);
     setPending(undefined);
     setTool(undefined);
     setSelecting(false);
@@ -451,11 +461,15 @@ export function App() {
    * allows it; the first save, and "Save as", ask where to save.
    */
   async function onSave(saveAs = false) {
-    if (workingRef.current || !doc) return;
+    // Leaving a form field to press Save starts putting its text in: wait for that.
+    if (workingRef.current) await currentTask.current;
+    if (workingRef.current || !docRef.current) return;
     workingRef.current = true;
     const pdf = getClient();
     setBusy(true);
     try {
+      const doc = docRef.current;
+      if (!doc) return;
       // Ask where to save first, while the browser still counts this as part of the click.
       const destination = await chooseDestination(
         doc.fileName,
@@ -465,6 +479,8 @@ export function App() {
         setStatus("Not saved.");
         return;
       }
+      // Text still being typed in a form field (Ctrl+S) goes in first, as its own step.
+      await commitFormDraft(pdf);
       setStatus("Saving…");
       let bytes: Uint8Array;
       // After redacting, the whole file is rewritten (agreed to when applying), so nothing
@@ -567,18 +583,22 @@ export function App() {
   }, [doc]);
 
   /** Run one task against the worker at a time, reporting failures in the status line. */
-  async function runTask(action: string, task: (pdf: PdfWorkerClient) => Promise<void>) {
-    if (workingRef.current || !docRef.current) return;
+  function runTask(action: string, task: (pdf: PdfWorkerClient) => Promise<void>) {
+    if (workingRef.current || !docRef.current) return Promise.resolve();
     workingRef.current = true;
     setBusy(true);
-    try {
-      await task(getClient());
-    } catch (err) {
-      reportError(action, err);
-    } finally {
-      workingRef.current = false;
-      setBusy(false);
-    }
+    const run = (async () => {
+      try {
+        await task(getClient());
+      } catch (err) {
+        reportError(action, err);
+      } finally {
+        workingRef.current = false;
+        setBusy(false);
+      }
+    })();
+    currentTask.current = run;
+    return run;
   }
 
   const targets = targetPages(selection, page);
@@ -828,18 +848,46 @@ export function App() {
     });
   }
 
+  /** Note text typed in a form field that isn't in the document yet (null: there's none). */
+  function setFormDraftValue(pageIndex: number, field: FormField, value: string | null) {
+    if (value === null) {
+      if (formDraft.current?.field.id === field.id) formDraft.current = null;
+    } else {
+      formDraft.current = { page: pageIndex, field, value };
+    }
+    setFormDraftPage(formDraft.current?.page ?? null);
+  }
+
+  /** Put a form field's new value in the document and show it. */
+  async function fillField(
+    pdf: PdfWorkerClient,
+    pageIndex: number,
+    field: FormField,
+    value: string | boolean,
+  ) {
+    if (formDraft.current?.field.id === field.id) {
+      formDraft.current = null;
+      setFormDraftPage(null);
+    }
+    const hybrid = docRef.current?.info.form.xfa === "hybrid";
+    const result = await pdf.setFieldValue(pageIndex, field.id, value);
+    const note =
+      hybrid && result.info.form.xfa === "none"
+        ? " The form's XFA copy was removed, so every app shows what you filled in."
+        : "";
+    const what = READABLE_LABEL.test(field.label) ? `"${field.label}"` : "a form field";
+    applyEdit(result, `Filled in ${what} on page ${pageIndex + 1}.${note} Undo with Ctrl+Z.`);
+  }
+
   /** Fill in a form field, from its box on the page. */
   function setField(pageIndex: number, field: FormField, value: string | boolean) {
-    const hybrid = docRef.current?.info.form.xfa === "hybrid";
-    void runTask("fill in the form field", async (pdf) => {
-      const result = await pdf.setFieldValue(pageIndex, field.id, value);
-      const note =
-        hybrid && result.info.form.xfa === "none"
-          ? " The form's XFA copy was removed, so every app shows what you filled in."
-          : "";
-      const what = READABLE_LABEL.test(field.label) ? `"${field.label}"` : "a form field";
-      applyEdit(result, `Filled in ${what} on page ${pageIndex + 1}.${note} Undo with Ctrl+Z.`);
-    });
+    void runTask("fill in the form field", (pdf) => fillField(pdf, pageIndex, field, value));
+  }
+
+  /** Put in text still being typed in a form field, if any (part of a running task). */
+  async function commitFormDraft(pdf: PdfWorkerClient) {
+    const draft = formDraft.current;
+    if (draft) await fillField(pdf, draft.page, draft.field, draft.value);
   }
 
   function flattenFormNow() {
@@ -1827,7 +1875,7 @@ export function App() {
               currentHit={currentHit}
               onPageClick={pending && !busy ? movePendingTo : undefined}
               // A draft, or the selection (so it stays up to date), keeps its page loaded.
-              keepPage={draftPage ?? selectedAnnot?.page}
+              keepPage={draftPage ?? formDraftPage ?? selectedAnnot?.page}
               renderPageOverlay={(index, viewScale) => {
                 const size = doc.info.pages[index] ?? { width: 1, height: 1 };
                 if (pending) {
@@ -1876,6 +1924,7 @@ export function App() {
                       busy={busy || drafting}
                       list={() => getClient().listFields(index)}
                       onSet={(field, value) => setField(index, field, value)}
+                      onDraft={(field, value) => setFormDraftValue(index, field, value)}
                       focusId={focusedField}
                       onFocusField={setFocusedField}
                     />

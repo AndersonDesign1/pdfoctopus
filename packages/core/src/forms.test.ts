@@ -6,7 +6,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import * as mupdf from "mupdf";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createBlankPdf, type FormField, PdfEngine } from "./engine";
 
 const fixtures = join(import.meta.dirname, "..", "..", "..", "fixtures");
@@ -120,6 +120,40 @@ describe("setFieldValue", () => {
     expect(engine.info().form.fields).toBeGreaterThan(0);
     engine.redo();
     expect(pageText(engine)).toContain("Bob");
+  });
+
+  it("changes nothing when drawing a field fails partway through flattening", () => {
+    const engine = open(read(LIBREOFFICE));
+    const appearances = () => {
+      const doc = mupdf.Document.openDocument(
+        engine.save({ incremental: false }),
+        "application/pdf",
+      );
+      try {
+        const page = (doc.asPDF() as mupdf.PDFDocument).loadPage(0);
+        return page.getWidgets().map((w) => w.getObject().get("AP").toString());
+      } finally {
+        doc.destroy();
+      }
+    };
+    const before = appearances();
+    const update = mupdf.PDFWidget.prototype.update;
+    let calls = 0;
+    const spy = vi.spyOn(mupdf.PDFWidget.prototype, "update").mockImplementation(function (
+      this: mupdf.PDFWidget,
+    ) {
+      if (++calls === 3) throw new Error("Can't draw this field");
+      return update.call(this);
+    });
+    try {
+      expect(() => engine.flattenForm()).toThrow(/Can't draw/);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(calls).toBe(3);
+    expect(engine.history().canUndo).toBe(false);
+    expect(appearances()).toEqual(before);
+    expect(engine.info().form.fields).toBeGreaterThan(0);
   });
 
   it("ticks and unticks a checkbox", () => {
