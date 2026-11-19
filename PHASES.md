@@ -226,7 +226,7 @@ marks every match. Marks are red outlines and remove nothing. **Apply redactions
 while there are marks) asks for confirmation, then removes the text, pictures and drawings
 under every mark for good and draws black boxes in their place. Annotations under a mark
 (comments, highlights, links) are deleted too. Applying is one undoable step until the file is
-closed.
+saved; saving a redacted file clears the undo history, so the removal is final from then on.
 
 - **Saving after a redaction rewrites the whole file.** An incremental save keeps the original
   bytes, and with them the removed text (checked: the original section of an incremental save

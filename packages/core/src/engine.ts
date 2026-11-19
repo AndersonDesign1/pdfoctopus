@@ -267,6 +267,9 @@ const ANNOTATION_LABELS: Record<AnnotationKind, string> = {
 /** How many pages' text layouts are kept for selecting text. */
 const TEXT_CACHE_PAGES = 8;
 
+/** At most this many quads (word boxes) in one markForRedaction call. */
+const MAX_REDACTION_QUADS = 20_000;
+
 /** Upper bounds that keep a single annotation reasonable. */
 const MAX_INK_POINTS = 20_000;
 const MAX_ANNOTATION_TEXT = 10_000;
@@ -467,6 +470,12 @@ export class PdfEngine {
       bytes = buffer.asUint8Array().slice();
     } finally {
       buffer.destroy();
+    }
+    if (this.redacted) {
+      // A redacted file has been written out: the redaction is final now. Undo would bring the
+      // removed content back into the document, and the next save would write it out again.
+      this.undoStack = [];
+      this.redoStack = [];
     }
     if (incremental && this.base?.startxref != null) {
       // After a first save, MuPDF writes later updates as if the earlier one had been appended
@@ -1137,6 +1146,8 @@ export class PdfEngine {
     const pdf = this.requirePdf();
     if (marks.length === 0) throw new Error("There's nothing to mark");
     if (marks.length > MAX_SEARCH_HITS) throw new Error("There are too many to mark at once");
+    const quadCount = marks.reduce((n, m) => n + m.quads.length, 0);
+    if (quadCount > MAX_REDACTION_QUADS) throw new Error("There are too many to mark at once");
     // Check everything first, so a bad entry leaves every page untouched.
     const checked = marks.map((m) => {
       const [index] = this.checkPages([m.page]) as [number];

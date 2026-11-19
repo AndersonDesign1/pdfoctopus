@@ -21,9 +21,10 @@ export function RedactDialog({
   return (
     <Modal title="Apply redactions?" onClose={onCancel}>
       <p>
-        The text, pictures and drawings under {what} will be removed from the document for good, and
-        black boxes drawn in their place. Comments, highlights and links under the marks are deleted
-        too.
+        The text and pictures under {what} will be removed from the document for good, and black
+        boxes drawn in their place. A drawing that a mark touches (a line, a table border, a shape)
+        is removed whole, even the part outside the mark. Comments, highlights and links under the
+        marks are deleted too.
       </p>
       <p>
         So that nothing removed is left in the file,{" "}
@@ -31,8 +32,8 @@ export function RedactDialog({
         end of it. If the file is digitally signed, its signatures will no longer be valid.
       </p>
       <p className="status">
-        You can undo this until you close the file. Check the result before you share it: the
-        document's title, bookmarks, attachments and hidden layers aren't changed.
+        You can undo this until you save; after that it's final. Check the result before you share
+        it: the document's title, bookmarks, attachments and hidden layers aren't changed.
       </p>
       <div className="pdfo-dialog-actions">
         <button type="button" className="button secondary" onClick={onCancel}>

@@ -210,11 +210,12 @@ describe("redaction", () => {
   it("removes a drawing that only partly lies under a mark", () => {
     // A thick blue line across the bottom of the page; mark only its middle.
     const engine = open(textPdf());
+    const blue = ([r, g, b]: [number, number, number]) => b > 200 && r < 100 && g < 100;
+    expect(blue(pixel(engine, 60, 270))).toBe(true); // the line is there to begin with
     engine.addAnnotation({ kind: "redact", page: 0, rect: [180, 260, 220, 280] });
     engine.applyRedactions();
     // Well outside the mark, the line is gone too: no part of it is left to recover.
-    const [r, g, b] = pixel(engine, 60, 270);
-    expect(b > 200 && r < 100 && g < 100).toBe(false);
+    expect(blue(pixel(engine, 60, 270))).toBe(false);
   });
 
   it("empties a deleted comment, so nothing pointing at it keeps its text in the file", () => {
@@ -321,11 +322,25 @@ describe("redaction", () => {
     expect(words).toMatchObject({ label: "redaction mark", canResize: false });
   });
 
+  it("makes the redaction final once the file is saved: no undo can bring it back", () => {
+    const engine = open(textPdf());
+    engine.addAnnotation({ kind: "redact", page: 0, rect: boxOf(engine, "Bond") });
+    engine.applyRedactions();
+    expect(engine.history().canUndo).toBe(true);
+    engine.save();
+    expect(engine.history()).toMatchObject({ canUndo: false, canRedo: false });
+    expect(engine.undo()).toBeNull();
+    expect(engine.search("Bond").hits).toHaveLength(0);
+    expect(pageText(engine.save())).not.toContain("Bond");
+  });
+
   it("refuses bad marks, and applying with nothing marked", () => {
     const engine = open(createBlankPdf(1));
     expect(() => engine.applyRedactions()).toThrow(/Nothing is marked/);
     expect(() => engine.markForRedaction([])).toThrow(/nothing to mark/);
     expect(() => engine.markForRedaction([{ page: 0, quads: [[1, 2, 3]] }])).toThrow(/isn't valid/);
+    const many = Array.from({ length: 20_001 }, () => [0, 0, 1, 0, 0, 1, 1, 1]);
+    expect(() => engine.markForRedaction([{ page: 0, quads: many }])).toThrow(/too many/);
     expect(() =>
       engine.markForRedaction([{ page: 5, quads: [[0, 0, 1, 0, 0, 1, 1, 1]] }]),
     ).toThrow();

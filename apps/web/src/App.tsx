@@ -474,6 +474,8 @@ export function App() {
           : prev,
       );
       setDirty(false);
+      // The engine drops the history after saving a redacted file, so it can't be undone.
+      if (rewritten) setHistory(NO_HISTORY);
       const name = outcome.fileName ?? doc.fileName;
       const done = outcome.result === "saved" ? `Saved ${name}.` : `Downloaded ${name}.`;
       setStatus(
@@ -762,6 +764,7 @@ export function App() {
   function redactSearchHits() {
     // The search stops after its limit: marking only those would leave later matches in place
     // while seeming to have marked them all.
+    if (query.trim() !== searched) return;
     if (truncated) {
       setStatus(
         `There are more than ${hits.length} matches, too many to mark at once. ` +
@@ -1400,7 +1403,8 @@ export function App() {
                         ? `${currentHit + 1} of ${hits.length}${truncated ? "+" : ""}`
                         : "No matches"}
                 </span>
-                {hits.length > 0 && !searching && (
+                {/* Only for the search shown: not for results of an earlier one after the box changed. */}
+                {hits.length > 0 && !searching && query.trim() === searched && (
                   <button
                     type="button"
                     className="tool"

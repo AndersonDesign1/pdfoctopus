@@ -166,7 +166,8 @@ Redaction is for removing things for good, so check the results carefully. Use
       red outlines and nothing is removed yet; Select can move, resize and delete a mark
 - [ ] **Search, then Redact all:** every match is marked
 - [ ] **Apply redactions:** read the dialog, apply; black boxes replace the marked content, and
-      a comment or highlight under a mark is gone. Undo brings everything back; redo removes it
+      a comment or highlight under a mark is gone. Undo brings everything back; redo removes it.
+      After saving, Undo is greyed out: the redaction is final
 - [ ] **Save**, then open the saved file in **Adobe Acrobat Reader**, **Chrome/Edge** and
       **Firefox**: search for a redacted word (not found), select and copy the text around a
       black box and paste it somewhere (the redacted words aren't in it), and check that pictures
