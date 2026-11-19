@@ -6,6 +6,7 @@
 // in its JavaScript build, so pictures are re-encoded here, one at a time.
 
 import * as mupdf from "mupdf";
+import { errorCode } from "./errors";
 
 /** How hard to try. "high" only rebuilds the file; the others also shrink pictures. */
 export type CompressPreset = "high" | "balanced" | "smallest";
@@ -83,8 +84,17 @@ export function shrinkImages(pdf: mupdf.PDFDocument, preset: CompressPreset): Sh
     if (masks.has(object.asIndirect())) continue;
     try {
       if (shrinkImage(pdf, object, policy, maxEdge)) shrunk++;
-    } catch {
-      // A picture MuPDF can't decode is left as it is.
+    } catch (err) {
+      // A picture MuPDF can't decode is left as it is. A crash (a WebAssembly trap, out of
+      // memory) or a bug isn't a bad picture: it goes on to be reported, and the engine
+      // replaced.
+      if (
+        errorCode(err) === "engine-crashed" ||
+        err instanceof TypeError ||
+        err instanceof RangeError
+      ) {
+        throw err;
+      }
     }
   }
   return { images: shrunk };
@@ -132,17 +142,17 @@ function shrinkImage(
   if (before < scaledPixels * MIN_BYTES_PER_PIXEL) return false;
 
   const image = pdf.loadImage(object);
-  if (image.getBitsPerComponent() !== 8 || image.getImageMask()) return false;
-  const colorspace = image.getColorSpace();
-  if (!colorspace || colorspace.isDeviceN() || colorspace.isLab()) return false;
-
-  // Every pixmap made along the way is freed as soon as it's done with.
+  // Every pixmap made along the way is freed as soon as it's done with, and the image too,
+  // whether it's re-encoded or skipped.
   const made: mupdf.Pixmap[] = [];
   let jpeg: Uint8Array;
   let newW: number;
   let newH: number;
   let gray: boolean;
   try {
+    if (image.getBitsPerComponent() !== 8 || image.getImageMask()) return false;
+    const colorspace = image.getColorSpace();
+    if (!colorspace || colorspace.isDeviceN() || colorspace.isLab()) return false;
     let pixmap = image.toPixmap();
     made.push(pixmap);
     gray = pixmap.getNumberOfComponents() - pixmap.getAlpha() === 1;

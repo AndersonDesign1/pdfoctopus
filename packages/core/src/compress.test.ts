@@ -4,7 +4,7 @@
 // be unsafe), the open document left as it was, and passwords carried over or refused.
 
 import * as mupdf from "mupdf";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { PdfEngine } from "./engine";
 import { ALL_PERMISSIONS } from "./security";
 
@@ -138,6 +138,23 @@ describe("compressedCopy", () => {
     // The soft mask keeps its exact size; the 1-bit picture stays 1-bit.
     expect(found.some((p) => p.w === 1600 && p.h === 1600)).toBe(true);
     expect(found.some((p) => p.bpc === 1 && p.w === 2000)).toBe(true);
+  });
+
+  it("skips a picture MuPDF can't read, but lets a crash through", () => {
+    const engine = open(pdfWithPictures());
+    const spy = vi.spyOn(mupdf.PDFDocument.prototype, "loadImage");
+    try {
+      spy.mockImplementation(() => {
+        throw new Error("cannot decode image");
+      });
+      expect(engine.compressedCopy("smallest").images).toBe(0);
+      spy.mockImplementation(() => {
+        throw new WebAssembly.RuntimeError("memory access out of bounds");
+      });
+      expect(() => engine.compressedCopy("smallest")).toThrow(WebAssembly.RuntimeError);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("includes unsaved changes", () => {
