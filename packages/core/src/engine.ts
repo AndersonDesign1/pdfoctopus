@@ -272,6 +272,8 @@ export interface FormField {
   partialName: string;
   /** What the field starts with and resets to (its /DV), as text. */
   defaultValue: string;
+  /** A text field formatted as a date (by Acrobat's date scripts). */
+  date: boolean;
 }
 
 /** What applyRedactions did, with the document as it is now. */
@@ -1241,6 +1243,7 @@ export class PdfEngine {
           maxLength: maxLength > 0 ? maxLength : null,
           partialName: textOf(fieldOf(object).get("T")),
           defaultValue: textOf(inherited(object, "DV")),
+          date: kind === "text" && isDateField(object),
         };
       });
     } finally {
@@ -1680,8 +1683,15 @@ export class PdfEngine {
     const entries: [mupdf.PDFObject, string][] = [[pageObject, "Annots"]];
     for (const r of removals) entries.push([r.container, r.key]);
     // A radio group whose chosen button goes has no choice left.
-    const group = widget.get("Parent");
-    if (!group.isNull()) entries.push([group, "V"]);
+    // A radio group whose chosen button goes has no choice left. (A checkbox with several boxes
+    // keeps its value: the others still show it.)
+    const parent = widget.get("Parent");
+    const parentFlags = parent.isNull() ? null : parent.get("Ff");
+    const group =
+      parentFlags?.isNumber() && (parentFlags.asNumber() & mupdf.PDFWidget.BTN_FIELD_IS_RADIO) !== 0
+        ? parent
+        : null;
+    if (group) entries.push([group, "V"]);
     if (form) entries.push([form, "XFA"]);
     const before = snapshotEntries(pdf, entries);
     try {
@@ -1690,14 +1700,14 @@ export class PdfEngine {
       removeFrom(pageObject.get("Annots"), widget);
       for (const r of removals) removeFrom(r.container.get(r.key), r.node);
       const state = widget.get("AS");
-      const v = group.isNull() ? null : group.get("V");
+      const v = group ? group.get("V") : null;
       if (
         v?.isName() &&
         state.isName() &&
         v.asName() === state.asName() &&
         state.asName() !== "Off"
       ) {
-        group.put("V", pdf.newName("Off"));
+        group?.put("V", pdf.newName("Off"));
       }
     } catch (err) {
       restoreEntries(pdf, before);
@@ -1705,6 +1715,11 @@ export class PdfEngine {
     }
     const after = snapshotEntries(pdf, entries);
     return this.entryStep("Delete form field", before, after);
+  }
+
+  /** The full names of every field in the form, to suggest a new one that isn't taken. */
+  listFieldNames(): string[] {
+    return [...fieldNames(acroForm(this.requirePdf())).keys()];
   }
 
   /** An undoable step that puts dictionary entries back as they were (and forward again). */
@@ -2328,6 +2343,14 @@ function checkText(text: string): string {
   if (!t) throw new Error("Type some text first");
   if (t.length > MAX_ANNOTATION_TEXT) throw new Error("The text is too long");
   return t;
+}
+
+/** Whether a text field is formatted as a date (Acrobat's AFDate scripts). */
+function isDateField(object: mupdf.PDFObject): boolean {
+  const aa = inherited(object, "AA");
+  const format = aa.isDictionary() ? aa.get("F") : null;
+  const js = format?.isDictionary() ? format.get("JS") : null;
+  return js?.isString() === true && js.asString().includes("AFDate_");
 }
 
 /** A string or name as text ("" for anything else). */

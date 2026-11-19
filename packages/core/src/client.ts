@@ -286,6 +286,11 @@ export class PdfWorkerClient {
     return this.call<"updateField">({ type: "updateField", page, field, changes });
   }
 
+  /** The full names of every field in the form. */
+  listFieldNames() {
+    return this.call<"listFieldNames">({ type: "listFieldNames" });
+  }
+
   /** Delete a form field's box, as one undoable step. */
   deleteField(page: number, field: number) {
     return this.call<"deleteField">({ type: "deleteField", page, field });

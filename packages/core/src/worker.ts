@@ -123,6 +123,8 @@ async function handle(req: WorkerRequest): Promise<WorkerSuccess> {
       return success(req.id, "addField", engine.addField(req.spec));
     case "updateField":
       return success(req.id, "updateField", engine.updateField(req.page, req.field, req.changes));
+    case "listFieldNames":
+      return success(req.id, "listFieldNames", engine.listFieldNames());
     case "deleteField":
       return success(req.id, "deleteField", engine.deleteField(req.page, req.field));
     case "listAnnotations":

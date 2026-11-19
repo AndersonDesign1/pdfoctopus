@@ -50,6 +50,7 @@ export type WorkerRequest =
   | { id: number; type: "addField"; spec: NewField }
   | { id: number; type: "updateField"; page: number; field: number; changes: FieldChanges }
   | { id: number; type: "deleteField"; page: number; field: number }
+  | { id: number; type: "listFieldNames" }
   | { id: number; type: "deleteAnnotation"; page: number; annotation: number }
   | {
       id: number;
@@ -91,6 +92,7 @@ export interface WorkerResults {
   addField: EditResult;
   updateField: EditResult;
   deleteField: EditResult;
+  listFieldNames: string[];
   deleteAnnotation: EditResult;
   editAnnotation: EditResult;
   undo: EditResult | null;

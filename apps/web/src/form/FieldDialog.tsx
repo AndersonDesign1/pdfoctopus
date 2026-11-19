@@ -54,7 +54,8 @@ type Props =
     };
 
 export function FieldDialog(props: Props) {
-  const kind: NewFieldKind | FieldKind = props.mode === "add" ? props.kind : props.field.kind;
+  const kind: NewFieldKind | FieldKind =
+    props.mode === "add" ? props.kind : props.field.date ? "date" : props.field.kind;
   const field = props.mode === "edit" ? props.field : null;
   const [name, setName] = useState(
     field ? field.partialName || field.name : props.mode === "add" ? props.suggestedName : "",

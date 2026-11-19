@@ -292,6 +292,7 @@ export function App() {
         kind: NewFieldKind;
         page: number;
         rect: [number, number, number, number];
+        suggestedName: string;
         error?: string;
       }
     | { mode: "edit"; page: number; field: FormField; error?: string }
@@ -961,11 +962,28 @@ export function App() {
     );
   }
 
-  /** A name no field has yet, like "Text field 3". */
-  function suggestName(kind: NewFieldKind): string {
-    if (kind === "radio" && lastRadioGroup.current) return lastRadioGroup.current;
-    const base = kind === "radio" ? "Group" : FIELD_KIND_NAMES[kind];
-    return `${base} ${(docRef.current?.info.form.fields ?? 0) + 1}`;
+  /**
+   * Open the dialog for a new field whose box was just drawn, with a name no field has yet
+   * ("Text field 3"), or for a radio button, the group the last one joined if it's still there.
+   */
+  function openAddDialog(kind: NewFieldKind, page: number, rect: [number, number, number, number]) {
+    void (async () => {
+      let names: Set<string>;
+      try {
+        names = new Set(await getClient().listFieldNames());
+      } catch {
+        names = new Set();
+      }
+      let suggestedName = "";
+      if (kind === "radio" && lastRadioGroup.current && names.has(lastRadioGroup.current)) {
+        suggestedName = lastRadioGroup.current;
+      } else {
+        const base = kind === "radio" ? "Group" : FIELD_KIND_NAMES[kind];
+        for (let n = 1; !suggestedName || names.has(suggestedName); n++)
+          suggestedName = `${base} ${n}`;
+      }
+      setFieldDialog({ mode: "add", kind, page, rect, suggestedName });
+    })();
   }
 
   /** Run a field change from the dialog: an error keeps the dialog open and shows there. */
@@ -1007,6 +1025,10 @@ export function App() {
     if (d?.mode !== "edit") return;
     runFieldTask("change the field", async (pdf) => {
       const result = await pdf.updateField(d.page, d.field.id, changes);
+      // The group the next radio button is offered follows a rename.
+      if (d.field.kind === "radio" && changes.name && lastRadioGroup.current === d.field.name) {
+        lastRadioGroup.current = changes.name.trim();
+      }
       setFieldDialog(undefined);
       applyEdit(result, `Changed "${changes.name ?? d.field.name}". Undo with Ctrl+Z.`);
     });
@@ -2090,9 +2112,7 @@ export function App() {
                       page={size}
                       scale={viewScale}
                       busy={busy}
-                      onDraw={(rect) =>
-                        setFieldDialog({ mode: "add", kind: formTool, page: index, rect })
-                      }
+                      onDraw={(rect) => openAddDialog(formTool, index, rect)}
                     />
                   );
                 }
@@ -2213,7 +2233,7 @@ export function App() {
           key={`add:${fieldDialog.page}:${fieldDialog.rect.join(",")}`}
           mode="add"
           kind={fieldDialog.kind}
-          suggestedName={suggestName(fieldDialog.kind)}
+          suggestedName={fieldDialog.suggestedName}
           suggestedValue={`Choice${(doc.info.form.fields ?? 0) + 1}`}
           error={fieldDialog.error}
           busy={busy}

@@ -147,6 +147,7 @@ export function FieldEditLayer({
     <div className="pdfo-field-edit-layer">
       {fields.map((field) => {
         const [x0, y0, x1, y1] = field.rect;
+        const kind = FIELD_KIND_NAMES[field.date ? "date" : field.kind];
         return (
           <button
             key={field.id}
@@ -159,8 +160,8 @@ export function FieldEditLayer({
               height: (y1 - y0) * scale,
             }}
             disabled={busy}
-            title={`${FIELD_KIND_NAMES[field.kind]}: ${field.name}`}
-            aria-label={`Edit ${FIELD_KIND_NAMES[field.kind].toLowerCase()} "${field.name}"`}
+            title={`${kind}: ${field.name}`}
+            aria-label={`Edit ${kind.toLowerCase()} "${field.name}"`}
             onClick={() => onPick(field)}
           />
         );

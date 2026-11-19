@@ -127,12 +127,37 @@ describe("addField", () => {
   it("draws each new field, so it shows in other apps", () => {
     const engine = blank();
     engine.addField(field({ kind: "text", name: "Name", defaultValue: "Jane" }));
+    engine.addField(field({ kind: "checkbox", name: "Agree", rect: [72, 120, 90, 138] }));
+    engine.addField(field({ kind: "radio", name: "Size", value: "S", rect: [72, 150, 90, 168] }));
+    engine.addField(
+      field({ kind: "combobox", name: "Colour", rect: [72, 180, 200, 200], options: ["Red"] }),
+    );
+    engine.addField(field({ kind: "date", name: "Date", rect: [72, 210, 200, 230] }));
+    engine.addField(field({ kind: "signature", name: "Sign", rect: [72, 240, 272, 290] }));
     const doc = mupdf.Document.openDocument(engine.save(), "application/pdf");
-    const page = (doc.asPDF() as mupdf.PDFDocument).loadPage(0);
-    const widget = page.getWidgets()[0] as mupdf.PDFWidget;
-    expect(widget.getObject().get("AP").get("N").isStream()).toBe(true);
-    expect(widget.getValue()).toBe("Jane");
+    const widgets = (doc.asPDF() as mupdf.PDFDocument).loadPage(0).getWidgets();
+    expect(widgets).toHaveLength(6);
+    for (const widget of widgets) {
+      const n = widget.getObject().get("AP").get("N");
+      // A checkbox or radio button has an appearance for each state; the rest have one.
+      if (widget.isCheckbox() || widget.isRadioButton()) {
+        expect(n.isDictionary()).toBe(true);
+        expect(n.get("Off").isStream()).toBe(true);
+      } else {
+        expect(n.isStream(), widget.getName()).toBe(true);
+      }
+    }
+    expect(widgets[0]?.getValue()).toBe("Jane");
     doc.destroy();
+  });
+
+  it("lists every field's name, and says which text fields are dates", () => {
+    const engine = blank();
+    engine.addField(field({ kind: "text", name: "Name" }));
+    engine.addField(field({ kind: "date", name: "Born", rect: [72, 120, 200, 140] }));
+    expect(engine.listFieldNames().sort()).toEqual(["Born", "Name"]);
+    expect(byName(engine, "Born").date).toBe(true);
+    expect(byName(engine, "Name").date).toBe(false);
   });
 
   it("adds a field to a form that already has fields, and refuses a name in use", () => {
@@ -497,6 +522,63 @@ describe("deleteField", () => {
     engine.undo();
     engine.undo();
     expect(engine.listFields(0).map((f) => f.value)).toEqual(["S", "L"]);
+  });
+
+  it("keeps a checkbox's value when one of its boxes is deleted", () => {
+    // A checkbox with two boxes (one question shown in two places), ticked.
+    const pdf = new mupdf.PDFDocument();
+    pdf.insertPage(-1, pdf.addPage([0, 0, 300, 300], 0, pdf.newDictionary(), ""));
+    const page = pdf.findPage(0);
+    const parent = pdf.addObject(pdf.newDictionary());
+    parent.put("FT", pdf.newName("Btn"));
+    parent.put("T", pdf.newString("agree"));
+    parent.put("V", pdf.newName("Yes"));
+    const kids = pdf.newArray();
+    const annots = pdf.newArray();
+    for (const x of [20, 60]) {
+      const w = pdf.addObject(pdf.newDictionary());
+      w.put("Type", pdf.newName("Annot"));
+      w.put("Subtype", pdf.newName("Widget"));
+      const rect = pdf.newArray();
+      for (const n of [x, 20, x + 20, 40]) rect.push(n);
+      w.put("Rect", rect);
+      w.put("P", page);
+      w.put("Parent", parent);
+      w.put("AS", pdf.newName("Yes"));
+      const n = pdf.newDictionary();
+      n.put("Yes", pdf.addStream("", pdf.newDictionary()));
+      n.put("Off", pdf.addStream("", pdf.newDictionary()));
+      const ap = pdf.newDictionary();
+      ap.put("N", n);
+      w.put("AP", ap);
+      kids.push(w);
+      annots.push(w);
+    }
+    parent.put("Kids", kids);
+    page.put("Annots", annots);
+    const form = pdf.newDictionary();
+    const fields = pdf.newArray();
+    fields.push(parent);
+    form.put("Fields", fields);
+    pdf.getTrailer().get("Root").put("AcroForm", pdf.addObject(form));
+    const bytes = pdf.saveToBuffer("").asUint8Array().slice();
+    pdf.destroy();
+
+    const engine = open(bytes);
+    const [first] = engine.listFields(0) as [FormField];
+    engine.deleteField(0, first.id);
+    const [left] = engine.listFields(0) as [FormField];
+    expect(left.checked).toBe(true);
+    const doc = mupdf.Document.openDocument(engine.save(), "application/pdf");
+    const v = (doc.asPDF() as mupdf.PDFDocument)
+      .getTrailer()
+      .get("Root")
+      .get("AcroForm")
+      .get("Fields")
+      .get(0)
+      .get("V");
+    expect(v.asName()).toBe("Yes");
+    doc.destroy();
   });
 
   it("deletes a field from a file's own form", () => {
