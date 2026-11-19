@@ -113,6 +113,12 @@ async function handle(req: WorkerRequest): Promise<WorkerSuccess> {
       return success(req.id, "markForRedaction", engine.markForRedaction(req.marks));
     case "applyRedactions":
       return success(req.id, "applyRedactions", engine.applyRedactions());
+    case "listFields":
+      return success(req.id, "listFields", engine.listFields(req.page));
+    case "setFieldValue":
+      return success(req.id, "setFieldValue", engine.setFieldValue(req.page, req.field, req.value));
+    case "flattenForm":
+      return success(req.id, "flattenForm", engine.flattenForm());
     case "listAnnotations":
       return success(req.id, "listAnnotations", engine.listAnnotations(req.page));
     case "deleteAnnotation":

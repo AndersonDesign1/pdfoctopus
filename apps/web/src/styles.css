@@ -1103,3 +1103,66 @@ input {
   max-width: 100%;
   max-height: 110px;
 }
+
+/* ---- Filling in forms ---- */
+
+/* Drawn over each page that has form fields, when no tool is picked. Only the fields take
+   clicks, so the rest of the page still scrolls and selects as usual. */
+.pdfo-form-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.pdfo-form-field {
+  position: absolute;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0 2px;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  background: rgb(107 60 245 / 0.07);
+  color: transparent;
+  font-family: Helvetica, Arial, sans-serif;
+  pointer-events: auto;
+  cursor: text;
+}
+
+.pdfo-form-field:hover {
+  border-color: rgb(107 60 245 / 0.5);
+}
+
+/* The page shows the field's value as the PDF draws it; while typing, the input shows its own
+   text on white instead, so the two never overlap. */
+.pdfo-form-field:focus,
+.pdfo-form-field:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+  background: #fff;
+  color: #111;
+}
+
+.pdfo-form-text {
+  line-height: 1.1;
+}
+
+textarea.pdfo-form-text {
+  resize: none;
+  overflow: auto;
+}
+
+.pdfo-form-toggle:focus,
+.pdfo-form-toggle:focus-visible {
+  background: rgb(107 60 245 / 0.07);
+}
+
+.pdfo-form-toggle,
+.pdfo-form-choice {
+  cursor: pointer;
+  appearance: none;
+}
+
+.pdfo-form-field:disabled {
+  cursor: progress;
+}

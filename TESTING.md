@@ -183,6 +183,44 @@ Redaction is for removing things for good, so check the results carefully. Use
       after saving Acrobat says so
 - [ ] Rotated page: the marked area is what gets removed
 
+## Phase 2: filling in forms
+
+Use `fixtures/third-party/py-pdf/012-libreoffice-form_libreoffice-form.pdf` and
+`fixtures/public-domain/irs-form-w9.pdf`, and a real form of your own if you have one (a tax
+form, a job application).
+
+- [ ] Opening a form PDF says "This PDF has a form" in the status line; fields have a light
+      purple tint
+- [ ] **Text field:** click, type, press Tab: the text stays and the next field has the focus.
+      Enter also does in a one-line field; Escape puts back what was there. A long text in a
+      small box shrinks or is cut off the way the PDF draws it
+- [ ] Type in a field without leaving it, then drop another PDF on the window or close the
+      tab: you're warned about unsaved changes
+- [ ] **Checkbox** ticks and unticks; **radio buttons:** choosing one turns the others in its
+      group off; **dropdown:** pick an option
+- [ ] Type in a text field and press **Ctrl+S** without leaving it: the saved file has the text.
+      Type, then **Escape**: the old text comes back and nothing is saved. Type, scroll several
+      pages away and back: the text is still there
+- [ ] A dropdown that also takes typed answers (Acrobat's "Allow user to enter custom text"):
+      you can type an answer or pick one of the options
+- [ ] **Undo/redo** (Ctrl+Z, Ctrl+Y) step through each field change
+- [ ] **Save**, then open the saved file in **Adobe Acrobat Reader**, **Chrome/Edge** and
+      **Firefox**: every value is there and can still be changed
+- [ ] **IRS W-9:** fill in the name; the status line says the XFA copy was removed. Open the
+      saved file in **Adobe Acrobat Reader**: it shows your values (not an empty form) and no
+      warning about the form being changed
+- [ ] **Flatten form:** read the dialog, flatten; the values stay, the fields can't be clicked
+      any more, and the saved file shows them in Acrobat as plain page content (no form). Undo
+      brings the fields back
+- [ ] A form field under a redaction mark: Apply asks you to flatten the form first; after
+      flattening, Apply removes the field's text
+- [ ] **Keyboard only:** Tab moves through the fields; Space ticks a checkbox
+- [ ] **Phone or tablet:** tapping a field opens the keyboard, and the page still scrolls when
+      dragged between fields
+- [ ] A PDF whose form is only XFA (some older government forms, which show "Please wait…" in
+      other viewers): opening it shows a warning that it can't be filled in
+- [ ] Zoomed in and out, and on a rotated page: the inputs sit over the boxes on the page
+
 ## Problems found
 
 _None yet._

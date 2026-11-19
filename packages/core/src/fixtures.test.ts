@@ -358,3 +358,54 @@ describe("redaction on every fixture", () => {
     60_000,
   );
 });
+
+describe("forms on every fixture", () => {
+  const editable = files.filter((f) => !(f.name in EXPECTED_TO_FAIL) && !(f.name in NOT_EDITABLE));
+  it.each(editable.map((f) => [f.name, f.path]))(
+    "%s: filling in its form (if any) saves a valid file",
+    (name, path) => {
+      const original = new Uint8Array(readFileSync(path));
+      const password = PASSWORDS[name];
+      const engine = new PdfEngine();
+      try {
+        const opened = engine.open(original.slice());
+        if (opened.needsPassword && !engine.authenticate(password ?? "")) {
+          throw new Error(`No working password for ${name}`);
+        }
+        // The first page with fields, if any.
+        let page = -1;
+        for (let i = 0; i < engine.pageCount && page < 0; i++) {
+          if (engine.listFields(i).length > 0) page = i;
+        }
+        if (page < 0) return;
+        const fields = engine.listFields(page).filter((f) => !f.readOnly);
+        const text = fields.find((f) => f.kind === "text" && (f.maxLength ?? 99) >= 4);
+        const box = fields.find((f) => f.kind === "checkbox");
+        if (text) engine.setFieldValue(page, text.id, "Test");
+        if (box) engine.setFieldValue(page, box.id, !box.checked);
+        if (!text && !box) return;
+        let saved: Uint8Array;
+        try {
+          saved = engine.save();
+        } catch (err) {
+          if (!(err instanceof IncrementalSaveError)) throw err;
+          saved = engine.save({ incremental: false });
+        }
+        expect(needsRepair(saved, password)).toBe(false);
+        const check = new PdfEngine();
+        try {
+          const reopened = check.open(saved);
+          if (reopened.needsPassword) check.authenticate(password ?? "");
+          const after = check.listFields(page);
+          if (text) expect(after.find((f) => f.id === text.id)?.value).toBe("Test");
+          if (box) expect(after.find((f) => f.id === box.id)?.checked).toBe(!box.checked);
+        } finally {
+          check.close();
+        }
+      } finally {
+        engine.close();
+      }
+    },
+    60_000,
+  );
+});

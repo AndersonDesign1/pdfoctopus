@@ -25,6 +25,18 @@ import {
   transformRect,
 } from "./annotationObjects";
 import { IncrementalSaveError, PasswordRequiredError } from "./errors";
+import {
+  acroForm,
+  type FieldKind,
+  type FieldSnapshot,
+  fieldKind,
+  fieldObjects,
+  fieldOf,
+  isFillable,
+  isOn,
+  restoreField,
+  snapshotField,
+} from "./forms";
 import { checkStampText, MAX_STAMP_DETAIL, MAX_STAMP_TEXT, stampName } from "./stampRules";
 import { stampAppearance } from "./textStamp";
 
@@ -64,6 +76,8 @@ export interface DocumentInfo {
   metadata: DocumentMetadata;
   /** Areas marked for redaction and not yet applied, on all pages. */
   redactionMarks: number;
+  /** The document's form, if it has one. */
+  form: FormInfo;
   /**
    * True once redactions have been applied: from then on every save rewrites the whole file,
    * because appending would keep the removed content in the original bytes.
@@ -197,6 +211,44 @@ export interface ImageStamp {
   kind: StampKind;
   /** Text describing the stamp (e.g. the date written in it), stored as its description. */
   text?: string;
+}
+
+/** A document's form. */
+export interface FormInfo {
+  /** Form field boxes (widgets) on all pages. */
+  fields: number;
+  /**
+   * "none": an ordinary form, or no form. "hybrid": an ordinary form with an XFA copy (common in
+   * government forms); it can be filled in, and the XFA copy is removed when it is, so every app
+   * shows what was typed. "dynamic": only XFA, which PDFoctopus can't show or fill in.
+   */
+  xfa: "none" | "hybrid" | "dynamic";
+}
+
+/** A form field box on a page, as listFields reports it. */
+export interface FormField {
+  /** Identifies the box on its page (its PDF object number). */
+  id: number;
+  /** The field's full name. Several boxes can share one field (radio buttons). */
+  name: string;
+  /** What the form calls it for people (its tooltip), or its short name. */
+  label: string;
+  kind: FieldKind;
+  /** [left, top, right, bottom] in points from the page's top-left corner as shown. */
+  rect: [number, number, number, number];
+  /** Text, or the chosen option's value. For a checkbox or radio button, its "on" name. */
+  value: string;
+  /** For a checkbox or radio button: whether this box is on. */
+  checked: boolean;
+  /** For a dropdown or list: the options, as shown and as stored. */
+  options: { label: string; value: string }[];
+  readOnly: boolean;
+  required: boolean;
+  multiline: boolean;
+  /** For a dropdown: whether it also takes an answer that isn't one of its options. */
+  editable: boolean;
+  /** Most characters a text field takes, if it has a limit. */
+  maxLength: number | null;
 }
 
 /** What applyRedactions did, with the document as it is now. */
@@ -348,6 +400,7 @@ export class PdfEngine {
       labels: anyLabel ? labels : labels.map(() => null),
       metadata: this.metadata(),
       redactionMarks: this.countRedactionMarks(),
+      form: this.formInfo(),
       redacted: this.redacted,
     };
   }
@@ -1132,6 +1185,233 @@ export class PdfEngine {
   }
 
   // ---------------------------------------------------------------------------------------
+  // Forms: fill in fields, and flatten a form into ordinary page content.
+
+  /** The form field boxes on a page, in the order the page lists them. */
+  listFields(pageIndex: number): FormField[] {
+    const pdf = this.requirePdf();
+    const [index] = this.checkPages([pageIndex]) as [number];
+    const shown = this.shownTransform(index);
+    const page = pdf.loadPage(index);
+    try {
+      return page.getWidgets().map((w) => {
+        const object = w.getObject();
+        const kind = fieldKind(w);
+        const flags = w.getFieldFlags();
+        const choice = kind === "combobox" || kind === "listbox";
+        const labels = choice ? w.getOptions(false) : [];
+        const values = choice ? w.getOptions(true) : [];
+        const maxLength = kind === "text" ? w.getMaxLen() : 0;
+        return {
+          id: object.asIndirect(),
+          name: w.getName(),
+          label: w.getLabel() || w.getName(),
+          kind,
+          rect: transformRect(shown, readRect(object)),
+          value: kind === "checkbox" || kind === "radio" ? onState(object) : w.getValue(),
+          checked: (kind === "checkbox" || kind === "radio") && isOn(object),
+          options: labels.map((label, i) => ({ label, value: values[i] ?? label })),
+          readOnly: w.isReadOnly(),
+          required: (flags & mupdf.PDFWidget.FIELD_IS_REQUIRED) !== 0,
+          multiline: kind === "text" && w.isMultiline(),
+          editable: kind === "combobox" && (flags & mupdf.PDFWidget.CH_FIELD_IS_EDIT) !== 0,
+          maxLength: maxLength > 0 ? maxLength : null,
+        };
+      });
+    } finally {
+      page.destroy();
+    }
+  }
+
+  /**
+   * Fill in a form field, as one undoable step: text for a text field, true or false for a
+   * checkbox, true to choose a radio button, an option's value for a dropdown or list. In a
+   * hybrid form, the XFA copy is removed at the same time, so apps that would show it (Adobe
+   * Reader) show what was typed instead.
+   */
+  setFieldValue(pageIndex: number, id: number, value: string | boolean): EditResult {
+    const pdf = this.requirePdf();
+    const [index] = this.checkPages([pageIndex]) as [number];
+    const page = pdf.loadPage(index);
+    let before: ReturnType<typeof snapshotField> | null = null;
+    try {
+      const widget = page.getWidgets().find((w) => w.getObject().asIndirect() === id);
+      if (!widget) throw new Error("That form field is not on the page");
+      const kind = fieldKind(widget);
+      if (!isFillable(kind)) throw new Error("This kind of field can't be filled in here");
+      if (widget.isReadOnly()) throw new Error("This field is read-only");
+      const object = widget.getObject();
+      const objects = fieldObjects(fieldOf(object));
+
+      // Check the value, and whether it changes anything, before touching the field.
+      let change: (() => void) | null = null;
+      if (kind === "text") {
+        if (typeof value !== "string") throw new Error("A text field takes text");
+        if (value.length > MAX_ANNOTATION_TEXT) throw new Error("The text is too long");
+        const max = widget.getMaxLen();
+        if (max > 0 && value.length > max) {
+          throw new Error(`This field takes ${max} characters at most`);
+        }
+        if (widget.getValue() !== value) change = () => widget.setTextValue(value);
+      } else if (kind === "checkbox") {
+        if (typeof value !== "boolean") throw new Error("A checkbox is ticked or not");
+        if (isOn(object) !== value) change = () => widget.toggle();
+      } else if (kind === "radio") {
+        if (value !== true) throw new Error("A radio button can only be chosen");
+        if (!isOn(object)) change = () => widget.toggle();
+      } else {
+        if (typeof value !== "string") throw new Error("Choose one of the options");
+        const editable =
+          kind === "combobox" && (widget.getFieldFlags() & mupdf.PDFWidget.CH_FIELD_IS_EDIT) !== 0;
+        if (!editable && !widget.getOptions(true).includes(value)) {
+          throw new Error("That isn't one of the options");
+        }
+        if (widget.getValue() !== value) change = () => widget.setChoiceValue(value);
+      }
+      if (!change) return this.run({ label: "", undo() {}, redo() {} }, true);
+
+      const form = acroForm(pdf);
+      const xfa = form?.get("XFA");
+      const xfaBefore = xfa && !xfa.isNull() ? copyDirect(pdf, xfa) : null;
+      before = snapshotField(pdf, objects);
+      change();
+      widget.update();
+      // The field's other boxes on this page show the new value too. (MuPDF already redraws a
+      // text field's boxes on every page; forms.test.ts checks that.)
+      const ids = new Set(objects.map((o) => o.asIndirect()));
+      for (const other of page.getWidgets()) {
+        if (other !== widget && ids.has(other.getObject().asIndirect())) other.update();
+      }
+      if (xfaBefore) form?.delete("XFA");
+      const after = snapshotField(pdf, objects);
+      const saved = before;
+
+      let applied = true;
+      return this.run({
+        label: kind === "checkbox" || kind === "radio" ? "Change form field" : "Fill in form field",
+        redo: () => {
+          if (applied) return;
+          restoreField(pdf, after);
+          if (xfaBefore) form?.delete("XFA");
+          applied = true;
+        },
+        undo: () => {
+          restoreField(pdf, saved);
+          if (xfaBefore) form?.put("XFA", copyDirect(pdf, xfaBefore));
+          applied = false;
+        },
+      });
+    } catch (err) {
+      if (before) restoreField(pdf, before);
+      throw err;
+    } finally {
+      page.destroy();
+    }
+  }
+
+  /**
+   * Flatten the form, as one undoable step: every field box becomes ordinary page content
+   * showing its current value, and the form is gone, so nothing can be changed any more.
+   */
+  flattenForm(): EditResult {
+    const pdf = this.requirePdf();
+    if (this.formInfo().fields === 0) throw new Error("There's no form to flatten");
+    const root = pdf.getTrailer().get("Root");
+    const pageCount = pdf.countPages();
+    const capture = () => ({
+      pages: Array.from({ length: pageCount }, (_, i) => capturePage(pdf, i)),
+      form: root.get("AcroForm").isNull() ? null : copyContainer(pdf, root.get("AcroForm")),
+    });
+    const putBack = (state: ReturnType<typeof capture>) => {
+      state.pages.forEach((page, i) => {
+        restorePage(pdf, i, page);
+      });
+      if (state.form === null) root.delete("AcroForm");
+      else root.put("AcroForm", copyDirect(pdf, state.form));
+    };
+    const before = capture();
+    // A form that asks apps to draw its fields (NeedAppearances) may have empty or stale
+    // appearances; flattening keeps only appearances, so draw the text ones first. Each gets a
+    // new stream (MuPDF would otherwise rewrite the old one in place), so undo can put the old
+    // ones back.
+    const redrawn = this.redrawFieldsIfNeeded(pdf);
+    try {
+      pdf.bake(false, true);
+      // Whatever MuPDF leaves of the form, there are no fields now.
+      root.delete("AcroForm");
+    } catch (err) {
+      putBack(before);
+      restoreField(pdf, redrawn);
+      throw err;
+    }
+    const after = capture();
+    let applied = true;
+    return this.run({
+      label: "Flatten form",
+      redo: () => {
+        if (applied) return;
+        putBack(after);
+        applied = true;
+      },
+      undo: () => {
+        putBack(before);
+        restoreField(pdf, redrawn);
+        applied = false;
+      },
+    });
+  }
+
+  /**
+   * If the form asks apps to draw its fields (NeedAppearances), give every text and choice
+   * field box a freshly drawn appearance. Returns what they had, to put back on undo.
+   */
+  private redrawFieldsIfNeeded(pdf: mupdf.PDFDocument): FieldSnapshot {
+    const form = acroForm(pdf);
+    const need = form?.get("NeedAppearances");
+    if (!need?.isBoolean() || !need.asBoolean()) return [];
+    const snapshot: FieldSnapshot = [];
+    try {
+      for (let i = 0; i < pdf.countPages(); i++) {
+        const page = pdf.loadPage(i);
+        try {
+          for (const w of page.getWidgets()) {
+            const kind = fieldKind(w);
+            if (kind !== "text" && kind !== "combobox" && kind !== "listbox") continue;
+            const object = w.getObject();
+            snapshot.push(...snapshotField(pdf, [object]));
+            object.delete("AP");
+            w.update();
+          }
+        } finally {
+          page.destroy();
+        }
+      }
+    } catch (err) {
+      // Put back the appearances already redrawn, so a failure changes nothing.
+      restoreField(pdf, snapshot);
+      throw err;
+    }
+    return snapshot;
+  }
+
+  /** How many form field boxes there are, and whether the form has XFA. */
+  private formInfo(): FormInfo {
+    const pdf = this.doc?.asPDF();
+    if (!pdf) return { fields: 0, xfa: "none" };
+    let fields = 0;
+    for (let i = 0; i < pdf.countPages(); i++) {
+      const annots = pdf.findPage(i).get("Annots");
+      if (!annots.isArray()) continue;
+      for (let j = 0; j < annots.length; j++) {
+        if (subtype(annots.get(j)) === "Widget") fields++;
+      }
+    }
+    const form = acroForm(pdf);
+    const hasXfa = form !== null && !form.get("XFA").isNull();
+    return { fields, xfa: hasXfa ? (fields > 0 ? "hybrid" : "dynamic") : "none" };
+  }
+
+  // ---------------------------------------------------------------------------------------
   // Redaction: mark areas (or search results), then apply, which removes the text, images and
   // drawings under the marks for good. Applying is one undoable step until the file is saved;
   // saving then rewrites the whole file, so nothing removed is left in it.
@@ -1222,33 +1502,15 @@ export class PdfEngine {
         if (subtype(item) === "Widget" && item.get("Rect").isArray()) {
           if (regions.some((r) => overlaps(r, readRect(item)))) {
             throw new Error(
-              `A redaction mark on page ${index + 1} covers a form field. Redacting form fields isn't supported yet: move or remove that mark.`,
+              `A redaction mark on page ${index + 1} covers a form field. Flatten the form first (its fields become ordinary page content, which can be redacted), or move that mark.`,
             );
           }
         }
       }
     }
 
-    type PageState = Map<string, mupdf.PDFObject | null>;
-    const KEYS = ["Contents", "Resources", "Annots"] as const;
-    // Copies of the entries themselves, even when the page holds them in a shared (indirect)
-    // object, so changes made below can't reach the copy kept for undo.
-    const capture = (index: number): PageState => {
-      const page = pdf.findPage(index);
-      const state: PageState = new Map();
-      for (const key of KEYS) {
-        const v = page.get(key);
-        state.set(key, v.isNull() ? null : copyContainer(pdf, v));
-      }
-      return state;
-    };
-    const putBack = (index: number, state: PageState) => {
-      const page = pdf.findPage(index);
-      for (const [key, v] of state) {
-        if (v === null) page.delete(key);
-        else page.put(key, copyDirect(pdf, v));
-      }
-    };
+    const capture = (index: number) => capturePage(pdf, index);
+    const putBack = (index: number, state: PageState) => restorePage(pdf, index, state);
 
     const before = pages.map(capture);
     let removedAnnotations = 0;
@@ -1731,6 +1993,41 @@ function checkText(text: string): string {
   if (!t) throw new Error("Type some text first");
   if (t.length > MAX_ANNOTATION_TEXT) throw new Error("The text is too long");
   return t;
+}
+
+/** A page's content, resources and annotations, copied so later changes can't reach them. */
+type PageState = Map<string, mupdf.PDFObject | null>;
+const PAGE_STATE_KEYS = ["Contents", "Resources", "Annots"] as const;
+
+function capturePage(pdf: mupdf.PDFDocument, index: number): PageState {
+  const page = pdf.findPage(index);
+  const state: PageState = new Map();
+  for (const key of PAGE_STATE_KEYS) {
+    const v = page.get(key);
+    state.set(key, v.isNull() ? null : copyContainer(pdf, v));
+  }
+  return state;
+}
+
+function restorePage(pdf: mupdf.PDFDocument, index: number, state: PageState): void {
+  const page = pdf.findPage(index);
+  for (const [key, v] of state) {
+    if (v === null) page.delete(key);
+    else page.put(key, copyDirect(pdf, v));
+  }
+}
+
+/** The name of a checkbox's or radio button's "on" state: its appearance other than /Off. */
+function onState(widget: mupdf.PDFObject): string {
+  const ap = widget.get("AP");
+  const normal = ap.isDictionary() ? ap.get("N") : ap;
+  let name = "";
+  if (normal.isDictionary()) {
+    normal.forEach((_v, key) => {
+      if (key !== "Off" && !name) name = String(key);
+    });
+  }
+  return name || "Yes";
 }
 
 /** The areas a page's redaction marks cover, in PDF space: each quad's box, or the mark's box. */

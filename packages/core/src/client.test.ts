@@ -128,6 +128,7 @@ describe("PdfWorkerClient", () => {
         labels: [null],
         metadata: {},
         redactionMarks: 0,
+        form: { fields: 0, xfa: "none" as const },
         redacted: false,
       },
       history: { canUndo: true, canRedo: false, undoLabel: "Insert 2 files", redoLabel: null },
