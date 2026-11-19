@@ -15,6 +15,7 @@ import type {
   TextStamp,
 } from "./engine";
 import { EngineCrashedError, errorFromCode, isFatalEngineError } from "./errors";
+import type { ExportOptions } from "./exportFiles";
 import type { FieldChanges, NewField } from "./formBuild";
 import type {
   LoadProgress,
@@ -302,6 +303,11 @@ export class PdfWorkerClient {
   /** A new PDF (blank pages, pictures, or text laid out on pages), as bytes. */
   createPdf(spec: CreateSpec) {
     return this.call<"createPdf">({ type: "createPdf", spec });
+  }
+
+  /** One page (0-based) as a picture, SVG, text or HTML (UTF-8), with unsaved changes. */
+  exportPage(page: number, options: ExportOptions) {
+    return this.call<"exportPage">({ type: "exportPage", page, options });
   }
 
   /** A smaller copy of the document; the open document isn't changed. */
