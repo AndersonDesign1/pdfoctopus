@@ -7,6 +7,7 @@ import {
   assembleExport,
   type CompressPreset,
   type CreateSpec,
+  crc32,
   type DocumentInfo,
   describePages,
   type EditResult,
@@ -1144,8 +1145,8 @@ export function App() {
     if (!doc) return;
     const { fileName } = doc;
     const pageCount = doc.info.pageCount;
-    const kind =
-      filePerPage(options.format) && pages.length > 1 ? ZIP_TYPE : EXPORT_TYPES[options.format];
+    const zipped = filePerPage(options.format) && pages.length > 1;
+    const kind = zipped ? ZIP_TYPE : EXPORT_TYPES[options.format];
     exportStop.current = false;
     void runTask("export the pages", async (pdf) => {
       // Asked first, while the browser still counts it as part of the click.
@@ -1173,7 +1174,14 @@ export function App() {
                 "resolution.",
             );
           }
-          exported.push({ page, bytes });
+          // Each page's checksum now, while the next one is made, rather than all at the end.
+          exported.push({ page, bytes, crc: zipped ? crc32(bytes) : undefined });
+        }
+        // Stop pressed while the last page was being made.
+        if (exportStop.current) {
+          setExportDialog({});
+          setStatus("Export stopped. Nothing was saved.");
+          return;
         }
         const file = assembleExport(fileName, options.format, exported, pageCount);
         const outcome = await writeToDestination(destination, file.bytes);

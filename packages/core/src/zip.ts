@@ -7,6 +7,8 @@
 export interface ZipEntry {
   name: string;
   bytes: Uint8Array;
+  /** The bytes' CRC-32, if worked out already (e.g. as each file was made). */
+  crc?: number;
 }
 
 /** The largest archive written, in bytes (ZIP without ZIP64 counts to 4 GB). */
@@ -68,7 +70,7 @@ export function zipFiles(entries: readonly ZipEntry[], now = new Date()): Uint8A
   let p = 0;
   for (const [i, e] of entries.entries()) {
     const name = names[i] as Uint8Array;
-    const crc = crc32(e.bytes);
+    const crc = e.crc ?? crc32(e.bytes);
     offsets.push(p);
     crcs.push(crc);
     view.setUint32(p, 0x04034b50, true); // local file header

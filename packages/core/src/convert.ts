@@ -81,13 +81,20 @@ export function exportPage(page: mupdf.Page, index: number, options: ExportOptio
     case "text":
     case "html": {
       const html = options.format === "html";
-      const text = page.toStructuredText(
-        html ? "preserve-whitespace,preserve-images" : "preserve-whitespace",
-      );
+      // Through a display list with annotations and form fields, so what's typed into a
+      // form comes out too (the page's own text leaves out unflattened field values).
+      const list = page.toDisplayList(true);
       try {
-        return new TextEncoder().encode(html ? text.asHTML(index) : text.asText());
+        const text = list.toStructuredText(
+          html ? "preserve-whitespace,preserve-images" : "preserve-whitespace",
+        );
+        try {
+          return new TextEncoder().encode(html ? text.asHTML(index) : text.asText());
+        } finally {
+          text.destroy();
+        }
       } finally {
-        text.destroy();
+        list.destroy();
       }
     }
     default:

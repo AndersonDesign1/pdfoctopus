@@ -39,6 +39,11 @@ export interface ExportedPage {
   /** 0-based page index. */
   page: number;
   bytes: Uint8Array;
+  /**
+   * The bytes' CRC-32, for a ZIP. Worked out as each page arrives, so making the ZIP at the
+   * end doesn't have to read every byte again in one go.
+   */
+  crc?: number;
 }
 
 export interface ExportFile {
@@ -164,6 +169,7 @@ export function assembleExport(
       pages.map((p) => ({
         name: pageFileName(stem, p.page, pageCount, type.extension),
         bytes: p.bytes,
+        crc: p.crc,
       })),
     );
     return file(zip, ZIP_TYPE);

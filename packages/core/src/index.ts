@@ -72,3 +72,4 @@ export {
   type StampLayout,
   stampName,
 } from "./stampRules";
+export { crc32 } from "./zip";

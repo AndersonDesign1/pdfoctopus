@@ -3,6 +3,8 @@
 // Exporting pages as pictures, SVG, text and HTML, and putting them in files (a ZIP when
 // there are several).
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import * as mupdf from "mupdf";
 import { afterEach, describe, expect, it } from "vitest";
 import { exportScale, MAX_EXPORT_PIXELS } from "./convert";
@@ -124,6 +126,22 @@ describe("exportPage", () => {
     expect(html).not.toContain("<page>");
   });
 
+  it("includes what's typed into form fields, in text and HTML", () => {
+    const form = join(
+      import.meta.dirname,
+      "..",
+      "..",
+      "..",
+      "fixtures/third-party/py-pdf/012-libreoffice-form_libreoffice-form.pdf",
+    );
+    const engine = open(new Uint8Array(readFileSync(form)));
+    const field = engine.listFields(0).find((f) => f.kind === "text");
+    if (!field) throw new Error("No text field");
+    engine.setFieldValue(0, field.id, "Zanzibar Quokka");
+    expect(decode(engine.exportPage(0, { format: "text" }))).toContain("Zanzibar Quokka");
+    expect(decode(engine.exportPage(0, { format: "html" }))).toContain("Zanzibar Quokka");
+  });
+
   it("refuses bad pages and options", () => {
     const engine = open(textPdf(["One"]));
     expect(() => engine.exportPage(1, { format: "png" })).toThrow(/no such page/);
@@ -208,6 +226,15 @@ describe("zipFiles", () => {
   it("computes the standard CRC-32", () => {
     expect(crc32(new TextEncoder().encode("123456789"))).toBe(0xcbf43926);
     expect(crc32(new Uint8Array())).toBe(0);
+  });
+
+  it("uses checksums worked out beforehand", () => {
+    const bytes = new Uint8Array([5, 6, 7]);
+    const zip = zipFiles([{ name: "a", bytes, crc: crc32(bytes) }]);
+    expect(unzip(zip)).toEqual([{ name: "a", bytes }]);
+    // The given checksum is written as it is, not worked out again.
+    const view = new DataView(zipFiles([{ name: "a", bytes, crc: 1234 }]).buffer);
+    expect(view.getUint32(14, true)).toBe(1234);
   });
 
   it("writes an archive that reads back, empty or not", () => {
