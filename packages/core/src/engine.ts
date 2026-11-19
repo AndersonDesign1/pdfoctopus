@@ -8,6 +8,7 @@ import {
   canEditText,
   canRecolor,
   canResize,
+  copyContainer,
   copyDirect,
   describe,
   insertAt,
@@ -1218,12 +1219,14 @@ export class PdfEngine {
 
     type PageState = Map<string, mupdf.PDFObject | null>;
     const KEYS = ["Contents", "Resources", "Annots"] as const;
+    // Copies of the entries themselves, even when the page holds them in a shared (indirect)
+    // object, so changes made below can't reach the copy kept for undo.
     const capture = (index: number): PageState => {
       const page = pdf.findPage(index);
       const state: PageState = new Map();
       for (const key of KEYS) {
         const v = page.get(key);
-        state.set(key, v.isNull() ? null : copyDirect(pdf, v));
+        state.set(key, v.isNull() ? null : copyContainer(pdf, v));
       }
       return state;
     };
@@ -1237,6 +1240,27 @@ export class PdfEngine {
 
     const before = pages.map(capture);
     let removedAnnotations = 0;
+    // Annotations deleted from under the marks, and their entries. Taking them off the page
+    // isn't enough: a reply (/IRT), the structure tree of a tagged PDF or anything else can
+    // still point at one, and a full save keeps whatever is pointed at. So each is emptied, and
+    // its entries kept here (in memory only) for undo.
+    const emptied: { object: mupdf.PDFObject; entries: [string, mupdf.PDFObject][] }[] = [];
+    const empty = (object: mupdf.PDFObject) => {
+      const entries: [string, mupdf.PDFObject][] = [];
+      object.forEach((value, key) => {
+        entries.push([String(key), copyDirect(pdf, value)]);
+      });
+      for (const [key] of entries) object.delete(key);
+      emptied.push({ object, entries });
+    };
+    const refill = () => {
+      for (const { object, entries } of emptied) {
+        for (const [key, value] of entries) object.put(key, copyDirect(pdf, value));
+      }
+    };
+    const reEmpty = () => {
+      for (const { object, entries } of emptied) for (const [key] of entries) object.delete(key);
+    };
     try {
       for (const index of pages) {
         const page = pdf.findPage(index);
@@ -1257,6 +1281,7 @@ export class PdfEngine {
             subtype(item) === "Popup" && parent.isIndirect() && doomed.has(parent.asIndirect());
           if (doomed.has(item.asIndirect()) || ownPopup) {
             annots.delete(i);
+            empty(item);
             if (!ownPopup) removedAnnotations++;
           }
         }
@@ -1265,7 +1290,9 @@ export class PdfEngine {
           loaded.applyRedactions(
             true,
             mupdf.PDFPage.REDACT_IMAGE_PIXELS,
-            mupdf.PDFPage.REDACT_LINE_ART_REMOVE_IF_COVERED,
+            // Any drawing a mark touches goes, even partly: what's outside the mark goes too,
+            // rather than leave something recoverable under the black box.
+            mupdf.PDFPage.REDACT_LINE_ART_REMOVE_IF_TOUCHED,
             mupdf.PDFPage.REDACT_TEXT_REMOVE,
           );
         } finally {
@@ -1273,6 +1300,7 @@ export class PdfEngine {
         }
       }
     } catch (err) {
+      refill();
       pages.forEach((index, i) => {
         putBack(index, before[i] as PageState);
       });
@@ -1286,12 +1314,14 @@ export class PdfEngine {
       label: "Apply redactions",
       redo: () => {
         if (applied) return;
+        reEmpty();
         pages.forEach((index, i) => {
           putBack(index, after[i] as PageState);
         });
         applied = true;
       },
       undo: () => {
+        refill();
         pages.forEach((index, i) => {
           putBack(index, before[i] as PageState);
         });

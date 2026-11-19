@@ -173,6 +173,10 @@ Redaction is for removing things for good, so check the results carefully. Use
       under a mark are blacked out, not just covered
 - [ ] A mark that only touches the edge of a word: the whole word (or letter) is removed, not
       half of it
+- [ ] A mark across a table or a drawn line: the whole line goes (on purpose, so nothing partly
+      covered is left), and the rest of the table stays
+- [ ] A PDF with comments that have replies (made in Acrobat): redact a comment; its text is
+      gone from the saved file, and the reply stays
 - [ ] A form PDF with a mark over a form field: Apply refuses with a message about form fields
 - [ ] A digitally signed PDF: the dialog warns that signatures will no longer be valid, and
       after saving Acrobat says so

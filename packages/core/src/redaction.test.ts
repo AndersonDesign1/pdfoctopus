@@ -207,6 +207,81 @@ describe("redaction", () => {
     expect(engine.search("Secret agent").hits).toHaveLength(1);
   });
 
+  it("removes a drawing that only partly lies under a mark", () => {
+    // A thick blue line across the bottom of the page; mark only its middle.
+    const engine = open(textPdf());
+    engine.addAnnotation({ kind: "redact", page: 0, rect: [180, 260, 220, 280] });
+    engine.applyRedactions();
+    // Well outside the mark, the line is gone too: no part of it is left to recover.
+    const [r, g, b] = pixel(engine, 60, 270);
+    expect(b > 200 && r < 100 && g < 100).toBe(false);
+  });
+
+  it("empties a deleted comment, so nothing pointing at it keeps its text in the file", () => {
+    const engine = open(textPdf());
+    const box = boxOf(engine, "Bond");
+    engine.addAnnotation({
+      kind: "note",
+      page: 0,
+      at: [box[0] + 2, box[1] + 2],
+      text: "Codename Nightingale",
+      color: [1, 1, 0],
+    });
+    // A reply elsewhere on the page that points back at the comment (/IRT).
+    const saved1 = engine.save();
+    const doc = mupdf.Document.openDocument(saved1, "application/pdf");
+    const pdf = doc.asPDF() as mupdf.PDFDocument;
+    const annots = pdf.findPage(0).get("Annots");
+    const comment = annots.get(0);
+    const reply = pdf.newDictionary();
+    reply.put("Type", pdf.newName("Annot"));
+    reply.put("Subtype", pdf.newName("Text"));
+    const r = pdf.newArray();
+    for (const v of [350, 20, 370, 40]) r.push(v);
+    reply.put("Rect", r);
+    reply.put("Contents", pdf.newString("Agreed"));
+    reply.put("IRT", comment);
+    annots.push(pdf.addObject(reply));
+    const withReply = pdf.saveToBuffer("").asUint8Array().slice();
+    doc.destroy();
+
+    const e2 = open(withReply);
+    e2.addAnnotation({ kind: "redact", page: 0, rect: boxOf(e2, "Bond") });
+    e2.applyRedactions();
+    const out = mupdf.Document.openDocument(e2.save(), "application/pdf");
+    const raw = (out.asPDF() as mupdf.PDFDocument).saveToBuffer("garbage,decompress").asString();
+    out.destroy();
+    expect(raw).not.toContain("Nightingale");
+    expect(raw).toContain("Agreed");
+  });
+
+  it("undoes fully when the page's annotation list is a shared object", () => {
+    const original = textPdf();
+    const doc = mupdf.Document.openDocument(original, "application/pdf");
+    const pdf = doc.asPDF() as mupdf.PDFDocument;
+    const note = pdf.newDictionary();
+    note.put("Type", pdf.newName("Annot"));
+    note.put("Subtype", pdf.newName("Text"));
+    const r = pdf.newArray();
+    for (const v of [100, 215, 120, 235]) r.push(v); // PDF space: on the first line
+    note.put("Rect", r);
+    note.put("Contents", pdf.newString("Codename Nightingale"));
+    const annots = pdf.newArray();
+    annots.push(pdf.addObject(note));
+    pdf.findPage(0).put("Annots", pdf.addObject(annots)); // an indirect /Annots array
+    const indirect = pdf.saveToBuffer("").asUint8Array().slice();
+    doc.destroy();
+
+    const engine = open(indirect);
+    engine.addAnnotation({ kind: "redact", page: 0, rect: [30, 60, 370, 100] });
+    expect(engine.applyRedactions().annotationsRemoved).toBe(1);
+    expect(engine.listAnnotations(0)).toEqual([]);
+    engine.undo();
+    const labels = engine.listAnnotations(0).map((a) => a.label);
+    expect(labels).toEqual(["note", "redaction mark"]);
+    expect(engine.listAnnotations(0)[0]?.text).toBe("Codename Nightingale");
+  });
+
   it("refuses to redact over a form field, changing nothing", () => {
     const original = textPdf();
     const doc = mupdf.Document.openDocument(original, "application/pdf");

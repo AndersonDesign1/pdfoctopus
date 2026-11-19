@@ -236,9 +236,12 @@ closed.
   "incremental unless agreed" rule asks for.
 - **Engine:** `addAnnotation({ kind: "redact" })`, `markForRedaction` and `applyRedactions` in
   `packages/core/src/engine.ts`, using MuPDF's redaction (text removed, image pixels blacked
-  out, line art removed if covered). MuPDF writes the pages' new content as new objects, so
+  out, and any drawing a mark touches removed entirely, so nothing partly covered is left to
+  recover; a table border crossing a mark goes with it). MuPDF writes the pages' new content as new objects, so
   undo puts the old `/Contents`, `/Resources` and `/Annots` back. MuPDF leaves other
-  annotations alone, so the engine deletes those under a mark itself.
+  annotations alone, so the engine deletes those under a mark itself, and empties each deleted
+  one: a reply (/IRT) or a tagged PDF's structure tree can still point at it, and a full save
+  keeps whatever is pointed at. Its entries are kept in memory for undo.
 - **Form fields are refused:** a field's value lives in the form, not only on the page, so
   deleting its box would leave the value in the file. Apply says which page and does nothing.
   Proper field redaction can come with the forms work.
@@ -249,6 +252,8 @@ closed.
   page of every editable fixture, saves, and checks it reopens without repair.
 - **Checked:** in Chromium end to end (Redact all on a name, a box mark, apply, search finds
   nothing, save), and the saved file in MuPDF (no trace of the name) and pdf.js.
+- **Redact all** refuses when the search stopped at its 5,000-match limit, rather than mark
+  only some matches.
 - **Not covered yet:** the document's title and other metadata, bookmarks, attachments and
   hidden layers aren't changed (the dialog says so); a later version could offer to clear them.
   A mark removes every letter it touches, even partly.

@@ -759,6 +759,15 @@ export function App() {
 
   /** Mark every search result for redaction, to check and then apply. */
   function redactSearchHits() {
+    // The search stops after its limit: marking only those would leave later matches in place
+    // while seeming to have marked them all.
+    if (truncated) {
+      setStatus(
+        `There are more than ${hits.length} matches, too many to mark at once. ` +
+          "Search for something more specific, or mark areas with the Redact tool.",
+      );
+      return;
+    }
     const marks = hits.map((h) => ({ page: h.page, quads: h.quads }));
     if (marks.length === 0) return;
     const word = searched ?? "the search";
@@ -1396,7 +1405,11 @@ export function App() {
                     className="tool"
                     disabled={locked}
                     onClick={redactSearchHits}
-                    title="Mark every match for redaction"
+                    title={
+                      truncated
+                        ? "Too many matches to mark them all: search for something more specific"
+                        : "Mark every match for redaction"
+                    }
                   >
                     Redact all
                   </button>
