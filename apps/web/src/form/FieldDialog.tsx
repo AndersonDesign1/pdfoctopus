@@ -85,7 +85,10 @@ export function FieldDialog(props: Props) {
     }
     const changes: FieldChanges = { name, required };
     if (hasDefault) changes.defaultValue = defaultValue;
-    if (hasOptions) changes.options = optionList;
+    // Options are only sent when they change, so a field's own option labels are left alone.
+    const before = field?.options.map((o) => o.value) ?? [];
+    const same = before.length === optionList.length && before.every((o, i) => o === optionList[i]);
+    if (hasOptions && !same) changes.options = optionList;
     props.onSubmit(changes);
   };
 

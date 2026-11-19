@@ -174,8 +174,8 @@ function ensureHelvetica(pdf: mupdf.PDFDocument, form: mupdf.PDFObject): void {
 }
 
 /**
- * The entries adding a field can change, to snapshot first: the page's /Annots, and the
- * form's /Fields and resources, or the whole /AcroForm if the file has none yet.
+ * The entries adding a field can change, to snapshot first: the page's /Annots, the root's
+ * /AcroForm, and the form's /Fields, resources and XFA copy.
  */
 export function entriesForAdd(
   pdf: mupdf.PDFDocument,
@@ -184,11 +184,15 @@ export function entriesForAdd(
 ): [mupdf.PDFObject, string][] {
   const root = pdf.getTrailer().get("Root");
   const form = root.get("AcroForm");
-  const entries: [mupdf.PDFObject, string][] = [[page, "Annots"]];
+  // The root's link to the form is in every snapshot, so undo and redo both put it right
+  // whether or not the file had a form before.
+  const entries: [mupdf.PDFObject, string][] = [
+    [page, "Annots"],
+    [root, "AcroForm"],
+  ];
   if (group) entries.push([group, "Kids"]);
-  if (!form.isDictionary()) entries.push([root, "AcroForm"]);
-  else {
-    entries.push([form, "Fields"], [form, "DA"], [form, "DR"]);
+  if (form.isDictionary()) {
+    entries.push([form, "Fields"], [form, "DA"], [form, "DR"], [form, "XFA"]);
     const dr = form.get("DR");
     // DR is snapshot as a copy, but its font dictionary may be its own object.
     if (dr.isDictionary() && dr.get("Font").isIndirect()) entries.push([dr.get("Font"), "Helv"]);

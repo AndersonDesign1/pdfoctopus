@@ -1457,6 +1457,8 @@ export class PdfEngine {
     let widget: mupdf.PDFObject | null = null;
     try {
       const form = ensureForm(pdf);
+      // A hybrid form's XFA copy would show the form as it was (in Adobe Reader).
+      form.delete("XFA");
       const rect = transformRect(invert(this.shownTransform(index)), [x0, y0, x1, y1]);
       const built = buildField(pdf, pageObject, { ...spec, name }, name, rect, group);
       widget = built.widget;
@@ -1529,6 +1531,9 @@ export class PdfEngine {
         if (kind !== "combobox" && kind !== "listbox")
           throw new Error("Only a dropdown or list has options");
         options = checkOptions(changes.options);
+        const now = widget.getOptions(true);
+        if (now.length === options.length && now.every((o, i) => o === options?.[i]))
+          options = null;
       }
       let defaultValue: string | null = null;
       if (changes.defaultValue !== undefined) {
@@ -1555,25 +1560,45 @@ export class PdfEngine {
         return this.run({ label: "", undo() {}, redo() {} }, true);
       }
 
+      const form = acroForm(pdf);
       const keys: [mupdf.PDFObject, string][] = [
         [field, "T"],
         [field, "Ff"],
         [field, "DV"],
         [field, "Opt"],
       ];
+      if (form) keys.push([form, "XFA"]);
       const beforeEntries = snapshotEntries(pdf, keys);
       const beforeValue = snapshotField(pdf, objects);
       try {
+        // A hybrid form's XFA copy would show the form as it was (in Adobe Reader).
+        form?.delete("XFA");
         if (name !== null) field.put("T", pdf.newString(name));
         if (required !== null) {
           field.put("Ff", required ? flags | FIELD_FLAGS.required : flags & ~FIELD_FLAGS.required);
         }
         if (options !== null) {
+          // An option kept from before keeps its label, if it had its own (["CA", "California"]).
+          const values = widget.getOptions(true);
+          const labels = widget.getOptions(false);
           const opt = pdf.newArray();
-          for (const o of options) opt.push(pdf.newString(o));
+          for (const o of options) {
+            const i = values.indexOf(o);
+            const label = i >= 0 ? labels[i] : undefined;
+            if (label !== undefined && label !== o) {
+              const pair = pdf.newArray();
+              pair.push(pdf.newString(o));
+              pair.push(pdf.newString(label));
+              opt.push(pair);
+            } else opt.push(pdf.newString(o));
+          }
           field.put("Opt", opt);
-          // An answer that's no longer an option is cleared.
-          if (widget.getValue() && !options.includes(widget.getValue())) widget.setChoiceValue("");
+          // An answer that's no longer an option is cleared, unless the dropdown takes typed
+          // answers.
+          const editable = (flags & mupdf.PDFWidget.CH_FIELD_IS_EDIT) !== 0;
+          if (!editable && widget.getValue() && !options.includes(widget.getValue())) {
+            widget.setChoiceValue("");
+          }
         }
         if (defaultValue !== null) {
           const old = textOf(inherited(widget.getObject(), "DV"));
@@ -1654,8 +1679,11 @@ export class PdfEngine {
     // A radio group whose chosen button goes has no choice left.
     const group = widget.get("Parent");
     if (!group.isNull()) entries.push([group, "V"]);
+    if (form) entries.push([form, "XFA"]);
     const before = snapshotEntries(pdf, entries);
     try {
+      // A hybrid form's XFA copy would show the form as it was (in Adobe Reader).
+      form?.delete("XFA");
       removeFrom(pageObject.get("Annots"), widget);
       for (const r of removals) removeFrom(r.container.get(r.key), r.node);
       const state = widget.get("AS");

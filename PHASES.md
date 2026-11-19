@@ -324,6 +324,10 @@ it. Each change is one undoable step, and saving stays incremental.
   which separates the parts of a full name. A new default value is shown in a field that's
   empty or still shows the old default; changing a dropdown's options clears an answer that's
   no longer offered.
+- **Hybrid forms** (the IRS W-9): adding, changing or deleting a field removes the XFA copy in
+  the same step (undo puts it back), as filling in does, so Adobe Reader shows the change.
+- **Options** are only rewritten when they change, and an option kept from before keeps its own
+  label (`["CA", "California"]`); a dropdown that takes typed answers keeps one.
 - **Undo** snapshots the entries a change touches (the page's `/Annots`, the form's `/Fields`
   and resources, a group's `/Kids`, or the field's `/T`, `/Ff`, `/DV`, `/Opt` and value) and
   puts them back.

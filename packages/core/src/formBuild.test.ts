@@ -13,6 +13,21 @@ import type { NewField } from "./formBuild";
 
 const fixtures = join(import.meta.dirname, "..", "..", "..", "fixtures");
 const LIBREOFFICE = join(fixtures, "third-party/py-pdf/012-libreoffice-form_libreoffice-form.pdf");
+const W9 = join(fixtures, "public-domain/irs-form-w9.pdf");
+
+/** Change a saved file's first field with MuPDF (to give it something PDFoctopus can't make). */
+function tweakFirstField(
+  bytes: Uint8Array,
+  change: (pdf: mupdf.PDFDocument, field: mupdf.PDFObject) => void,
+): Uint8Array {
+  const doc = mupdf.Document.openDocument(bytes, "application/pdf");
+  const pdf = doc.asPDF() as mupdf.PDFDocument;
+  const field = pdf.getTrailer().get("Root").get("AcroForm").get("Fields").get(0);
+  change(pdf, field);
+  const out = pdf.saveToBuffer("").asUint8Array().slice();
+  doc.destroy();
+  return out;
+}
 
 const opened: PdfEngine[] = [];
 afterEach(() => {
@@ -215,6 +230,48 @@ describe("addField", () => {
   });
 });
 
+describe("undo and redo of the first field", () => {
+  it("puts the form back on redo, so names are still checked", () => {
+    const engine = blank();
+    engine.addField(field({ kind: "text", name: "Name" }));
+    engine.undo();
+    expect(engine.info().form.fields).toBe(0);
+    engine.redo();
+    expect(engine.info().form.fields).toBe(1);
+    expect(() => engine.addField(field({ kind: "text", name: "Name" }))).toThrow(/already a field/);
+    const doc = mupdf.Document.openDocument(engine.save(), "application/pdf");
+    const fields = (doc.asPDF() as mupdf.PDFDocument)
+      .getTrailer()
+      .get("Root")
+      .get("AcroForm")
+      .get("Fields");
+    expect(fields.length).toBe(1);
+    doc.destroy();
+  });
+});
+
+describe("hybrid (XFA) forms", () => {
+  it("removes the XFA copy when a field is added, changed or deleted, and undo puts it back", () => {
+    const engine = open(new Uint8Array(readFileSync(W9)));
+    expect(engine.info().form.xfa).toBe("hybrid");
+    engine.addField(field({ kind: "text", name: "Extra", rect: [72, 700, 200, 720] }));
+    expect(engine.info().form.xfa).toBe("none");
+    engine.undo();
+    expect(engine.info().form.xfa).toBe("hybrid");
+
+    const first = engine.listFields(0).find((f) => f.kind === "text") as FormField;
+    engine.updateField(0, first.id, { required: true });
+    expect(engine.info().form.xfa).toBe("none");
+    engine.undo();
+    expect(engine.info().form.xfa).toBe("hybrid");
+
+    engine.deleteField(0, first.id);
+    expect(engine.info().form.xfa).toBe("none");
+    engine.undo();
+    expect(engine.info().form.xfa).toBe("hybrid");
+  });
+});
+
 describe("updateField", () => {
   it("renames a field, makes it required and gives it a default value, undoably", () => {
     const engine = blank();
@@ -259,6 +316,58 @@ describe("updateField", () => {
     expect(now.value).toBe("");
     engine.undo();
     expect(byName(engine, "Colour").value).toBe("Green");
+  });
+
+  it("keeps options' own labels, and leaves options alone when they don't change", () => {
+    const engine = blank();
+    engine.addField(field({ kind: "combobox", name: "State", options: ["CA", "NY"] }));
+    const bytes = tweakFirstField(engine.save(), (pdf, f) => {
+      const opt = pdf.newArray();
+      for (const [value, label] of [
+        ["CA", "California"],
+        ["NY", "New York"],
+      ] as const) {
+        const pair = pdf.newArray();
+        pair.push(pdf.newString(value));
+        pair.push(pdf.newString(label));
+        opt.push(pair);
+      }
+      f.put("Opt", opt);
+    });
+    const check = open(bytes);
+    const state = byName(check, "State");
+    expect(state.options).toEqual([
+      { label: "California", value: "CA" },
+      { label: "New York", value: "NY" },
+    ]);
+    // What the dialog sends when only the name changes: the same option values.
+    check.updateField(0, state.id, { name: "Home state", options: ["CA", "NY"] });
+    expect(byName(check, "Home state").options.map((o) => o.label)).toEqual([
+      "California",
+      "New York",
+    ]);
+    check.updateField(0, state.id, { options: ["CA", "NY", "TX"] });
+    expect(byName(check, "Home state").options).toEqual([
+      { label: "California", value: "CA" },
+      { label: "New York", value: "NY" },
+      { label: "TX", value: "TX" },
+    ]);
+  });
+
+  it("keeps a typed answer in a dropdown that takes them", () => {
+    const engine = blank();
+    engine.addField(field({ kind: "combobox", name: "Colour", options: ["Red", "Green"] }));
+    const bytes = tweakFirstField(engine.save(), (_pdf, f) => {
+      f.put("Ff", f.get("Ff").asNumber() | mupdf.PDFWidget.CH_FIELD_IS_EDIT);
+    });
+    const check = open(bytes);
+    const colour = byName(check, "Colour");
+    expect(colour.editable).toBe(true);
+    check.setFieldValue(0, colour.id, "Teal");
+    check.updateField(0, colour.id, { required: true, options: ["Red", "Green"] });
+    expect(byName(check, "Colour").value).toBe("Teal");
+    check.updateField(0, colour.id, { options: ["Red", "Blue"] });
+    expect(byName(check, "Colour").value).toBe("Teal");
   });
 
   it("renames a whole radio group from any of its buttons", () => {
