@@ -1227,3 +1227,29 @@ textarea.pdfo-form-text {
 .pdfo-field-delete {
   margin-right: auto;
 }
+
+/* ---- Passwords and permissions ---- */
+
+.pdfo-password-pair {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+}
+
+.pdfo-password-pair input {
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+@media (max-width: 480px) {
+  .pdfo-password-pair {
+    grid-template-columns: 1fr;
+  }
+}
+
+.pdfo-permissions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
