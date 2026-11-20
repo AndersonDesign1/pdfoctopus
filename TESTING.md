@@ -34,6 +34,9 @@ Decided (no action needed):
 - **Timestamps (B-T signatures)**: a later Phase 5 PR adds them as an opt-in, off by default.
   When switched on, only a hash of the signature (never the file) is sent to a free public
   RFC 3161 timestamp server (DigiCert's, with Sectigo's as the other choice).
+- (2026-11-20) **Trusting signers**: the browser has no list of trusted certificates, so the
+  Signatures panel shows who signed as their certificate says and that the identity isn't
+  verified. A later PR can let people mark certificates as trusted (kept on their device).
 
 ## Phase 1: page tools and saving
 
@@ -403,6 +406,31 @@ certificate as a trusted root"; remove it again afterwards.
       signature as valid without trusting anything by hand
 - [ ] Open the signed files in **Chrome/Edge** and **Firefox**: they open and show the box
 - [ ] **Phone:** the Digital ID tab fits the screen; signing works
+
+## Phase 5: signature panel
+
+Open the signed files in `fixtures/generated/` and `fixtures/public-domain/`. A banner under the
+toolbar says who signed and whether the signatures are intact; **Signatures** in the banner
+lists each one.
+
+- [ ] `signed.pdf`: green banner, "Signed by Test Signer One. Signature intact." The panel
+      shows the reason, place, time, "The whole file, 1 page" and the certificate chain
+- [ ] `signed-twice.pdf` and `signed-by-pdfoctopus-twice.pdf`: both signatures intact; the
+      first says "More signatures were added after it" and covers version 2 of 3
+- [ ] `signed-then-annotated.pdf`: amber banner, "comments or mark-up were added or changed
+      after it was signed"
+- [ ] `signed-tampered.pdf`: red banner, "signature is broken", and the panel says the signed
+      part of the file was altered
+- [ ] `gpo-public-law-118-1-signed.pdf`: intact, signed by the U.S. Government Publishing
+      Office, chain up to DigiCert Assured ID Root CA
+- [ ] An unsigned file (`invoice.pdf`) shows no banner
+- [ ] Sign `invoice.pdf` with a test ID (Digital ID tab): the banner appears straight away and
+      the panel lists the new signature as intact. Save, reopen: still intact
+- [ ] After signing, add a note and save, then reopen: amber banner (comments added later)
+- [ ] The panel always says the signer's identity isn't verified (no trust list yet)
+- [ ] Compare with **Adobe Acrobat Reader**'s signature panel for the same files: the same
+      signatures are intact or broken, and the same ones were changed after signing
+- [ ] **Phone:** the banner and the panel fit the screen
 
 ## Problems found
 

@@ -327,6 +327,14 @@ export class PdfWorkerClient {
   }
 
   /**
+   * The signatures in the file as opened (or as last signed), what was changed after each,
+   * and the file's bytes for checking them (see @pdfoctopus/sign's checkSignatures).
+   */
+  inspectSignatures() {
+    return this.call<"inspectSignatures">({ type: "inspectSignatures" });
+  }
+
+  /**
    * Save the document with a signature field and room for a certificate signature. The open
    * document isn't changed; pass the signature over the returned byte range to
    * finishSignature.

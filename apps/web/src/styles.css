@@ -260,6 +260,167 @@ input {
   display: none;
 }
 
+/* ---- Signatures ---- */
+
+:root {
+  --sig-good: #1b7f3b;
+  --sig-warn: #a15c00;
+  --sig-bad: var(--error);
+  --sig-unknown: var(--muted);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --sig-good: #6fd18f;
+    --sig-warn: #ffc069;
+  }
+}
+
+:root[data-theme="dark"] {
+  --sig-good: #6fd18f;
+  --sig-warn: #ffc069;
+}
+
+.sig-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  border-left: 4px solid var(--sig-tone);
+  font-size: 0.9rem;
+  --sig-tone: var(--sig-unknown);
+}
+
+.sig-banner-good {
+  --sig-tone: var(--sig-good);
+}
+
+.sig-banner-warn {
+  --sig-tone: var(--sig-warn);
+}
+
+.sig-banner-bad {
+  --sig-tone: var(--sig-bad);
+}
+
+.sig-banner-text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.sig-banner-button {
+  padding: 3px 12px;
+  flex: none;
+}
+
+.sig-icon {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 1.4em;
+  height: 1.4em;
+  border-radius: 50%;
+  color: #fff;
+  font-weight: 700;
+  font-size: 0.85rem;
+  line-height: 1;
+  background: var(--sig-unknown);
+}
+
+.sig-good {
+  background: var(--sig-good);
+}
+
+.sig-warn {
+  background: var(--sig-warn);
+}
+
+.sig-bad {
+  background: var(--sig-bad);
+}
+
+.sig-text-good {
+  color: var(--sig-good);
+}
+
+.sig-text-warn {
+  color: var(--sig-warn);
+}
+
+.sig-text-bad {
+  color: var(--sig-bad);
+}
+
+.sig-text-unknown {
+  color: var(--sig-unknown);
+}
+
+.pdfo-dialog:has(.sig-dialog) {
+  width: min(640px, calc(100vw - 32px));
+}
+
+.sig-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+  max-height: min(60vh, 560px);
+  overflow-y: auto;
+}
+
+.sig-item {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.sig-item-head {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.sig-item-title {
+  font-weight: 600;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+}
+
+.sig-item-status {
+  font-weight: 600;
+}
+
+.sig-item-detail {
+  margin: 2px 0 0;
+}
+
+.sig-notes {
+  margin: 8px 0 0;
+  padding-left: 2.6em;
+}
+
+.sig-details {
+  margin-top: 10px;
+  font-size: 0.9rem;
+}
+
+.sig-details div {
+  grid-template-columns: 7em 1fr;
+}
+
+.sig-hint {
+  color: var(--muted);
+  font-size: 0.9rem;
+  margin: 12px 0 0;
+}
+
 /* ---- Workspace ---- */
 
 .app-main {

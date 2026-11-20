@@ -17,6 +17,7 @@
   },
   "devDependencies": {
     "@pdfoctopus/core": "workspace:*",
+    "mupdf": "1.28.1",
     "@types/node": "^22",
     "vitest": "^5.1.0"
   }

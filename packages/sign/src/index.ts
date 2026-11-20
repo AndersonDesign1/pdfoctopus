@@ -7,6 +7,7 @@
 
 import { padesSignature, sha256 } from "./cms";
 import type { SigningIdentity } from "./p12";
+import { type CryptoCheck, verifySignature } from "./verify";
 
 export { padesSignature, sha256 } from "./cms";
 export {
@@ -53,4 +54,59 @@ export async function signPdfBytes(
   range: ByteRange,
 ): Promise<Uint8Array> {
   return padesSignature(identity, await sha256(rangeBytes(bytes, range)));
+}
+
+export { type CertificateInfo, type CryptoCheck, verifySignature } from "./verify";
+
+/** What a signature reader (packages/core's inspectSignatures) gives for each signature. */
+export interface SignatureInput {
+  byteRange: readonly number[] | null;
+  contents: Uint8Array;
+  subFilter?: string;
+  time?: number;
+  problems: string[];
+  coversWholeFile: boolean;
+}
+
+/**
+ * - "intact": the bytes it covers are unchanged, the signature checks out, and nothing was
+ *   added after it.
+ * - "changed": intact, but the file was changed (added to) after signing.
+ * - "broken": the bytes were changed or the signature doesn't check out.
+ * - "unknown": it couldn't be checked (an unsupported format or algorithm).
+ */
+export type SignatureStatus = "intact" | "changed" | "broken" | "unknown";
+
+/** Check every signature read from a file. `file` is the file they were read from. */
+export async function checkSignatures<T extends SignatureInput>(
+  file: Uint8Array,
+  signatures: readonly T[],
+): Promise<(T & { check: CryptoCheck; status: SignatureStatus })[]> {
+  const out: (T & { check: CryptoCheck; status: SignatureStatus })[] = [];
+  for (const signature of signatures) {
+    const check: CryptoCheck =
+      signature.byteRange && signature.contents.length > 0
+        ? await verifySignature(
+            file,
+            signature.byteRange,
+            signature.contents,
+            signature.subFilter,
+            signature.time,
+          )
+        : {
+            intact: false,
+            problems: [],
+            warnings: [],
+            chain: [],
+            chainLinked: false,
+            validAtSigning: null,
+            timestamped: false,
+          };
+    let status: SignatureStatus;
+    if (signature.problems.length > 0 || check.intact === false) status = "broken";
+    else if (check.intact === null) status = "unknown";
+    else status = signature.coversWholeFile ? "intact" : "changed";
+    out.push({ ...signature, check, status });
+  }
+  return out;
 }

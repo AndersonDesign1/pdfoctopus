@@ -85,6 +85,7 @@ import {
   writeByteRange,
   writeSignature,
 } from "./signature";
+import { inspectSignatures, type SignatureInspection, signedFields } from "./signatureCheck";
 import {
   listSignatureFields,
   MAX_SIGNATURE_TEXT,
@@ -466,6 +467,13 @@ export class PdfEngine {
   /** A file prepared for signing, waiting for its signature (see prepareSignature). */
   private prepared: { bytes: Uint8Array; at: SignaturePlaceholders; field: string } | null = null;
   /**
+   * The file as opened, kept only when it has signatures, so they can be checked against the
+   * bytes they cover (see inspectSignatures).
+   */
+  private signedBytes: Uint8Array | null = null;
+  /** The password the file was opened with, to open its signed versions the same way. */
+  private password: string | null = null;
+  /**
    * Text layout of recently used pages, for selecting text; dropped whenever the document
    * changes. Only a few pages are kept, least recently used dropped first.
    */
@@ -480,8 +488,20 @@ export class PdfEngine {
     this.doc = mupdf.Document.openDocument(bytes, "application/pdf");
     this.base = { length: bytes.byteLength, startxref: lastStartxref(bytes) };
     this.locked = this.doc.needsPassword();
+    this.signedBytes = bytes;
     if (this.locked) return { needsPassword: true };
+    this.keepBytesIfSigned();
     return { needsPassword: false, ...this.info() };
+  }
+
+  /** Keep the opened file's bytes only if it has signatures (they can be large). */
+  private keepBytesIfSigned(): void {
+    const pdf = this.doc?.asPDF();
+    try {
+      if (!pdf || signedFields(pdf).length === 0) this.signedBytes = null;
+    } catch {
+      this.signedBytes = null;
+    }
   }
 
   /** Try a password. Returns the document's info on success, or null if it was wrong. */
@@ -492,6 +512,8 @@ export class PdfEngine {
     if (result === 0) return null;
     this.locked = false;
     this.ownerUnlocked = (result & 4) !== 0;
+    this.password = password;
+    this.keepBytesIfSigned();
     return this.info();
   }
 
@@ -643,6 +665,29 @@ export class PdfEngine {
   /** Every signature field in the document, signed or not. */
   signatureFields(): SignatureFieldInfo[] {
     return listSignatureFields(this.requirePdf());
+  }
+
+  /**
+   * The signatures in the file as it was opened (or as last signed), with what was changed
+   * after each one. Unsaved changes aren't included: they aren't signed or saved yet. The
+   * file comes back too, for the cryptographic check (packages/sign).
+   */
+  inspectSignatures(): SignatureInspection {
+    // Not a PDF (an HTML file, say): no signatures, rather than an error.
+    this.requireDoc();
+    const bytes = this.signedBytes;
+    if (!bytes) return { file: null, signatures: [], truncated: false, skipped: 0 };
+    // A separate copy of the file, so unsaved changes in the open document don't count.
+    const current = mupdf.Document.openDocument(bytes, "application/pdf");
+    try {
+      const pdf = current.asPDF();
+      const unlocked =
+        !current.needsPassword() || current.authenticatePassword(this.password ?? "") !== 0;
+      if (!pdf || !unlocked) return { file: null, signatures: [], truncated: false, skipped: 0 };
+      return inspectSignatures(bytes, pdf);
+    } finally {
+      current.destroy();
+    }
   }
 
   /**
@@ -970,6 +1015,8 @@ export class PdfEngine {
     this.changes = 0;
     this.signedFile = null;
     this.prepared = null;
+    this.signedBytes = null;
+    this.password = null;
   }
 
   // ---------------------------------------------------------------------------------------
