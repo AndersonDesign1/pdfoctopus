@@ -108,6 +108,36 @@ describe("page labels", () => {
     expect(readBack(engine)).toEqual({ labels: "i,ii,iii,1,2,3", sheets: "1,2,3,4,5,6" });
   });
 
+  it("keeps a section whole across several edits", () => {
+    const engine = open(labelledPdf(6, FRONT_MATTER));
+    // The move writes the numbers as two ranges ("1" at the front, "2, 3" at the back).
+    engine.movePages([5], 0);
+    engine.deletePages([0]);
+    expect(readBack(engine)).toEqual({ labels: "i,ii,iii,1,2", sheets: "1,2,3,4,5" });
+    engine.movePages([4], 0);
+    engine.movePages([0], 4);
+    expect(readBack(engine).labels).toBe("i,ii,iii,1,2");
+    engine.undo();
+    engine.undo();
+    engine.undo();
+    expect(readBack(engine).labels).toBe("1,i,ii,iii,2,3");
+    engine.redo();
+    expect(readBack(engine).labels).toBe("i,ii,iii,1,2");
+  });
+
+  it("keeps a chapter that starts its count again as a section of its own", () => {
+    // 1, 2, then 1, 2 again (two sections in the same style).
+    const engine = open(
+      labelledPdf(4, [
+        [0, "D"],
+        [2, "D"],
+      ]),
+    );
+    expect(readBack(engine).labels).toBe("1,2,1,2");
+    engine.deletePages([0]);
+    expect(readBack(engine).labels).toBe("1,1,2");
+  });
+
   it("numbers inserted pages with the section before them", () => {
     const engine = open(labelledPdf(6, FRONT_MATTER));
     engine.insertBlankPages(4, 2);
@@ -157,6 +187,41 @@ describe("page labels", () => {
     const pdf = doc.asPDF() as mupdf.PDFDocument;
     expect(pdf.getTrailer().get("Root").get("PageLabels").isDictionary()).toBe(false);
     doc.destroy();
+  });
+
+  it("reads a crafted label tree that refers to the same nodes over and over quickly", () => {
+    const bytes = labelledPdf(3, null);
+    const doc = mupdf.Document.openDocument(bytes, "application/pdf");
+    const pdf = doc.asPDF() as mupdf.PDFDocument;
+    const leaf = pdf.newDictionary();
+    const nums = pdf.newArray();
+    const roman = pdf.newDictionary();
+    roman.put("S", pdf.newName("r"));
+    nums.push(0);
+    nums.push(roman);
+    leaf.put("Nums", nums);
+    // Each level refers to the one below twice: 2^18 visits if every reference were walked.
+    // (Deeper trees are slow in MuPDF's own label lookup, when the file is opened.)
+    let node = pdf.addObject(leaf);
+    for (let level = 0; level < 18; level++) {
+      const parent = pdf.newDictionary();
+      const kids = pdf.newArray();
+      kids.push(node);
+      kids.push(node);
+      parent.put("Kids", kids);
+      node = pdf.addObject(parent);
+    }
+    pdf.getTrailer().get("Root").put("PageLabels", node);
+    const crafted = pdf.saveToBuffer("").asUint8Array().slice();
+    doc.destroy();
+
+    const engine = open(crafted);
+    const started = Date.now();
+    engine.deletePages([0]);
+    engine.undo();
+    engine.redo();
+    expect(Date.now() - started).toBeLessThan(3000);
+    expect(readBack(engine).labels).toBe("i,ii");
   });
 
   it("copes with a label tree that skips the first pages or has stray keys", () => {

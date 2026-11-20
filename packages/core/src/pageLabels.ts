@@ -4,7 +4,9 @@
 // A PDF's labels are ranges keyed by page index (the /PageLabels number tree), so once pages
 // move the ranges point at the wrong pages. Here each page keeps the range (section) it was
 // in, and each section is numbered again in order: delete "ii" from "i, ii, iii, 1, 2" and the
-// result is "i, ii, 1, 2". Pages that are new to the document carry on the section of the
+// result is "i, ii, 1, 2". A section can be written as several ranges (after a move, "1" at
+// the front and "2, 3" at the back): a range that carries on the count of an earlier range in
+// the same style counts as the same section. Pages that are new to the document carry on the section of the
 // page before them (or after them, at the start). A document without labels is kept without
 // them.
 
@@ -20,6 +22,16 @@ interface LabelRange {
   first: number;
 }
 
+/** A label section: its style, prefix and first number. */
+interface Section {
+  style?: string;
+  prefix?: string;
+  first: number;
+}
+
+/** Most nodes a label tree walk visits: a crafted file can't make an edit hang. */
+const MAX_TREE_NODES = 100_000;
+
 /** What labels a document had before a change, by page object, to apply afterwards. */
 export interface LabelPlan {
   /**
@@ -27,8 +39,8 @@ export interface LabelPlan {
    * tree in place when it deletes or inserts pages.
    */
   before: mupdf.PDFObject;
-  ranges: LabelRange[];
-  /** Page object number → index of its range in `ranges`. */
+  sections: Section[];
+  /** Page object number → index of its section in `sections`. */
   sectionOf: Map<number, number>;
 }
 
@@ -36,33 +48,81 @@ function root(pdf: mupdf.PDFDocument): mupdf.PDFObject {
   return pdf.getTrailer().get("Root");
 }
 
-/** A deep, direct copy of an object (references followed, to a limited depth). */
-function copyObject(pdf: mupdf.PDFDocument, object: mupdf.PDFObject, depth = 0): mupdf.PDFObject {
-  if (depth > 32) return pdf.newNull();
-  const o = object.resolve();
-  if (o.isArray()) {
+/** Counts the nodes a walk visits, and stops it when there are too many. */
+class Budget {
+  private left = MAX_TREE_NODES;
+  spend(): void {
+    if (--this.left < 0) throw new Error("This file's page labels are too complex to update");
+  }
+}
+
+/**
+ * A deep copy of an object. Each referenced object is copied once, as a new object, and
+ * shared where it's referred to again; a loop becomes null; and the whole copy is bounded.
+ */
+function copyObject(
+  pdf: mupdf.PDFDocument,
+  object: mupdf.PDFObject,
+  budget = new Budget(),
+  copies = new Map<number, mupdf.PDFObject>(),
+  path = new Set<number>(),
+): mupdf.PDFObject {
+  budget.spend();
+  if (object.isIndirect()) {
+    const num = object.asIndirect();
+    const done = copies.get(num);
+    if (done) return done;
+    if (path.has(num) || path.size > 32) return pdf.newNull();
+    path.add(num);
+    try {
+      // Kept as an object of its own, so copying the copy (for each undo) shares it too.
+      const copy = pdf.addObject(copyObject(pdf, object.resolve(), budget, copies, path));
+      copies.set(num, copy);
+      return copy;
+    } finally {
+      path.delete(num);
+    }
+  }
+  if (object.isArray()) {
     const array = pdf.newArray();
-    for (let i = 0; i < o.length; i++) array.push(copyObject(pdf, o.get(i), depth + 1));
+    for (let i = 0; i < object.length; i++) {
+      array.push(copyObject(pdf, object.get(i), budget, copies, path));
+    }
     return array;
   }
-  if (o.isDictionary()) {
+  if (object.isDictionary()) {
     const dict = pdf.newDictionary();
-    o.forEach((value, key) => {
-      dict.put(String(key), copyObject(pdf, value, depth + 1));
+    object.forEach((value, key) => {
+      dict.put(String(key), copyObject(pdf, value, budget, copies, path));
     });
     return dict;
   }
   // Numbers, names, strings and booleans are values, not shared containers.
-  return o;
+  return object;
 }
 
-/** The number tree's pairs, from /Nums and any /Kids (depth-limited against loops). */
-function treeEntries(node: mupdf.PDFObject, depth = 0): [number, mupdf.PDFObject][] {
+/**
+ * The number tree's pairs, from /Nums and any /Kids. Each node is read once, however often
+ * it's referred to, and the walk is bounded.
+ */
+function treeEntries(
+  node: mupdf.PDFObject,
+  budget = new Budget(),
+  seen = new Set<number>(),
+  depth = 0,
+): [number, mupdf.PDFObject][] {
+  budget.spend();
+  if (node.isIndirect()) {
+    const num = node.asIndirect();
+    if (seen.has(num)) return [];
+    seen.add(num);
+  }
   if (depth > 32 || !node.isDictionary()) return [];
   const out: [number, mupdf.PDFObject][] = [];
   const nums = node.get("Nums");
   if (nums.isArray()) {
     for (let i = 0; i + 1 < nums.length; i += 2) {
+      budget.spend();
       const key = nums.get(i);
       const value = nums.get(i + 1);
       if (key.isNumber() && value.isDictionary()) out.push([key.asNumber(), value]);
@@ -70,7 +130,9 @@ function treeEntries(node: mupdf.PDFObject, depth = 0): [number, mupdf.PDFObject
   }
   const kids = node.get("Kids");
   if (kids.isArray()) {
-    for (let i = 0; i < kids.length; i++) out.push(...treeEntries(kids.get(i), depth + 1));
+    for (let i = 0; i < kids.length; i++) {
+      out.push(...treeEntries(kids.get(i), budget, seen, depth + 1));
+    }
   }
   return out;
 }
@@ -108,14 +170,34 @@ export function planLabels(pdf: mupdf.PDFDocument): LabelPlan | null {
   const pageCount = pdf.countPages();
   const ranges = readRanges(before, pageCount);
   if (ranges.length === 0) return null;
+
+  // Ranges become sections. A range that carries on the count of the latest section in the
+  // same style and prefix (as when a move split one) joins it; others start a new section.
+  const sections: Section[] = [];
+  const nextNumber: number[] = [];
+  const latest = new Map<string, number>();
+  const sectionOfRange = ranges.map((range, r) => {
+    const end = r + 1 < ranges.length ? (ranges[r + 1] as LabelRange).start : pageCount;
+    const key = `${range.style ?? ""}\u0000${range.prefix ?? ""}`;
+    let section = latest.get(key);
+    if (section === undefined || nextNumber[section] !== range.first) {
+      section = sections.length;
+      sections.push({ style: range.style, prefix: range.prefix, first: range.first });
+      nextNumber.push(range.first);
+      latest.set(key, section);
+    }
+    nextNumber[section] = (nextNumber[section] as number) + (end - range.start);
+    return section;
+  });
+
   const sectionOf = new Map<number, number>();
-  let section = 0;
+  let r = 0;
   for (let i = 0; i < pageCount; i++) {
-    while (section + 1 < ranges.length && (ranges[section + 1] as LabelRange).start <= i) section++;
+    while (r + 1 < ranges.length && (ranges[r + 1] as LabelRange).start <= i) r++;
     const page = pdf.findPage(i);
-    if (page.isIndirect()) sectionOf.set(page.asIndirect(), section);
+    if (page.isIndirect()) sectionOf.set(page.asIndirect(), sectionOfRange[r] as number);
   }
-  return { before: copyObject(pdf, before), ranges, sectionOf };
+  return { before: copyObject(pdf, before), sections, sectionOf };
 }
 
 /** Write the labels again for the pages as they are now, each in its old section. */
@@ -134,13 +216,13 @@ export function applyLabels(pdf: mupdf.PDFDocument, plan: LabelPlan): void {
     return previous;
   });
 
-  const next = plan.ranges.map((r) => r.first);
+  const next = plan.sections.map((section) => section.first);
   const nums = pdf.newArray();
   let current = -1;
   for (let i = 0; i < pageCount; i++) {
     const section = resolved[i] as number;
     if (section !== current) {
-      const range = plan.ranges[section] as LabelRange;
+      const range = plan.sections[section] as Section;
       const dict = pdf.newDictionary();
       dict.put("Type", pdf.newName("PageLabel"));
       if (range.style) dict.put("S", pdf.newName(range.style));
