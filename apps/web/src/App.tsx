@@ -80,6 +80,7 @@ import {
   pictureToImage,
   type StampImage,
 } from "./sign/stampImage";
+import { desktopTransport, serverName } from "./sign/timestamp";
 import {
   SignatureBanner,
   SignaturesDialog,
@@ -901,30 +902,54 @@ export function App() {
     where: { field: string } | { rect: [number, number, number, number] },
   ) {
     return runTask("sign with your digital ID", async (pdf) => {
-      setStatus("Signing…");
+      setStatus(choice.timestamp ? "Signing and getting a timestamp…" : "Signing…");
       const sign = await import("@pdfoctopus/sign");
       const now = new Date();
-      const prepared = await pdf.prepareSignature({
-        page,
-        ...where,
-        signer: choice.identity.name,
-        dateText: signingTimeText(now),
-        signingTime: now.getTime(),
-        reason: choice.reason,
-        location: choice.location,
-        signatureSize: sign.signatureSizeFor(choice.identity),
-      });
-      const signature = await sign.signPdfBytes(
-        choice.identity,
-        prepared.bytes,
-        prepared.byteRange,
-      );
+      // The engine saves the file with room for the signature (more if a timestamp server
+      // sends a bigger answer than expected, in which case it's prepared again).
+      const prepare = (signatureSize: number) =>
+        pdf.prepareSignature({
+          page,
+          ...where,
+          signer: choice.identity.name,
+          dateText: signingTimeText(now),
+          signingTime: now.getTime(),
+          reason: choice.reason,
+          location: choice.location,
+          signatureSize,
+        });
+      const server = choice.timestamp;
+      let timestamped = false;
+      let signature: Uint8Array;
+      if (server) {
+        try {
+          signature = await sign.signWithRoom(choice.identity, prepare, {
+            send: desktopTransport(server),
+            serverName: serverName(server),
+          });
+          timestamped = true;
+        } catch (err) {
+          if (!(err instanceof sign.TimestampError)) throw err;
+          // Never drop a timestamp the user asked for without asking.
+          const without = window.confirm(
+            `${err.message}\n\nSign without a timestamp? The signature is still valid, but has no trusted time.`,
+          );
+          if (!without) {
+            setStatus("Not signed: the timestamp couldn't be added.");
+            return;
+          }
+          signature = await sign.signWithRoom(choice.identity, prepare);
+        }
+      } else {
+        signature = await sign.signWithRoom(choice.identity, prepare);
+      }
       const result = await pdf.finishSignature(signature);
       setPending(undefined);
       // Signing can't be undone (the engine starts a new history from the signed file).
+      const how = timestamped && server ? `, timestamped by ${serverName(server)}` : "";
       applyEdit(
         { info: result.info, history: NO_HISTORY },
-        `Signed page ${page + 1} with ${choice.identity.name}'s digital ID. Save to keep it. ` +
+        `Signed page ${page + 1} with ${choice.identity.name}'s digital ID${how}. Save to keep it. ` +
           "It can't be undone; to drop it, close the file without saving.",
         undefined,
         page,

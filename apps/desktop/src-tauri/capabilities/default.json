@@ -8,6 +8,9 @@
     "dialog:allow-save",
     "dialog:allow-open",
     "fs:allow-write-file",
-    "fs:allow-exists"
+    "fs:allow-exists",
+    "allow-startup-file-name",
+    "allow-read-startup-file",
+    "allow-timestamp-request"
   ]
 }

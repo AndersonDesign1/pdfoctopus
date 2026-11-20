@@ -132,6 +132,20 @@ function lower(s: string): string {
   return s.charAt(0).toLowerCase() + s.slice(1);
 }
 
+/**
+ * The signature's trusted timestamp in words, e.g. "Timestamped by DigiCert … at 20 Nov 2026,
+ * 09:00", or undefined if it has none. A timestamp that doesn't check out says so.
+ */
+export function timestampOf(
+  s: CheckedSignature,
+  formatTime: (ms: number) => string,
+): string | undefined {
+  const ts = s.check.timestamp;
+  if (!ts) return undefined;
+  const line = `Timestamped by ${ts.authority} at ${formatTime(ts.time)}`;
+  return ts.valid ? `${line}.` : `${line}, but the timestamp doesn't check out.`;
+}
+
 /** What part of the file the signature covers. */
 export function coverageOf(s: CheckedSignature): string {
   if (!s.byteRange || s.status === "broken") return "";

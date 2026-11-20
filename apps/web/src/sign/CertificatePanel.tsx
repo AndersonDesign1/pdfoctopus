@@ -5,9 +5,10 @@
 // sent anywhere, and are forgotten when the dialog closes or the signature is made.
 
 import type { SignatureFieldInfo } from "@pdfoctopus/core";
-import type { SigningIdentity } from "@pdfoctopus/sign";
+import type { SigningIdentity, TimestampServer } from "@pdfoctopus/sign";
 import { useEffect, useId, useRef, useState } from "react";
 import { MAX_DIGITAL_ID_BYTES } from "./certificate";
+import { SERVERS, savedServer, saveServer, timestampsAvailable } from "./timestamp";
 
 /** What to sign with, and where. */
 export interface CertificateChoice {
@@ -16,6 +17,8 @@ export interface CertificateChoice {
   location: string;
   /** An empty signature field to sign, or null for a new box placed on the page. */
   field: SignatureFieldInfo | null;
+  /** The timestamp server to add a trusted timestamp from, or null for none (the default). */
+  timestamp: TimestampServer | null;
 }
 
 const MAX_TEXT = 200;
@@ -45,6 +48,10 @@ export function CertificatePanel({
   const [location, setLocation] = useState("");
   /** The field to sign, by name, or "" for a new box. */
   const [where, setWhere] = useState<string | null>(null);
+  const canTimestamp = timestampsAvailable();
+  // Off by default; the server chosen last time is remembered.
+  const [timestamped, setTimestamped] = useState(false);
+  const [server, setServer] = useState<TimestampServer>(() => savedServer());
 
   // Mounted: results that arrive after the dialog closed are dropped.
   const open = useRef(true);
@@ -199,6 +206,50 @@ export function CertificatePanel({
               </label>
             </fieldset>
           )}
+          <fieldset className="pdfo-fieldset">
+            <legend>Trusted timestamp</legend>
+            <label className="pdfo-choice">
+              <input
+                type="checkbox"
+                checked={canTimestamp && timestamped}
+                disabled={!canTimestamp}
+                onChange={(e) => setTimestamped(e.target.checked)}
+              />
+              Add a trusted timestamp
+            </label>
+            {canTimestamp ? (
+              <>
+                <p className="pdfo-hint">
+                  Proves when you signed, even after your certificate expires. Only a fingerprint
+                  (hash) of the signature is sent to the timestamp server, never the file.
+                </p>
+                {timestamped && (
+                  <label className="pdfo-field">
+                    Timestamp server
+                    <select
+                      value={server}
+                      onChange={(e) => {
+                        const next = e.target.value as TimestampServer;
+                        setServer(next);
+                        saveServer(next);
+                      }}
+                    >
+                      {SERVERS.map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+              </>
+            ) : (
+              <p className="pdfo-hint">
+                Timestamps are available in the desktop app: browsers can't reach the timestamp
+                servers.
+              </p>
+            )}
+          </fieldset>
           <p className="pdfo-hint">
             Signing includes your unsaved changes. Changes made after signing are added after the
             signature, which stays valid and shows they were made later.
@@ -221,7 +272,15 @@ export function CertificatePanel({
           className="button"
           disabled={!ready}
           onClick={() => {
-            if (identity) onChoose({ identity, reason, location, field });
+            if (identity) {
+              onChoose({
+                identity,
+                reason,
+                location,
+                field,
+                timestamp: canTimestamp && timestamped ? server : null,
+              });
+            }
           }}
         >
           {field ? "Sign" : "Place signature"}

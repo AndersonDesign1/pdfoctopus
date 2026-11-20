@@ -3,14 +3,28 @@
 // Checking a signature in a PDF: the CMS / PKCS #7 blob from its /Contents, against the bytes
 // in its byte range. The bytes are hashed and compared with the messageDigest signed
 // attribute, and the signer's signature over the signed attributes is checked with WebCrypto
-// (RSA PKCS #1 v1.5, RSA-PSS, ECDSA P-256/384/521). The signer's certificate and the chain the
-// signature carries are described, but not checked against a trust list: the browser has
-// none, so who signed is reported as "not verified". packages/core reads the signatures from
-// the file and works out what was changed after each one; checkSignatures puts both together.
+// (RSA PKCS #1 v1.5, RSA-PSS, ECDSA P-256/384/521). A timestamp token (PAdES B-T), if there
+// is one, is checked too: its own signature, and that it's for this signature; its time is
+// then used for the certificate's validity at signing instead of the signer's claimed time.
+// The signer's certificate and the chain the signature carries are described, but not checked
+// against a trust list: the browser has none, so who signed is reported as "not verified".
+// packages/core reads the signatures from the file and works out what was changed after each
+// one; checkSignatures puts both together.
 
 import * as asn1js from "asn1js";
 import * as pkijs from "pkijs";
+import {
+  attribute,
+  certificatesOf,
+  checkSigner,
+  DIGESTS,
+  digestOf,
+  engine,
+  equalBytes,
+  signerCertificate,
+} from "./cmsCheck";
 import { displayName } from "./p12";
+import { timestampTokenOf, verifyTimestampToken } from "./timestamp";
 
 /** A certificate, described for people. */
 export interface CertificateInfo {
@@ -27,6 +41,20 @@ export interface CertificateInfo {
   notAfter: number;
   /** Whether it was issued by itself (a root, or a home-made certificate). */
   selfSigned: boolean;
+}
+
+/** A trusted timestamp on a signature, once checked. */
+export interface TimestampCheck {
+  /** When the timestamp server says the signature existed, in ms since 1970. */
+  time: number;
+  /** The timestamp server, by its certificate's name. */
+  authority: string;
+  /** Whether the token checks out (its signature, and that it's for this signature). */
+  valid: boolean;
+  /** Why it doesn't, in plain words. */
+  problems: string[];
+  /** The timestamp server's certificate and its issuers, as far as the token carries them. */
+  chain: CertificateInfo[];
 }
 
 /** The result of the cryptographic check. */
@@ -47,29 +75,23 @@ export interface CryptoCheck {
   chain: CertificateInfo[];
   /** Whether each certificate in the chain was signed by the next one. */
   chainLinked: boolean;
-  /** Whether the signer's certificate was valid at the signing time; null if no time. */
+  /**
+   * Whether the signer's certificate was valid at the signing time (the timestamp's time if it
+   * has a valid one, otherwise the claimed time); null if there's no time.
+   */
   validAtSigning: boolean | null;
-  /** The signing time used: /M, or the signingTime attribute. The signer's claim. */
+  /** The signer's claimed signing time: /M, or the signingTime attribute. */
   signingTime?: number;
-  /** Whether it carries a timestamp from a timestamp server (not checked yet). */
+  /** Whether it carries a timestamp from a timestamp server. */
   timestamped: boolean;
+  /** The timestamp, checked, if it has one. */
+  timestamp?: TimestampCheck;
 }
 
 const OID = {
   signedData: "1.2.840.113549.1.7.2",
-  messageDigest: "1.2.840.113549.1.9.4",
   signingTime: "1.2.840.113549.1.9.5",
-  timestampToken: "1.2.840.113549.1.9.16.2.14",
-  rsaEncryption: "1.2.840.113549.1.1.1",
-  subjectKeyIdentifier: "2.5.29.14",
 } as const;
-
-const DIGESTS: Record<string, string> = {
-  "1.3.14.3.2.26": "SHA-1",
-  "2.16.840.1.101.3.4.2.1": "SHA-256",
-  "2.16.840.1.101.3.4.2.2": "SHA-384",
-  "2.16.840.1.101.3.4.2.3": "SHA-512",
-};
 
 const NAME_PARTS: Record<string, string> = {
   "2.5.4.3": "CN",
@@ -80,16 +102,6 @@ const NAME_PARTS: Record<string, string> = {
   "2.5.4.6": "C",
   "1.2.840.113549.1.9.1": "E",
 };
-
-function engine(): pkijs.CryptoEngine {
-  return new pkijs.CryptoEngine({ name: "webcrypto", crypto: globalThis.crypto });
-}
-
-function equal(a: Uint8Array, b: Uint8Array): boolean {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
-  return true;
-}
 
 function hex(bytes: Uint8Array): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
@@ -134,36 +146,6 @@ function coveredBytes(file: Uint8Array, range: readonly number[]): Uint8Array {
   return out;
 }
 
-function signerCertificate(
-  signedData: pkijs.SignedData,
-  signerInfo: pkijs.SignerInfo,
-): pkijs.Certificate | null {
-  const certs = (signedData.certificates ?? []).filter(
-    (c): c is pkijs.Certificate => c instanceof pkijs.Certificate,
-  );
-  const sid = signerInfo.sid;
-  if (sid instanceof pkijs.IssuerAndSerialNumber) {
-    return (
-      certs.find((c) => c.issuer.isEqual(sid.issuer) && c.serialNumber.isEqual(sid.serialNumber)) ??
-      null
-    );
-  }
-  // A subject key identifier ([0] OCTET STRING).
-  const id = (sid as asn1js.Primitive | undefined)?.valueBlock?.valueHexView;
-  if (!id) return null;
-  return (
-    certs.find((c) => {
-      const ext = c.extensions?.find((e) => e.extnID === OID.subjectKeyIdentifier);
-      const parsed = ext ? asn1js.fromBER(ext.extnValue.valueBlock.valueHexView) : null;
-      const value =
-        parsed && parsed.offset !== -1 && parsed.result instanceof asn1js.OctetString
-          ? parsed.result.valueBlock.valueHexView
-          : null;
-      return !!value && equal(new Uint8Array(value), new Uint8Array(id));
-    }) ?? null
-  );
-}
-
 /** The signer's certificate and its issuers, as far as the signature carries them. */
 async function buildChain(
   signer: pkijs.Certificate,
@@ -186,8 +168,28 @@ async function buildChain(
   return { chain, linked };
 }
 
-function attribute(attrs: pkijs.SignedAndUnsignedAttributes | undefined, oid: string) {
-  return attrs?.attributes.find((a) => a.type === oid);
+/** Check the timestamp token on a signer, if it has one. */
+async function checkTimestamp(signerInfo: pkijs.SignerInfo): Promise<TimestampCheck | undefined> {
+  const token = timestampTokenOf(signerInfo);
+  if (!token) return undefined;
+  const value = new Uint8Array(signerInfo.signature.valueBlock.valueHexView);
+  const info = await verifyTimestampToken(token, value);
+  let chain: CertificateInfo[] = [];
+  const problems = [...info.problems];
+  if (info.certificate) {
+    const built = await buildChain(info.certificate, info.certificates);
+    chain = built.chain.map(describeCertificate);
+    if (!built.linked) {
+      problems.push("A certificate in the timestamp server's chain doesn't match its issuer.");
+    }
+  }
+  return {
+    time: info.time,
+    authority: info.authority,
+    valid: problems.length === 0,
+    problems,
+    chain,
+  };
 }
 
 /**
@@ -232,12 +234,9 @@ export async function verifySignature(
     result.problems.push("The signature has no signer.");
     return result;
   }
-  const certs = (signedData.certificates ?? []).filter(
-    (c): c is pkijs.Certificate => c instanceof pkijs.Certificate,
-  );
   const cert = signerCertificate(signedData, signerInfo);
   if (cert) {
-    const { chain, linked } = await buildChain(cert, certs);
+    const { chain, linked } = await buildChain(cert, certificatesOf(signedData));
     result.signer = describeCertificate(cert);
     result.chain = chain.map(describeCertificate);
     result.chainLinked = linked;
@@ -247,20 +246,28 @@ export async function verifySignature(
       );
     }
   }
-  result.timestamped = !!attribute(signerInfo.unsignedAttrs, OID.timestampToken);
+  result.timestamp = await checkTimestamp(signerInfo);
+  result.timestamped = !!result.timestamp;
+  if (result.timestamp && !result.timestamp.valid) {
+    result.warnings.push(
+      `It has a timestamp, but it can't be relied on: ${result.timestamp.problems.join(" ")}`,
+    );
+  }
 
-  // The signing time: /M, or the signingTime attribute.
+  // The signing time: /M, or the signingTime attribute. Both are the signer's claim; a valid
+  // timestamp is used instead when there is one.
   let time = claimedTime;
   const st = attribute(signerInfo.signedAttrs, OID.signingTime)?.values[0];
   if (time === undefined && st instanceof asn1js.UTCTime) time = st.toDate().getTime();
   if (time === undefined && st instanceof asn1js.GeneralizedTime) time = st.toDate().getTime();
   result.signingTime = time;
+  const checkedTime = result.timestamp?.valid ? result.timestamp.time : time;
   const signer = result.signer;
-  if (signer && time !== undefined) {
-    result.validAtSigning = time >= signer.notBefore && time <= signer.notAfter;
+  if (signer && checkedTime !== undefined) {
+    result.validAtSigning = checkedTime >= signer.notBefore && checkedTime <= signer.notAfter;
     if (!result.validAtSigning) {
       result.warnings.push(
-        time > signer.notAfter
+        checkedTime > signer.notAfter
           ? "The signer's certificate had expired when it was signed."
           : "The signer's certificate wasn't valid yet when it was signed.",
       );
@@ -290,14 +297,15 @@ export async function verifySignature(
     result.problems.push("Its byte range doesn't fit the file.");
     return result;
   }
-  const digest = async (name: string, data: Uint8Array) =>
-    new Uint8Array(await globalThis.crypto.subtle.digest(name, data as BufferSource));
 
   // adbe.pkcs7.sha1: the signed content is the SHA-1 hash of the bytes.
   const eContent = signedData.encapContentInfo.eContent;
   if (eContent) {
     const embedded = new Uint8Array(eContent.getValue());
-    if (subFilter !== "adbe.pkcs7.sha1" || !equal(embedded, await digest("SHA-1", content))) {
+    if (
+      subFilter !== "adbe.pkcs7.sha1" ||
+      !equalBytes(embedded, await digestOf("SHA-1", content))
+    ) {
       result.intact = false;
       result.problems.push("The signed part of the file was altered after signing.");
       return result;
@@ -306,43 +314,26 @@ export async function verifySignature(
     result.warnings.push("It uses SHA-1, an old hash that is no longer considered safe.");
   }
 
-  let data: ArrayBuffer | Uint8Array = content;
-  if (signerInfo.signedAttrs) {
-    const md = attribute(signerInfo.signedAttrs, OID.messageDigest)?.values[0];
-    if (!(md instanceof asn1js.OctetString)) {
+  const problem = await checkSigner(signerInfo, cert, content, digestName);
+  switch (problem) {
+    case null:
+      result.intact = true;
+      break;
+    case "no-digest":
       result.intact = false;
       result.problems.push("The signature has no hash of the document.");
-      return result;
-    }
-    const expected = new Uint8Array(md.valueBlock.valueHexView);
-    if (!equal(expected, await digest(digestName, content))) {
+      break;
+    case "altered":
       result.intact = false;
       result.problems.push("The signed part of the file was altered after signing.");
-      return result;
-    }
-    data = signerInfo.signedAttrs.encodedValue;
-  }
-  try {
-    const crypto = engine();
-    const ok =
-      signerInfo.signatureAlgorithm.algorithmId === OID.rsaEncryption
-        ? await crypto.verifyWithPublicKey(
-            data as ArrayBuffer,
-            signerInfo.signature,
-            cert.subjectPublicKeyInfo,
-            signerInfo.signatureAlgorithm,
-            digestName,
-          )
-        : await crypto.verifyWithPublicKey(
-            data as ArrayBuffer,
-            signerInfo.signature,
-            cert.subjectPublicKeyInfo,
-            signerInfo.signatureAlgorithm,
-          );
-    result.intact = ok;
-    if (!ok) result.problems.push("The signature doesn't match the signer's certificate.");
-  } catch {
-    result.problems.push("It uses a signature algorithm that can't be checked.");
+      break;
+    case "mismatch":
+      result.intact = false;
+      result.problems.push("The signature doesn't match the signer's certificate.");
+      break;
+    case "algorithm":
+      result.problems.push("It uses a signature algorithm that can't be checked.");
+      break;
   }
   return result;
 }

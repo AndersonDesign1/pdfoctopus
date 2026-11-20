@@ -16,7 +16,7 @@ tasks needed to finish it and the **exit criteria** that must be true before we 
 ## Next up
 
 Start here if you're picking the project up. Do these in order, and update this list in the
-same PR that changes it. Last updated: 2026-11-20, after the signature panel.
+same PR that changes it. Last updated: 2026-11-20, after timestamps and older digital IDs.
 
 ### 0. Keep `main` green (2026-11-18)
 
@@ -511,8 +511,7 @@ into WebCrypto as non-extractable, for signing only, and is dropped once the sig
   (P-256, P-384, P-521) keys, with SHA-256. Expired and not-yet-valid certificates, and ones
   whose key usage doesn't allow signing, are refused.
 - **`.p12` files** must use AES (PBES2) encryption, which OpenSSL 3, current Windows ("AES256-SHA256"
-  when exporting) and most providers use. Older files with 3DES or RC2 can't be decrypted with
-  WebCrypto; the dialog says so and how to export again.
+  when exporting) and most providers use. (Older files with 3DES or RC2 work since item 18.)
 - **Tests:** `packages/sign/src/sign.test.ts` (loading RSA and EC IDs, a wrong password, old
   encryption, not a `.p12`, expired certificates; signing a new box and an existing field, two
   signatures with the first still valid, changes before and after signing, the refusals, and a
@@ -562,7 +561,7 @@ with the Digital ID tab the new signature shows as intact straight away.
   attributes (RSA PKCS #1 v1.5, RSA-PSS, ECDSA P-256/384/521). Also `adbe.pkcs7.sha1`. The chain
   the signature carries is built and each link's signature checked; a certificate that was
   expired or not yet valid at the signing time (`/M`, or the signingTime attribute) is flagged.
-  Timestamps are noted but not checked yet.
+  Timestamps are checked since item 18.
 - **Tests:** `packages/sign/src/verify.test.ts` runs our validator over every signed fixture and
   checks the same intact and changed-after-signing results as pyhanko's expectations in
   `check-signatures.py` (trust aside). The one difference is deliberate: for
@@ -579,8 +578,61 @@ with the Digital ID tab the new signature shows as intact straight away.
   above; the invoice shows no banner; signing it with the RSA test ID shows the new signature as
   intact, and so does the saved file when reopened.
 - **Not covered yet:** a trust list (marking certificates as trusted), revocation (OCSP, CRLs),
-  checking timestamps, DocMDP (certifying signatures' permissions), and highlighting what changed
+  DocMDP (certifying signatures' permissions), and highlighting what changed
   on the page. Not yet compared with Acrobat's panel; see TESTING.md.
+
+### 18. Phase 5: timestamps and older digital IDs (2026-11-20)
+
+**Trusted timestamps (PAdES B-T).** The Digital ID tab has "Add a trusted timestamp", off by
+default, with DigiCert (the default) or Sectigo as the timestamp server; the choice is
+remembered in the browser. Once the signature is made, the SHA-256 hash of its signature value
+(never the file) goes to the server in an RFC 3161 request with a nonce. The answer is checked
+(granted, the hash we sent, our nonce, the token's own signature and a timestamping
+certificate) and added as the signatureTimeStampToken unsigned attribute. Room for it is set
+aside (12 KB more); if the token is bigger than that, the file is prepared again with more room
+and signed again. If the server can't be reached or its answer doesn't check out, signing stops
+with the reason and asks whether to sign without a timestamp: the timestamp asked for is never
+dropped silently.
+
+- **Desktop only.** Neither server sends CORS headers (checked 2026-11-20: DigiCert answers the
+  preflight with 501, Sectigo with no Access-Control headers, and neither sends them on the
+  POST), and DigiCert's is plain http, which an https page can't call. So the web app shows the
+  option switched off with "Timestamps are available in the desktop app", and the desktop app
+  sends the request from Rust (`timestamp_request` in `apps/desktop/src-tauri/src/lib.rs`, ureq
+  with rustls): it takes a server name, not an address, so only those two servers can be
+  reached, with a request of at most 1 KB, an answer of at most 256 KB, no redirects and a 30 s
+  limit. The app's own commands now need a permission in `capabilities/default.json` too
+  (`build.rs` lists them).
+- **Checking:** `verifySignature` checks a timestamp token's signature, that its hash is of the
+  signature value, the timestamp server's certificate (timestamping use, valid at that time) and
+  its chain, and the panel shows "Timestamped by … at …". With a valid timestamp, its time (not
+  the claimed `/M`) is used for "was the certificate valid when it was signed". A timestamp that
+  doesn't check out is a warning; it doesn't break the signature.
+- **Code:** `packages/sign/src/timestamp.ts` (request, checks, token), `cmsCheck.ts` (shared
+  signer checks), `cms.ts` and `signWithRoom` in `index.ts`; `apps/web/src/sign/timestamp.ts`.
+- **Tests:** `timestamp.test.ts` with an in-process test timestamp server (`testTsa.ts`, key in
+  `fixtures/test-ids/test-tsa.p12`): the request (and a fixed DER example), a good answer
+  embedded byte for byte, fetch with the right method and type, more room when needed, the
+  timestamp's time used for validity, and refusals for a rejected request, a wrong hash, a wrong
+  or missing nonce, a bad signature, no certificate, garbage, HTTP errors and no network.
+  `signed-by-pdfoctopus-timestamped.pdf` is checked by pyhanko in CI as B-T (timestamp intact,
+  trusted with `trust/pdfoctopus-test-tsa-ca.pem`, for this signature). By hand: files
+  timestamped by the real DigiCert and Sectigo servers (from Node and from the Rust command)
+  passed our check and pyhanko's, trusted against the system roots.
+
+**Older `.p12` files** with 3DES or RC2 encryption (older Windows and macOS exports) now open:
+the PKCS #12 key derivation (RFC 7292 appendix B), pbeWithSHAAnd3-KeyTripleDES-CBC,
+2-KeyTripleDES, 128BitRC2 and 40BitRC2, and the integrity check (HMAC with SHA-1 or SHA-2, keyed
+by the same derivation) are ours, in plain TypeScript (`pkcs12Pbe.ts`, `legacyCiphers.ts`; no
+new dependency). AES files still go through PKI.js. The password and decrypted key bytes are
+wiped after use. RC4 and anything else still gets "isn't supported", with how to export again.
+
+- **Tests:** known answers for DES (Grabbe's worked example, FIPS 81), triple DES (NIST SP
+  800-67), RC2 (RFC 2268), the key derivation and 3DES PBE (Go's x/crypto/pkcs12 vectors) and
+  more derivations and CBC ciphertexts from OpenSSL 3.0.13, committed as hex. `test-signer-3des.p12`
+  and the new `test-signer-rc2.p12` open, sign and verify; wrong passwords and RC4 are refused.
+- **Not covered yet:** timestamps in the web app (see TESTING.md, "Needs you"), long-term
+  validation (B-LT: revocation data), and checking Acrobat's view of a timestamped signature.
 
 ### Where things are
 
@@ -857,7 +909,7 @@ with the Digital ID tab the new signature shows as intact straight away.
 - [x] Create a signature field and reserve space for the signature with MuPDF
 - [x] Build the CMS / PKCS#7 signature with PKI.js
 - [x] Follow the PAdES baseline (B-B) profile
-- [ ] Optional: trusted timestamp (B-T) via a public timestamp server
+- [x] Optional: trusted timestamp (B-T) via a public timestamp server
 - [x] Always save incrementally so earlier signatures stay valid
 - [x] Link the visible signature appearance to the cryptographic signature
 
