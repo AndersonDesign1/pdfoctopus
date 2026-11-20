@@ -10,7 +10,8 @@
 # B-B profile. With a folder, freshly signed copies of those files in it are checked too: CI
 # signs them with the code being tested first.
 #
-# Later, PDFoctopus's own validator (Phase 5) is tested against the same expectations.
+# PDFoctopus's own validator is tested against the same expectations in
+# packages/sign/src/verify.test.ts; keep the two in step.
 
 import logging
 import sys

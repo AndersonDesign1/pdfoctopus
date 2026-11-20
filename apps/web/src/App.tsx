@@ -72,6 +72,11 @@ import {
   type StampImage,
 } from "./sign/stampImage";
 import {
+  SignatureBanner,
+  SignaturesDialog,
+  type SignaturesState,
+} from "./signatures/SignaturesPanel";
+import {
   type ChosenPdf,
   InsertPdfDialog,
   type InsertPosition,
@@ -346,6 +351,11 @@ export function App() {
   const [status, setStatus] = useState("");
   const [passwordPrompt, setPasswordPrompt] = useState<PasswordPrompt>();
   const [showProperties, setShowProperties] = useState(false);
+  /** The open file's signatures, once looked for; undefined when it has none. */
+  const [signatures, setSignatures] = useState<SignaturesState>();
+  const [showSignatures, setShowSignatures] = useState(false);
+  /** Bumped when the document is replaced, so a late signature check is ignored. */
+  const signaturesGeneration = useRef(0);
   /** The password and permissions dialog, if open, with the last error from applying it. */
   const [passwordDialog, setPasswordDialog] = useState<{ error?: string }>();
   /** The compress dialog, if open: the last compressed copy made, or an error. */
@@ -392,6 +402,9 @@ export function App() {
     setCurrentHit(0);
     setPage(0);
     setShowProperties(false);
+    signaturesGeneration.current++;
+    setSignatures(undefined);
+    setShowSignatures(false);
     setPasswordDialog(undefined);
     setCompressDialog(undefined);
     compressedBytes.current = null;
@@ -524,6 +537,7 @@ export function App() {
         renderer: new PageRenderer(pdf),
       });
       setZoom({ mode: "fit-width", scale: 1 });
+      void refreshSignatures();
       if (fresh) {
         // Not saved anywhere yet: closing warns, and the first Save asks where to put it.
         setDirty(true);
@@ -894,7 +908,36 @@ export function App() {
         undefined,
         page,
       );
+      void refreshSignatures();
     });
+  }
+
+  /**
+   * Look for signatures in the open file and check them: the worker reads them and works out
+   * what was changed after each, and the hashes and signatures are checked here with WebCrypto.
+   */
+  async function refreshSignatures() {
+    const generation = ++signaturesGeneration.current;
+    const current = () => signaturesGeneration.current === generation;
+    try {
+      const inspection = await getClient().inspectSignatures();
+      if (!current()) return;
+      if (!inspection.file || inspection.signatures.length === 0) {
+        setSignatures(undefined);
+        return;
+      }
+      setSignatures({ kind: "checking" });
+      const sign = await import("@pdfoctopus/sign");
+      const checked = await sign.checkSignatures(inspection.file, inspection.signatures);
+      if (!current()) return;
+      setSignatures({ kind: "checked", signatures: checked, truncated: inspection.truncated });
+    } catch (err) {
+      if (!current()) return;
+      setSignatures({
+        kind: "failed",
+        message: `The signatures couldn't be checked: ${messageOf(err)}`,
+      });
+    }
   }
 
   function applyPending() {
@@ -2342,6 +2385,10 @@ export function App() {
         </div>
       )}
 
+      {doc && signatures && (
+        <SignatureBanner state={signatures} onShow={() => setShowSignatures(true)} />
+      )}
+
       <main className="app-main">
         {doc ? (
           // Keyed by document, so a newly opened file starts with fresh views and caches.
@@ -2555,6 +2602,14 @@ export function App() {
           onRemove={removePasswordNow}
           onUnlock={unlockPermissionsNow}
           onCancel={() => setPasswordDialog(undefined)}
+        />
+      )}
+      {showSignatures && doc && signatures && (
+        <SignaturesDialog
+          state={signatures}
+          // Changes since the file was opened or signed (signing starts a new history).
+          edited={history.canUndo}
+          onClose={() => setShowSignatures(false)}
         />
       )}
       {showProperties && doc && (

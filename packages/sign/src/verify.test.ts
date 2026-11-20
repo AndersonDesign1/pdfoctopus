@@ -123,7 +123,9 @@ describe("tampered files", () => {
     const [result] = await validate(bytes);
     expect(result?.status).toBe("broken");
     expect(result?.check.intact).toBe(false);
-    expect(result?.check.problems).toEqual(["The document was changed after it was signed."]);
+    expect(result?.check.problems).toEqual([
+      "The signed part of the file was altered after signing.",
+    ]);
   });
 
   test("one byte changed in the signature itself: broken", async () => {

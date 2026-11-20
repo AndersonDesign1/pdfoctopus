@@ -60,6 +60,9 @@ function openAndRender(name: string, path: string): number {
     expect(info.pages).toHaveLength(info.pageCount);
     const page = engine.renderPage(0, 0.25);
     expect(page.pixels.length).toBe(page.width * page.height * 4);
+    // Reading the signatures never throws; only signed files have any.
+    const signatures = engine.inspectSignatures().signatures;
+    expect(signatures.length > 0).toBe(/signed/.test(name));
     return info.pageCount;
   } finally {
     engine.close();

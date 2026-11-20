@@ -95,16 +95,18 @@ function hex(bytes: Uint8Array): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+/** A name as "CN=…, OU=…, O=…": the common name first, then the rest from the most specific. */
 function fullName(name: pkijs.RelativeDistinguishedNames): string {
-  return name.typesAndValues
+  const parts = name.typesAndValues
     .map((t) => {
       const key = NAME_PARTS[t.type];
       const value = t.value.valueBlock.value;
       return key && typeof value === "string" ? `${key}=${value}` : null;
     })
-    .filter((s): s is string => s !== null)
-    .reverse()
-    .join(", ");
+    .filter((s): s is string => s !== null);
+  // Certificates usually list C, O, …, CN; some the other way round.
+  if (!parts[0]?.startsWith("CN=")) parts.reverse();
+  return parts.join(", ");
 }
 
 export function describeCertificate(cert: pkijs.Certificate): CertificateInfo {
@@ -292,7 +294,7 @@ export async function verifySignature(
     const embedded = new Uint8Array(eContent.getValue());
     if (subFilter !== "adbe.pkcs7.sha1" || !equal(embedded, await digest("SHA-1", content))) {
       result.intact = false;
-      result.problems.push("The document was changed after it was signed.");
+      result.problems.push("The signed part of the file was altered after signing.");
       return result;
     }
     content = embedded;
@@ -310,7 +312,7 @@ export async function verifySignature(
     const expected = new Uint8Array(md.valueBlock.valueHexView);
     if (!equal(expected, await digest(digestName, content))) {
       result.intact = false;
-      result.problems.push("The document was changed after it was signed.");
+      result.problems.push("The signed part of the file was altered after signing.");
       return result;
     }
     data = signerInfo.signedAttrs.encodedValue;

@@ -16,7 +16,7 @@ tasks needed to finish it and the **exit criteria** that must be true before we 
 ## Next up
 
 Start here if you're picking the project up. Do these in order, and update this list in the
-same PR that changes it. Last updated: 2026-11-19, after certificate signing.
+same PR that changes it. Last updated: 2026-11-20, after the signature panel.
 
 ### 0. Keep `main` green (2026-11-18)
 
@@ -490,10 +490,58 @@ into WebCrypto as non-extractable, for signing only, and is dropped once the sig
   clear messages; the invoice signed in a new box, saved, reopened and signed again with the EC
   ID, saved; the contract signed in its empty "Approver" field. pyhanko reports every signature
   intact and trusted, and the first one still valid after the second.
-- **Not covered yet:** the signature panel and checking signatures in files that are opened,
-  timestamps (B-T), the Windows certificate store and smart cards (later Phase 5 work). Names in
-  the box that aren't in Latin-1 show as "?" (the certificate still has the right name). Not yet
-  checked in Adobe Acrobat Reader; see TESTING.md.
+- **Not covered yet:** timestamps (B-T), the Windows certificate store and smart cards (later
+  Phase 5 work). Names in the box that aren't in Latin-1 show as "?" (the certificate still has
+  the right name). Not yet checked in Adobe Acrobat Reader; see TESTING.md. (The signature panel
+  is item 17.)
+
+### 17. Phase 5: signature panel (2026-11-20)
+
+When a signed file is opened, a banner under the toolbar says who signed and whether the
+signatures are intact, intact with changes allowed after signing (comments, form filling, more
+signatures), changed after signing, or broken. **Signatures** in the banner lists each one:
+signer, time, reason, place, page, which version of the file it covers, the certificate and its
+chain, the hash, and what was changed after it. Who signed is shown as the certificate says; it
+isn't checked against a trust list (the browser has none), and the panel says so. After signing
+with the Digital ID tab the new signature shows as intact straight away.
+
+- **Engine:** `inspectSignatures` in `packages/core/src/engine.ts`, with
+  `signatureCheck.ts`. For each signed field it reads the signature dictionary, checks the
+  `/ByteRange` (starts at 0, leaves out exactly the `/Contents` hex string, which must be the
+  field's own, and ends where a saved version ends at `%%EOF`) and reads the signature from the
+  file's bytes. If the file was added to after a signature, the signed version (the bytes up to
+  the end of its byte range) is opened on its own and compared with the whole file object by
+  object: annotations added or changed, form fields filled in, more signatures (with their fields
+  and appearances), the form's field list and the pages' `/Annots` lists are the allowed kinds;
+  anything else (a page's content, page tree, catalogue, or any other existing object) is
+  "other". It's checked against the file as opened, not unsaved changes. The opened file's bytes
+  are kept only if it has signatures.
+- **Limits** (hostile files): 50 signatures, 1 MB per signature, 300,000 objects and 256 MB of
+  streams compared per signature; past those, or when the signed version can't be read cleanly,
+  the change is "unknown" and shown as "changed after signing", never as harmless.
+- **Crypto** (`packages/sign/src/verify.ts`, PKI.js and WebCrypto, loaded only for signed files):
+  hashes the signed bytes (SHA-256/384/512; SHA-1 works but is flagged as weak) and compares
+  them with the messageDigest attribute, then checks the signer's signature over the signed
+  attributes (RSA PKCS #1 v1.5, RSA-PSS, ECDSA P-256/384/521). Also `adbe.pkcs7.sha1`. The chain
+  the signature carries is built and each link's signature checked; a certificate that was
+  expired or not yet valid at the signing time (`/M`, or the signingTime attribute) is flagged.
+  Timestamps are noted but not checked yet.
+- **Tests:** `packages/sign/src/verify.test.ts` runs our validator over every signed fixture and
+  checks the same intact and changed-after-signing results as pyhanko's expectations in
+  `check-signatures.py` (trust aside). The one difference is deliberate: for
+  `signed-then-annotated.pdf` pyhanko's strict policy says "OTHER", we say "comments added".
+  Tampered files: a byte flipped inside the signed range or in the signature (broken), page
+  content replaced, an existing content stream rewritten or a page added in a later update
+  ("other"), a note added by our editor (comments), a re-save with no changes, and a byte range
+  that doesn't start at 0. Also our own signing then checking (RSA then EC, the first "changed:
+  more signatures"). `signatureCheck.test.ts` covers the byte-level checks, and
+  `fixtures.test.ts` reads the signatures of every fixture.
+- **Checked:** in Chromium at 1280 × 900: each signed fixture shows the banner and panel as
+  above; the invoice shows no banner; signing it with the RSA test ID shows the new signature as
+  intact, and so does the saved file when reopened.
+- **Not covered yet:** a trust list (marking certificates as trusted), revocation (OCSP, CRLs),
+  checking timestamps, DocMDP (certifying signatures' permissions), and highlighting what changed
+  on the page. Not yet compared with Acrobat's panel; see TESTING.md.
 
 ### Where things are
 
@@ -781,8 +829,8 @@ into WebCrypto as non-extractable, for signing only, and is dropped once the sig
 
 ### Validation
 
-- [ ] Signature panel listing signatures in a document and whether each is valid
-- [ ] Detect if a document was changed after signing
+- [x] Signature panel listing signatures in a document and whether each is valid
+- [x] Detect if a document was changed after signing
 
 ### Exit criteria
 

@@ -639,7 +639,8 @@ export class PdfEngine {
    * file comes back too, for the cryptographic check (packages/sign).
    */
   inspectSignatures(): SignatureInspection {
-    this.requirePdf();
+    // Not a PDF (an HTML file, say): no signatures, rather than an error.
+    this.requireDoc();
     const bytes = this.signedBytes;
     if (!bytes) return { file: null, signatures: [], truncated: false };
     // A separate copy of the file, so unsaved changes in the open document don't count.
