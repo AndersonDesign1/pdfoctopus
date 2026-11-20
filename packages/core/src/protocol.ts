@@ -29,6 +29,7 @@ import type {
 import type { PdfErrorCode } from "./errors";
 import type { FieldChanges, NewField } from "./formBuild";
 import type { PasswordSpec } from "./security";
+import type { SignatureInspection } from "./signatureCheck";
 import type { SignatureFieldInfo } from "./signatureField";
 
 export type WorkerRequest =
@@ -60,6 +61,7 @@ export type WorkerRequest =
   | { id: number; type: "deleteField"; page: number; field: number }
   | { id: number; type: "listFieldNames" }
   | { id: number; type: "signatureFields" }
+  | { id: number; type: "inspectSignatures" }
   | { id: number; type: "prepareSignature"; spec: SignatureSpec }
   | { id: number; type: "finishSignature"; signature: Uint8Array }
   | { id: number; type: "setPassword"; spec: PasswordSpec }
@@ -110,6 +112,7 @@ export interface WorkerResults {
   deleteField: EditResult;
   listFieldNames: string[];
   signatureFields: SignatureFieldInfo[];
+  inspectSignatures: SignatureInspection;
   prepareSignature: PreparedSignature;
   finishSignature: SignedResult;
   setPassword: EditResult;

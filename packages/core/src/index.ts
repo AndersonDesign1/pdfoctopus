@@ -55,6 +55,7 @@ export {
   DEFAULT_SIGNATURE_SIZE,
   MAX_SIGNATURE_SIZE,
 } from "./signature";
+export type { ChangeLevel, SignatureInspection, SignatureReport } from "./signatureCheck";
 export type { SignatureFieldInfo } from "./signatureField";
 export {
   BORDER as STAMP_BORDER,

@@ -140,6 +140,8 @@ async function handle(req: WorkerRequest): Promise<WorkerSuccess> {
       return success(req.id, "listFieldNames", engine.listFieldNames());
     case "signatureFields":
       return success(req.id, "signatureFields", engine.signatureFields());
+    case "inspectSignatures":
+      return success(req.id, "inspectSignatures", engine.inspectSignatures());
     case "prepareSignature":
       return success(req.id, "prepareSignature", engine.prepareSignature(req.spec));
     case "finishSignature":
