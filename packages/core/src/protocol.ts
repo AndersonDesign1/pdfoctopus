@@ -17,15 +17,19 @@ import type {
   PagePoint,
   PageSize,
   PdfSource,
+  PreparedSignature,
   RedactionResult,
   RenderedPage,
   RotationDelta,
   SearchHit,
+  SignatureSpec,
+  SignedResult,
   TextStamp,
 } from "./engine";
 import type { PdfErrorCode } from "./errors";
 import type { FieldChanges, NewField } from "./formBuild";
 import type { PasswordSpec } from "./security";
+import type { SignatureFieldInfo } from "./signatureField";
 
 export type WorkerRequest =
   | { id: number; type: "init" }
@@ -55,6 +59,9 @@ export type WorkerRequest =
   | { id: number; type: "updateField"; page: number; field: number; changes: FieldChanges }
   | { id: number; type: "deleteField"; page: number; field: number }
   | { id: number; type: "listFieldNames" }
+  | { id: number; type: "signatureFields" }
+  | { id: number; type: "prepareSignature"; spec: SignatureSpec }
+  | { id: number; type: "finishSignature"; signature: Uint8Array }
   | { id: number; type: "setPassword"; spec: PasswordSpec }
   | { id: number; type: "removePassword" }
   | { id: number; type: "unlockPermissions"; password: string }
@@ -102,6 +109,9 @@ export interface WorkerResults {
   updateField: EditResult;
   deleteField: EditResult;
   listFieldNames: string[];
+  signatureFields: SignatureFieldInfo[];
+  prepareSignature: PreparedSignature;
+  finishSignature: SignedResult;
   setPassword: EditResult;
   removePassword: EditResult;
   unlockPermissions: DocumentInfo | null;

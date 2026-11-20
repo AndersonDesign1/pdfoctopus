@@ -3,7 +3,12 @@
 # Checks that the signed fixtures still have the signature status we expect, using pyhanko as
 # an independent reference validator. Run in CI, and locally with:
 #
-#   pip install pyhanko && python3 fixtures/scripts/check-signatures.py
+#   pip install pyhanko && python3 fixtures/scripts/check-signatures.py [<folder>]
+#
+# The files named signed-by-pdfoctopus*.pdf were signed by PDFoctopus's own signing code
+# (fixtures/scripts/sign-with-pdfoctopus.ts); they're also checked against the PAdES baseline
+# B-B profile. With a folder, freshly signed copies of those files in it are checked too: CI
+# signs them with the code being tested first.
 #
 # Later, PDFoctopus's own validator (Phase 5) is tested against the same expectations.
 
@@ -13,6 +18,7 @@ from pathlib import Path
 
 from asn1crypto import pem, x509
 from pyhanko.pdf_utils.reader import PdfFileReader
+from pyhanko.sign.general import check_ess_certid
 from pyhanko.sign.validation import validate_pdf_signature
 from pyhanko.sign.validation.settings import KeyUsageConstraints
 from pyhanko_certvalidator import ValidationContext
@@ -30,6 +36,8 @@ def load_root(name: str) -> x509.Certificate:
 
 TEST_ROOT = load_root("pdfoctopus-test-root-ca.pem")
 DIGICERT_ROOT = load_root("digicert-assured-id-root-ca.pem")
+# Issued the test IDs in fixtures/test-ids, which PDFoctopus's own signing code is tested with.
+TEST_SIGNING_ROOT = load_root("pdfoctopus-test-signing-ca.pem")
 
 # file -> (trust root, [per signature: (intact, trusted, modified after signing)])
 # "modified" is False when nothing was changed after that signature, otherwise the kind of
@@ -46,10 +54,48 @@ EXPECTED = {
     "public-domain/gpo-public-law-118-1-signed.pdf": (DIGICERT_ROOT, [(True, True, False)]),
 }
 
+# Signed by PDFoctopus. Each signature must also follow PAdES B-B (see check_pades_bb).
+OURS = {
+    "signed-by-pdfoctopus.pdf": (TEST_SIGNING_ROOT, [(True, True, False)]),
+    # The second signature was added later; the first stays valid.
+    "signed-by-pdfoctopus-twice.pdf": (
+        TEST_SIGNING_ROOT,
+        [(True, True, "FORM_FILLING"), (True, True, False)],
+    ),
+}
+EXPECTED.update({f"generated/{name}": expected for name, expected in OURS.items()})
 
-def check(path: str, root, expected) -> list[str]:
+
+def check_pades_bb(name: str, sig) -> list[str]:
+    """The PAdES baseline B-B rules (ETSI EN 319 142-1, 6.3) that can be read off a signature."""
     errors = []
-    with open(FIXTURES / path, "rb") as f:
+    obj = sig.sig_object
+    if obj.get("/SubFilter") != "/ETSI.CAdES.detached":
+        errors.append(f"{name}: SubFilter is {obj.get('/SubFilter')}, not /ETSI.CAdES.detached")
+    if "/M" not in obj:
+        errors.append(f"{name}: no signing time (/M) in the signature dictionary")
+    signed_data = sig.signed_data
+    if signed_data["encap_content_info"]["content"].native is not None:
+        errors.append(f"{name}: the CMS isn't detached")
+    attrs = {a["type"].native: a for a in sig.signer_info["signed_attrs"]}
+    for required in ("content_type", "message_digest", "signing_certificate_v2"):
+        if required not in attrs:
+            errors.append(f"{name}: no {required} signed attribute")
+    if "signing_time" in attrs:
+        errors.append(f"{name}: a signing_time signed attribute (PAdES puts the time in /M)")
+    if "signing_certificate_v2" in attrs:
+        cert_id = attrs["signing_certificate_v2"]["values"][0]["certs"][0]
+        if not check_ess_certid(sig.signer_cert, cert_id):
+            errors.append(f"{name}: signingCertificateV2 doesn't match the signer's certificate")
+    embedded = [c.chosen.dump() for c in signed_data["certificates"]]
+    if sig.signer_cert.dump() not in embedded:
+        errors.append(f"{name}: the signer's certificate isn't in the signature")
+    return errors
+
+
+def check(path: str, root, expected, folder: Path = FIXTURES) -> list[str]:
+    errors = []
+    with open(folder / path, "rb") as f:
         sigs = PdfFileReader(f, strict=False).embedded_signatures
         if len(sigs) != len(expected):
             return [f"{path}: expected {len(expected)} signatures, found {len(sigs)}"]
@@ -63,6 +109,8 @@ def check(path: str, root, expected) -> list[str]:
                 sig, context, key_usage_settings=KeyUsageConstraints(key_usage={"digital_signature"})
             )
             name = f"{path} [{sig.field_name}]"
+            if folder != FIXTURES:
+                name = f"{folder / path} [{sig.field_name}]"
             if status.intact != intact:
                 errors.append(f"{name}: intact={status.intact}, expected {intact}")
             if intact and status.trusted != trusted:
@@ -72,6 +120,8 @@ def check(path: str, root, expected) -> list[str]:
                 actual = False if level == "NONE" else level
                 if actual != modified:
                     errors.append(f"{name}: modified after signing={actual}, expected {modified}")
+            if Path(path).name in OURS:
+                errors.extend(check_pades_bb(name, sig))
             if len(errors) == errors_before:
                 print(f"ok  {name}")
     return errors
@@ -79,6 +129,11 @@ def check(path: str, root, expected) -> list[str]:
 
 def main() -> int:
     errors = [e for path, (root, exp) in EXPECTED.items() for e in check(path, root, exp)]
+    if len(sys.argv) > 1:
+        # Freshly signed copies, from: bun fixtures/scripts/sign-with-pdfoctopus.ts <folder>
+        fresh = Path(sys.argv[1]).resolve()
+        for name, (root, exp) in OURS.items():
+            errors.extend(check(name, root, exp, fresh))
     for e in errors:
         print(f"FAIL {e}")
     return 1 if errors else 0

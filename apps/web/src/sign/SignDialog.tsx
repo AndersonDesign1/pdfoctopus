@@ -3,6 +3,7 @@
 // Make a signature or initials: draw it, type it in a handwriting font, or upload a photo or
 // scan of one. Signatures can be remembered on this device and picked again next time.
 
+import type { SignatureFieldInfo } from "@pdfoctopus/core";
 import {
   type PointerEvent as ReactPointerEvent,
   useCallback,
@@ -12,6 +13,7 @@ import {
   useState,
 } from "react";
 import { Modal } from "../ui/Dialogs";
+import { type CertificateChoice, CertificatePanel } from "./CertificatePanel";
 import type { InkPoint } from "./ink";
 import {
   addSaved,
@@ -32,13 +34,14 @@ import {
   textToStamp,
 } from "./stampImage";
 
-type Tab = "saved" | "draw" | "type" | "upload";
+type Tab = "saved" | "draw" | "type" | "upload" | "certificate";
 
 const TAB_LABELS: Record<Tab, string> = {
   saved: "Saved",
   draw: "Draw",
   type: "Type",
   upload: "Upload",
+  certificate: "Digital ID",
 };
 
 /** Size of the drawing pad in CSS pixels; the pad scales down on narrow screens. */
@@ -49,10 +52,16 @@ export function SignDialog({
   kind,
   onUse,
   onCancel,
+  signatureFields,
+  onCertificate,
 }: {
   kind: SavedKind;
   onUse(image: StampImage): void;
   onCancel(): void;
+  /** The document's empty signature fields, for signing with a digital ID (null: looking). */
+  signatureFields?: SignatureFieldInfo[] | null;
+  /** Sign with a digital ID (a certificate). Without it, the Digital ID tab isn't offered. */
+  onCertificate?(choice: CertificateChoice): void;
 }) {
   const noun = kind === "signature" ? "signature" : "initials";
   const [saved, setSaved] = useState<SavedSignature[]>(() =>
@@ -146,6 +155,7 @@ export function SignDialog({
   const tabs: Tab[] = saved.length
     ? ["saved", "draw", "type", "upload"]
     : ["draw", "type", "upload"];
+  if (kind === "signature" && onCertificate) tabs.push("certificate");
   const baseId = useId();
 
   return (
@@ -253,6 +263,14 @@ export function SignDialog({
           </>
         )}
 
+        {tab === "certificate" && onCertificate && (
+          <CertificatePanel
+            fields={signatureFields ?? null}
+            onChoose={onCertificate}
+            onCancel={onCancel}
+          />
+        )}
+
         {tab === "upload" && (
           <>
             <label className="pdfo-field">
@@ -283,7 +301,7 @@ export function SignDialog({
         )}
       </div>
 
-      {tab !== "saved" && (
+      {tab !== "saved" && tab !== "certificate" && (
         <div className="pdfo-row">
           {tab !== "upload" && (
             <fieldset className="pdfo-fieldset pdfo-colours">
@@ -313,27 +331,30 @@ export function SignDialog({
         </div>
       )}
 
-      {error && (
+      {error && tab !== "certificate" && (
         <p className="pdfo-error" role="alert">
           {error}
         </p>
       )}
 
-      <div className="pdfo-dialog-actions">
-        <button type="button" className="button secondary" onClick={onCancel}>
-          Cancel
-        </button>
-        {tab !== "saved" && (
-          <button
-            type="button"
-            className="button"
-            disabled={!ready || working}
-            onClick={() => void use()}
-          >
-            Place {noun}
+      {/* The Digital ID tab has its own buttons. */}
+      {tab !== "certificate" && (
+        <div className="pdfo-dialog-actions">
+          <button type="button" className="button secondary" onClick={onCancel}>
+            Cancel
           </button>
-        )}
-      </div>
+          {tab !== "saved" && (
+            <button
+              type="button"
+              className="button"
+              disabled={!ready || working}
+              onClick={() => void use()}
+            >
+              Place {noun}
+            </button>
+          )}
+        </div>
+      )}
     </Modal>
   );
 }

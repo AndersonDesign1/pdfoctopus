@@ -3,12 +3,13 @@
 PDFs used for regression and crash testing. Every PDF in this folder is opened by
 `packages/core/src/fixtures.test.ts`, which checks the engine never crashes on any of them.
 
-| Folder           | What                                                               | Licence                                                       |
-| ---------------- | ------------------------------------------------------------------ | ------------------------------------------------------------- |
-| `generated/`     | Files we made ourselves with `scripts/generate.mjs`. All fictional | [CC0-1.0](https://creativecommons.org/publicdomain/zero/1.0/) |
-| `third-party/`   | Files from other open projects and archives, unmodified            | Per file (see below)                                          |
-| `public-domain/` | US federal government documents                                    | Public domain (17 U.S.C. § 105)                               |
-| `trust/`         | Root certificates used to validate the signed fixtures             | See [Signatures](#signatures)                                 |
+| Folder           | What                                                                | Licence                                                       |
+| ---------------- | ------------------------------------------------------------------- | ------------------------------------------------------------- |
+| `generated/`     | Files we made ourselves with `scripts/generate.mjs`. All fictional  | [CC0-1.0](https://creativecommons.org/publicdomain/zero/1.0/) |
+| `third-party/`   | Files from other open projects and archives, unmodified             | Per file (see below)                                          |
+| `public-domain/` | US federal government documents                                     | Public domain (17 U.S.C. § 105)                               |
+| `trust/`         | Root certificates used to validate the signed fixtures              | See [Signatures](#signatures)                                 |
+| `test-ids/`      | Throwaway digital IDs (.p12) for testing our own signing. TEST KEYS | CC0-1.0, see [Test IDs](#test-ids-test-keys-only)             |
 
 ## Rules for adding a fixture
 
@@ -64,6 +65,8 @@ licences; all of them allow embedding in documents:
 | `signed-then-annotated.pdf`        | Signed      | A note added after signing (MuPDF incremental save); the signature stays intact             |
 | `signed-tampered.pdf`              | Signed      | One byte changed inside the signed range, so the signature no longer verifies               |
 | `signed-twice.pdf`                 | Signed      | Two signatures; the second was added incrementally and the first stays valid                |
+| `signed-by-pdfoctopus.pdf`         | Signed      | The invoice signed by PDFoctopus's own signing code (PAdES B-B, RSA test ID)                |
+| `signed-by-pdfoctopus-twice.pdf`   | Signed      | That file signed again by PDFoctopus (elliptic-curve test ID); the first stays valid        |
 | `malformed-truncated.pdf`          | Malformed   | Invoice cut off at 60% (no xref or trailer)                                                 |
 | `malformed-bad-startxref.pdf`      | Malformed   | `startxref` points to the wrong offset; needs repair                                        |
 | `malformed-junk-before-header.pdf` | Malformed   | 1 KB of junk before `%PDF-`                                                                 |
@@ -146,6 +149,8 @@ independent validator. Expected results:
 | `generated/signed-twice.pdf`                    | `trust/pdfoctopus-test-root-ca.pem`     | yes    | yes     | first signature: yes (the second signature) |
 | `generated/signed-then-annotated.pdf`           | `trust/pdfoctopus-test-root-ca.pem`     | yes    | yes     | yes (a note)                                |
 | `generated/signed-tampered.pdf`                 | `trust/pdfoctopus-test-root-ca.pem`     | **no** | —       | —                                           |
+| `generated/signed-by-pdfoctopus.pdf`            | `trust/pdfoctopus-test-signing-ca.pem`  | yes    | yes     | no                                          |
+| `generated/signed-by-pdfoctopus-twice.pdf`      | `trust/pdfoctopus-test-signing-ca.pem`  | yes    | yes     | first signature: yes (the second signature) |
 | `public-domain/gpo-public-law-118-1-signed.pdf` | `trust/digicert-assured-id-root-ca.pem` | yes    | yes     | no                                          |
 
 - `pdfoctopus-test-root-ca.pem` is a throwaway root CA created by `scripts/sign.py`. Its
@@ -156,6 +161,27 @@ independent validator. Expected results:
   downloaded from <https://cacerts.digicert.com/DigiCertAssuredIDRootCA.crt>. It is on the
   trust lists used by Adobe Reader and operating systems, so the GPO file is a real-world
   "trusted signature" case.
+
+- The `signed-by-pdfoctopus*` files are also checked against the PAdES baseline B-B profile
+  (SubFilter `/ETSI.CAdES.detached`, a detached CMS with contentType, messageDigest and a
+  signingCertificateV2 that matches the signer, no signingTime, and `/M` set). In CI, the
+  `signatures` job also signs fresh copies with the pull request's own code
+  (`bun fixtures/scripts/sign-with-pdfoctopus.ts <folder>`) and checks those the same way.
+
+## Test IDs (test keys only)
+
+`test-ids/` holds throwaway digital IDs made by
+[`scripts/make-test-ids.py`](./scripts/make-test-ids.py), for testing PDFoctopus's own signing
+code. **They are test keys only**: the private keys are in the committed files and the password
+for all of them is `test-only`, so a signature made with them proves nothing about anyone. They
+were issued by `trust/pdfoctopus-test-signing-ca.pem`, a throwaway root CA whose private key was
+never saved; only tests trust it.
+
+| File                   | What                                                                     |
+| ---------------------- | ------------------------------------------------------------------------ |
+| `test-signer-rsa.p12`  | RSA 2048 key and certificate, AES-256 encryption (the OpenSSL 3 default) |
+| `test-signer-ec.p12`   | ECDSA P-256 key and certificate, AES-256 encryption                      |
+| `test-signer-3des.p12` | The RSA ID with old 3DES encryption, which browsers can't decrypt        |
 
 ## Known gaps
 

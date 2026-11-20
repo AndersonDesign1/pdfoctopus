@@ -185,6 +185,40 @@ export function dateToStamp(text: string, colour: string): StampImage | null {
   return trimToStamp(canvas, 6);
 }
 
+/**
+ * A preview of a digital signature's box while it's placed: its lines of text on a pale
+ * background. Only the preview: the engine draws the real box in the PDF.
+ */
+export function certificateToStamp(lines: { text: string; bold: boolean }[]): StampImage {
+  const width = 800;
+  const height = 300;
+  const canvas = newCanvas(width, height);
+  const ctx = context(canvas);
+  ctx.fillStyle = "rgba(37, 99, 235, 0.08)";
+  ctx.fillRect(0, 0, width, height);
+  const family = "Helvetica, Arial, sans-serif";
+  const NAME = 1.35;
+  const LEADING = 1.2;
+  const pad = 16;
+  const tall = lines.reduce((n, l) => n + (l.bold ? NAME : 1) * LEADING, 0);
+  let size = Math.min((height - 2 * pad) / tall, 44);
+  for (const l of lines) {
+    ctx.font = `${l.bold ? "bold " : ""}${size * (l.bold ? NAME : 1)}px ${family}`;
+    const w = ctx.measureText(l.text).width;
+    if (w > width - 2 * pad) size *= (width - 2 * pad) / w;
+  }
+  let y = (height - lines.reduce((n, l) => n + (l.bold ? NAME : 1) * LEADING * size, 0)) / 2;
+  ctx.fillStyle = "#1a1a1a";
+  ctx.textBaseline = "alphabetic";
+  for (const l of lines) {
+    const s = size * (l.bold ? NAME : 1);
+    y += s * LEADING;
+    ctx.font = `${l.bold ? "bold " : ""}${s}px ${family}`;
+    ctx.fillText(l.text, pad, y - s * 0.3);
+  }
+  return stampFromDataUrl(canvas.toDataURL("image/png"), width, height);
+}
+
 /** Longest side a placed picture is kept at: sharp at any size it's likely to be printed. */
 const MAX_PICTURE_SIDE = 2400;
 /** The engine takes images up to 10 MB; stay a little under. */

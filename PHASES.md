@@ -16,7 +16,7 @@ tasks needed to finish it and the **exit criteria** that must be true before we 
 ## Next up
 
 Start here if you're picking the project up. Do these in order, and update this list in the
-same PR that changes it. Last updated: 2026-11-19, after redaction.
+same PR that changes it. Last updated: 2026-11-19, after certificate signing.
 
 ### 0. Keep `main` green (2026-11-18)
 
@@ -441,6 +441,60 @@ it.
   oddly), there's no page numbering or headers, and pictures can't be cropped or rotated in the
   dialog.
 
+### 16. Phase 5: certificate signing (2026-11-19)
+
+**Sign** (page tools row) has a new **Digital ID** tab: open a `.p12` or `.pfx` file with its
+password, add a reason and place if wanted, then either place a new box on the page (dragged
+into place like a signature) or sign an empty signature field the document already has. The
+box says "Digitally signed by", the name from the certificate, the date and time, and the reason
+and place. The signature is PAdES baseline B-B and covers the file with any unsaved changes;
+**Save** writes it. The file, password and key never leave the browser: the key is imported
+into WebCrypto as non-extractable, for signing only, and is dropped once the signature is made
+(or the dialog is closed). Nothing is stored.
+
+- **Engine:** `prepareSignature` and `finishSignature` in `packages/core/src/engine.ts`, with
+  `signatureField.ts` (the field, its appearance and the signature dictionary) and
+  `signature.ts` (finding and filling in the placeholders in the saved bytes). MuPDF can't sign
+  from JavaScript, so the dictionary is written by hand (`/Filter /Adobe.PPKLite`,
+  `/SubFilter /ETSI.CAdES.detached`, `/M`, a wide `/ByteRange` and `/Contents` as zeros, 16 KB
+  or more depending on the certificates). The work is done on a copy opened from the file as it
+  would be saved now, saved incrementally, then `/ByteRange` is filled in without changing the
+  file's length, and the signature is written over the zeros.
+- **The signed file becomes the open document,** so later changes are appended after the
+  signature and leave it valid (it then shows they were made later). Signing can't be undone
+  (the history starts again); closing without saving drops it. Saving without changes gives
+  back the signed file byte for byte.
+- **Refused** (with a message saying what to do) when the next save would rewrite the file:
+  after redacting, with a password change waiting, a file that has a password (not supported
+  yet), or a damaged file that was repaired.
+- **Signature** (`packages/sign`, PKI.js 4.0.1 and asn1js 4.0.0, loaded only when the Digital ID
+  tab is used): a detached CMS SignedData with contentType, messageDigest (SHA-256) and
+  signingCertificateV2 signed attributes, no signingTime (PAdES puts the time in `/M`), and the
+  signer's certificate plus the others in the `.p12` (its chain). RSA (PKCS #1 v1.5) and ECDSA
+  (P-256, P-384, P-521) keys, with SHA-256. Expired and not-yet-valid certificates, and ones
+  whose key usage doesn't allow signing, are refused.
+- **`.p12` files** must use AES (PBES2) encryption, which OpenSSL 3, current Windows ("AES256-SHA256"
+  when exporting) and most providers use. Older files with 3DES or RC2 can't be decrypted with
+  WebCrypto; the dialog says so and how to export again.
+- **Tests:** `packages/sign/src/sign.test.ts` (loading RSA and EC IDs, a wrong password, old
+  encryption, not a `.p12`, expired certificates; signing a new box and an existing field, two
+  signatures with the first still valid, changes before and after signing, the refusals, and a
+  signature too big for its space; each signature checked with PKI.js against the test CA) and
+  `packages/core/src/signature.test.ts` (placeholders, rotated pages, the open document left
+  alone). Test IDs are in `fixtures/test-ids` (test keys only, see fixtures/README.md).
+- **Checked independently with pyhanko:** `fixtures/generated/signed-by-pdfoctopus.pdf` and
+  `-twice.pdf` are validated by `check-signatures.py` (intact, trusted with the test CA, PAdES
+  B-B, and the first signature still valid after the second), and the CI `signatures` job signs
+  fresh copies with each pull request's code and checks those too.
+- **Checked:** in Chromium end to end: a wrong password and an old 3DES file refused with
+  clear messages; the invoice signed in a new box, saved, reopened and signed again with the EC
+  ID, saved; the contract signed in its empty "Approver" field. pyhanko reports every signature
+  intact and trusted, and the first one still valid after the second.
+- **Not covered yet:** the signature panel and checking signatures in files that are opened,
+  timestamps (B-T), the Windows certificate store and smart cards (later Phase 5 work). Names in
+  the box that aren't in Latin-1 show as "?" (the certificate still has the right name). Not yet
+  checked in Adobe Acrobat Reader; see TESTING.md.
+
 ### Where things are
 
 - **Engine:** `packages/core` (MuPDF in a Web Worker, plus a promise-based client). Tests:
@@ -464,7 +518,7 @@ it.
 | 2   | [Sign, annotate & forms](#phase-2-sign-annotate--forms)           | 3–4 wks  | 🟨 In progress |
 | 3   | [Security, compress & create](#phase-3-security-compress--create) | 2–3 wks  | ⬜ Not started |
 | 4   | [Conversion](#phase-4-conversion)                                 | 2–3 wks  | ⬜ Not started |
-| 5   | [Certificate signatures](#phase-5-certificate-signatures-pades)   | 2–3 wks  | ⬜ Not started |
+| 5   | [Certificate signatures](#phase-5-certificate-signatures-pades)   | 2–3 wks  | 🟨 In progress |
 | 6   | [True text editing](#phase-6-true-text-editing)                   | 4–8+ wks | ⬜ Not started |
 | 7   | [Polish & launch](#phase-7-polish--launch)                        | 2–3 wks  | ⬜ Not started |
 | —   | [Later (post-launch)](#later-post-launch)                         | —        | ⬜ Not started |
@@ -712,16 +766,16 @@ it.
 
 ### Signing engine (`packages/sign`)
 
-- [ ] Create a signature field and reserve space for the signature with MuPDF
-- [ ] Build the CMS / PKCS#7 signature with PKI.js
-- [ ] Follow the PAdES baseline (B-B) profile
+- [x] Create a signature field and reserve space for the signature with MuPDF
+- [x] Build the CMS / PKCS#7 signature with PKI.js
+- [x] Follow the PAdES baseline (B-B) profile
 - [ ] Optional: trusted timestamp (B-T) via a public timestamp server
-- [ ] Always save incrementally so earlier signatures stay valid
-- [ ] Link the visible signature appearance to the cryptographic signature
+- [x] Always save incrementally so earlier signatures stay valid
+- [x] Link the visible signature appearance to the cryptographic signature
 
 ### Certificate sources
 
-- [ ] Web: load a `.p12` / `.pfx` file and sign in the browser (WebCrypto + PKI.js)
+- [x] Web: load a `.p12` / `.pfx` file and sign in the browser (WebCrypto + PKI.js)
 - [ ] Desktop: Windows certificate store (Rust)
 - [ ] Desktop: USB smart cards / tokens (Rust)
 

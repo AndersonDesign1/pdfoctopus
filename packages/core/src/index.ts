@@ -19,11 +19,14 @@ export type {
   PagePoint,
   PageSize,
   PdfSource,
+  PreparedSignature,
   RedactionResult,
   RenderedPage,
   RgbColor,
   RotationDelta,
   SearchHit,
+  SignatureSpec,
+  SignedResult,
   StampKind,
   TextStamp,
 } from "./engine";
@@ -47,6 +50,12 @@ export type {
   WorkerResults,
 } from "./protocol";
 export type { PasswordSpec, Permissions, SecurityInfo } from "./security";
+export {
+  type ByteRange,
+  DEFAULT_SIGNATURE_SIZE,
+  MAX_SIGNATURE_SIZE,
+} from "./signature";
+export type { SignatureFieldInfo } from "./signatureField";
 export {
   BORDER as STAMP_BORDER,
   cleanStampText,
