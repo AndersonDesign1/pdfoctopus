@@ -4,16 +4,23 @@ import {
   type AnnotationChange,
   type AnnotationInfo,
   type AnnotationSpec,
+  assembleExport,
   type CompressPreset,
   type CreateSpec,
+  crc32,
   type DocumentInfo,
   describePages,
   type EditResult,
   EngineCrashedError,
   EngineLoadError,
+  EXPORT_TYPES,
+  type ExportedPage,
+  type ExportOptions,
+  exportFileName,
   type FieldChanges,
   type FormField,
   type FormInfo,
+  filePerPage,
   type HistoryState,
   IncrementalSaveError,
   isFatalEngineError,
@@ -27,6 +34,7 @@ import {
   type SearchHit,
   type SignatureFieldInfo,
   type StampKind,
+  ZIP_TYPE,
 } from "@pdfoctopus/core";
 import { Footer } from "@pdfoctopus/ui";
 import { invoke, isTauri } from "@tauri-apps/api/core";
@@ -46,6 +54,7 @@ import {
 } from "./annotate/tools";
 import { CompressDialog, type CompressOutcome, formatSize } from "./compress/CompressDialog";
 import { CreateDialog } from "./create/CreateDialog";
+import { ExportDialog, type ExportProgress } from "./export/ExportDialog";
 import { FieldDrawLayer, FieldEditLayer } from "./form/BuildLayers";
 import { FIELD_KIND_NAMES, FieldDialog, type FieldProperties } from "./form/FieldDialog";
 import { FlattenDialog } from "./form/FlattenDialog";
@@ -248,6 +257,9 @@ function formNotice(form: FormInfo): string {
   return "This PDF has a form: click a field to fill it in.";
 }
 
+/** The most an export collects before saving, in bytes. */
+const MAX_EXPORT_BYTES = 1_500_000_000;
+
 function countPages(n: number): string {
   return `${n} page${n === 1 ? "" : "s"}`;
 }
@@ -357,6 +369,13 @@ export function App() {
   const [createDialog, setCreateDialog] = useState<{ error?: string }>();
   /** The last compressed copy's bytes, kept out of state (they can be large). */
   const compressedBytes = useRef<Uint8Array | null>(null);
+  /** The export dialog, if open: how far an export has got, or the last error. */
+  const [exportDialog, setExportDialog] = useState<{
+    progress?: ExportProgress;
+    error?: string;
+  }>();
+  /** Set by Stop: the export in progress stops before its next page. */
+  const exportStop = useRef(false);
   const [sidebar, setSidebar] = useState(true);
   const [dragging, setDragging] = useState(false);
   const [theme, setTheme] = useTheme();
@@ -395,6 +414,8 @@ export function App() {
     setPasswordDialog(undefined);
     setCompressDialog(undefined);
     compressedBytes.current = null;
+    setExportDialog(undefined);
+    exportStop.current = true;
     setSelection(EMPTY_SELECTION);
     setHistory(NO_HISTORY);
     setDirty(false);
@@ -1233,6 +1254,67 @@ export function App() {
     });
   }
 
+  // ---- Export ----
+
+  function exportNow(options: ExportOptions, pages: number[]) {
+    if (!doc) return;
+    const { fileName } = doc;
+    const pageCount = doc.info.pageCount;
+    const zipped = filePerPage(options.format) && pages.length > 1;
+    const kind = zipped ? ZIP_TYPE : EXPORT_TYPES[options.format];
+    exportStop.current = false;
+    void runTask("export the pages", async (pdf) => {
+      // Asked first, while the browser still counts it as part of the click.
+      const destination = await chooseDestination(
+        exportFileName(fileName, options.format, pages, pageCount),
+        undefined,
+        kind,
+      );
+      if (!destination) return;
+      const exported: ExportedPage[] = [];
+      let total = 0;
+      try {
+        for (const page of pages) {
+          if (exportStop.current) {
+            setExportDialog({});
+            setStatus("Export stopped. Nothing was saved.");
+            return;
+          }
+          setExportDialog({ progress: { done: exported.length, total: pages.length } });
+          const bytes = await pdf.exportPage(page, options);
+          total += bytes.byteLength;
+          if (total > MAX_EXPORT_BYTES) {
+            throw new Error(
+              "That's too much to save at once (over 1.5 GB). Choose fewer pages or a lower " +
+                "resolution.",
+            );
+          }
+          // Each page's checksum now, while the next one is made, rather than all at the end.
+          exported.push({ page, bytes, crc: zipped ? crc32(bytes) : undefined });
+        }
+        // Stop pressed while the last page was being made.
+        if (exportStop.current) {
+          setExportDialog({});
+          setStatus("Export stopped. Nothing was saved.");
+          return;
+        }
+        const file = assembleExport(fileName, options.format, exported, pageCount);
+        const outcome = await writeToDestination(destination, file.bytes);
+        setExportDialog(undefined);
+        setStatus(
+          `Exported ${countPages(pages.length)} as ${outcome.fileName ?? file.name}. ` +
+            "The open file isn't changed.",
+        );
+      } catch (err) {
+        if (isFatalEngineError(err)) {
+          setExportDialog(undefined);
+          throw err;
+        }
+        setExportDialog({ error: messageOf(err) });
+      }
+    });
+  }
+
   // ---- Building forms ----
 
   function pickFormTool(id: NewFieldKind | "edit") {
@@ -1562,6 +1644,7 @@ export function App() {
         showProperties ||
         passwordDialog ||
         compressDialog ||
+        exportDialog ||
         createDialog ||
         signDialog ||
         stampDialog ||
@@ -1815,6 +1898,17 @@ export function App() {
               title="Save a copy under a new name (Ctrl+Shift+S)"
             >
               Save as
+            </button>
+          )}
+          {doc && (
+            <button
+              type="button"
+              className="tool"
+              disabled={locked}
+              onClick={() => setExportDialog({})}
+              title="Save pages as pictures, SVG drawings, text or a web page"
+            >
+              Export
             </button>
           )}
           {doc && (
@@ -2544,6 +2638,21 @@ export function App() {
           onCompress={compressNow}
           onSave={saveCompressed}
           onClose={closeCompress}
+        />
+      )}
+      {exportDialog && doc && (
+        <ExportDialog
+          fileName={doc.fileName}
+          pageCount={doc.info.pageCount}
+          current={page}
+          selected={selection.pages}
+          progress={exportDialog.progress}
+          error={exportDialog.error}
+          onExport={exportNow}
+          onStop={() => {
+            exportStop.current = true;
+          }}
+          onClose={() => setExportDialog(undefined)}
         />
       )}
       {passwordDialog && doc && (

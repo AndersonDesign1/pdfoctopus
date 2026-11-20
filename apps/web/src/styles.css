@@ -189,21 +189,36 @@ input {
   width: auto;
 }
 
+/* The search box starts at a set width and takes the room the toolbar has left (up to a
+   point). The input gives way to the match count, so a search moves nothing else unless it
+   really needs the room (with "Redact all" showing). */
 .search {
   display: flex;
   align-items: center;
   gap: 2px;
+  flex: 1 1 180px;
+  max-width: 340px;
 }
 
 .search input {
-  width: 130px;
+  width: 60px;
+  flex: 1 1 60px;
+  min-width: 40px;
 }
 
 .search-count {
   font-size: 0.85rem;
   color: var(--muted);
-  min-width: 6em;
   padding-left: 4px;
+  white-space: nowrap;
+}
+
+.search-count:empty {
+  padding-left: 0;
+}
+
+.search .tool {
+  white-space: nowrap;
 }
 
 .theme-toggle {

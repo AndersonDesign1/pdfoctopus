@@ -38,6 +38,21 @@ export {
   PasswordRequiredError,
   type PdfErrorCode,
 } from "./errors";
+export {
+  assembleExport,
+  DEFAULT_EXPORT_DPI,
+  DEFAULT_JPEG_QUALITY,
+  EXPORT_TYPES,
+  type ExportedPage,
+  type ExportFile,
+  type ExportFormat,
+  type ExportOptions,
+  exportFileName,
+  filePerPage,
+  MAX_EXPORT_DPI,
+  MIN_EXPORT_DPI,
+  ZIP_TYPE,
+} from "./exportFiles";
 export type { FieldChanges, NewField, NewFieldKind } from "./formBuild";
 export type { FieldKind } from "./forms";
 export { describePages, parsePageRanges, splitEvery, splitSingle } from "./pageRanges";
@@ -66,3 +81,4 @@ export {
   type StampLayout,
   stampName,
 } from "./stampRules";
+export { crc32 } from "./zip";

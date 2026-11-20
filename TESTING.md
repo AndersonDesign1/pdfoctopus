@@ -330,6 +330,42 @@ text-only one (`fixtures/generated/contract-libreoffice.pdf`).
 - [ ] Open the saved new PDFs in **Adobe Acrobat Reader**, **Chrome/Edge** and **Firefox**
 - [ ] **Phone:** New works, and the dialog fits the screen
 
+## Phase 4: export (PDF to pictures and text)
+
+- [ ] **Export** (top bar) → PNG, all pages of a few-page PDF: a ZIP with one picture per page,
+      in order; the pictures open in your photo viewer and look like the pages
+- [ ] JPEG at 300 dpi, one page: a single .jpg; it's sharp when zoomed in. Low quality makes a
+      smaller file
+- [ ] **Plain text** from a contract or letter: the text reads in the right order. From a
+      scanned PDF: little or nothing (expected, there's no OCR)
+- [ ] **Web page (HTML):** open the .html in your browser: each page is a white sheet with the
+      text in place; pictures are there
+- [ ] **SVG:** opens in the browser and in Inkscape or Illustrator, and stays sharp when
+      zoomed
+- [ ] Pages "2-3, 5" exports just those; select pages in the sidebar first and "The selected
+      pages" is offered
+- [ ] Unsaved changes (rotate a page, add a highlight) are in the export
+- [ ] A long PDF (e.g. 300 pages at 300 dpi): the progress counts up, **Stop** stops it, and
+      nothing is saved
+- [ ] A PDF that doesn't allow copying (Password → untick "Copy text and pictures", save,
+      reopen): Export says to unlock the permissions first
+- [ ] In Chrome/Edge the save dialog offers the right kind of file (.zip, .png, .txt…); in
+      Firefox and Safari it downloads
+- [ ] **Desktop app:** the save dialog lets you choose where the file goes
+- [ ] The top bar is still one line at your usual window size, before and after a search
+
+## Page labels
+
+- [ ] Open a PDF whose pages are numbered "i, ii, iii, 1, 2, 3…" (many books and reports;
+      the page box in the top bar shows the label). Delete page "ii": the pages now read
+      "i, ii, 1, 2…". Undo brings back "i, ii, iii"
+- [ ] Move the last page to the front: it keeps its style (a number among the numbers), and
+      both sections count up in order
+- [ ] Insert a blank page in the middle of the numbered pages: it gets the next number
+- [ ] Save, and open the file in Acrobat Reader: its page box shows the same labels
+- [ ] A PDF without labels: move and insert pages, and the page box shows plain numbers
+      (1, 2, 3), never "1, 1, 2"
+
 ## Phase 5: certificate signing
 
 Use the test IDs in [`fixtures/test-ids`](./fixtures/test-ids) (password `test-only`; test keys
@@ -378,4 +414,3 @@ _None yet._
   because a file opened from the file picker or by drag-and-drop can't be written back to.
   Doing it needs `showOpenFilePicker` in Chrome/Edge and the file's path on desktop. Planned
   for later.
-- **Page labels** (like "i, ii, 1, 2") aren't renumbered after pages are moved or deleted.
