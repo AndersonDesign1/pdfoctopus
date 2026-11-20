@@ -27,6 +27,7 @@ import type {
   TextStamp,
 } from "./engine";
 import type { PdfErrorCode } from "./errors";
+import type { ExportOptions } from "./exportFiles";
 import type { FieldChanges, NewField } from "./formBuild";
 import type { PasswordSpec } from "./security";
 import type { SignatureInspection } from "./signatureCheck";
@@ -69,6 +70,7 @@ export type WorkerRequest =
   | { id: number; type: "unlockPermissions"; password: string }
   | { id: number; type: "compressedCopy"; preset: CompressPreset }
   | { id: number; type: "createPdf"; spec: CreateSpec }
+  | { id: number; type: "exportPage"; page: number; options: ExportOptions }
   | { id: number; type: "deleteAnnotation"; page: number; annotation: number }
   | {
       id: number;
@@ -120,6 +122,7 @@ export interface WorkerResults {
   unlockPermissions: DocumentInfo | null;
   compressedCopy: CompressResult;
   createPdf: Uint8Array;
+  exportPage: Uint8Array;
   deleteAnnotation: EditResult;
   editAnnotation: EditResult;
   undo: EditResult | null;

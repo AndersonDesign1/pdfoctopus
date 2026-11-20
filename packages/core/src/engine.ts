@@ -25,7 +25,9 @@ import {
   transformRect,
 } from "./annotationObjects";
 import { type CompressPreset, REBUILD_OPTIONS, shrinkImages } from "./compress";
+import { exportPage } from "./convert";
 import { IncrementalSaveError, PasswordRequiredError } from "./errors";
+import type { ExportOptions } from "./exportFiles";
 import {
   buildField,
   checkFieldName,
@@ -57,6 +59,14 @@ import {
   restoreField,
   snapshotField,
 } from "./forms";
+import {
+  applyLabels,
+  planLabels,
+  readPageLabels,
+  removeLabels,
+  restoreLabels,
+  simplifyLabelTree,
+} from "./pageLabels";
 import {
   ALL_PERMISSIONS,
   checkPasswordSpec,
@@ -585,6 +595,30 @@ export class PdfEngine {
    * with a password that isn't being changed can't be compressed: its passwords aren't known,
    * so the copy couldn't be protected the same way.
    */
+  /**
+   * One page (0-based) as a picture, SVG drawing, text or HTML, with unsaved changes. Refused
+   * when the file doesn't allow copying its content, unless its permissions were unlocked.
+   */
+  exportPage(index: number, options: ExportOptions): Uint8Array {
+    const doc = this.requireDoc();
+    if (!Number.isInteger(index) || index < 0 || index >= doc.countPages()) {
+      throw new Error("There's no such page");
+    }
+    const security = this.securityInfo();
+    if (security.encrypted && !security.permissions.copy && !this.ownerUnlocked) {
+      throw new Error(
+        "This file doesn't allow copying its content. To export it, unlock its permissions " +
+          "with the permissions password first (Password).",
+      );
+    }
+    const page = doc.loadPage(index);
+    try {
+      return exportPage(page, index, options);
+    } finally {
+      page.destroy();
+    }
+  }
+
   compressedCopy(preset: CompressPreset): CompressResult {
     const pdf = this.requirePdf();
     if (!["high", "balanced", "smallest"].includes(preset)) throw new Error("Unknown preset");
@@ -790,13 +824,16 @@ export class PdfEngine {
     const pages: PageSize[] = [];
     const labels: (string | null)[] = [];
     let anyLabel = false;
+    // Read here rather than with page.getLabel(), whose lookup a crafted file can make hang.
+    const pdf = doc.asPDF();
+    const read = pdf ? readPageLabels(pdf) : null;
     for (let i = 0; i < pageCount; i++) {
       const page = doc.loadPage(i);
       try {
         const [x0, y0, x1, y1] = page.getBounds();
         pages.push({ width: x1 - x0, height: y1 - y0 });
-        const label = page.getLabel();
-        // MuPDF falls back to the page number when there's no label; only keep real ones.
+        const label = read?.[i];
+        // Only labels that differ from the page number count.
         const real = label && label !== String(i + 1) ? label : null;
         if (real) anyLabel = true;
         labels.push(real);
@@ -1010,18 +1047,21 @@ export class PdfEngine {
   /** Delete pages. At least one page must be left. */
   deletePages(pages: readonly number[]): EditResult {
     const pdf = this.requirePdf();
+    simplifyLabelTree(pdf);
     const indices = this.checkPages(pages);
     if (indices.length >= pdf.countPages()) {
       throw new Error("A PDF needs at least one page, so not every page can be deleted");
     }
     let removed: PageEntry[] = [];
-    return this.run({
-      label: `Delete ${countLabel(indices.length)}`,
-      redo: () => {
-        removed = this.removePages(indices);
-      },
-      undo: () => this.insertPages(removed),
-    });
+    return this.run(
+      this.labelled({
+        label: `Delete ${countLabel(indices.length)}`,
+        redo: () => {
+          removed = this.removePages(indices);
+        },
+        undo: () => this.insertPages(removed),
+      }),
+    );
   }
 
   /**
@@ -1031,6 +1071,7 @@ export class PdfEngine {
    */
   movePages(pages: readonly number[], to: number): EditResult {
     const pdf = this.requirePdf();
+    simplifyLabelTree(pdf);
     const indices = this.checkPages(pages);
     const maxTo = pdf.countPages() - indices.length;
     if (!Number.isInteger(to) || to < 0 || to > maxTo) {
@@ -1039,7 +1080,7 @@ export class PdfEngine {
     const unchanged = indices.every((p, i) => p === to + i);
     let original: PageEntry[] = [];
     return this.run(
-      {
+      this.labelled({
         label: `Move ${countLabel(indices.length)}`,
         redo: () => {
           original = this.removePages(indices);
@@ -1054,7 +1095,7 @@ export class PdfEngine {
             })),
           );
         },
-      },
+      }),
       unchanged,
     );
   }
@@ -1065,6 +1106,7 @@ export class PdfEngine {
    */
   insertBlankPages(at: number, count = 1, size?: PageSize): EditResult {
     const pdf = this.requirePdf();
+    simplifyLabelTree(pdf);
     const pageCount = pdf.countPages();
     this.checkInsertAt(at, pageCount);
     if (!Number.isInteger(count) || count < 1 || count > 1000) {
@@ -1084,6 +1126,7 @@ export class PdfEngine {
   /** Insert pages from other PDFs before index `at` (pageCount appends, which is a merge). */
   insertPdfs(at: number, sources: readonly PdfSource[]): EditResult {
     const pdf = this.requirePdf();
+    simplifyLabelTree(pdf);
     this.checkInsertAt(at, pdf.countPages());
     if (sources.length === 0) throw new Error("Choose at least one PDF to insert");
     // Graft every page first, at the end of the document, so a failure part-way through
@@ -2511,11 +2554,48 @@ export class PdfEngine {
 
   private insertStep(label: string, at: number, objects: mupdf.PDFObject[]): EditResult {
     const entries = objects.map((object, i) => ({ index: at + i, object }));
-    return this.run({
-      label,
-      redo: () => this.insertPages(entries),
-      undo: () => this.removePages(entries.map((e) => e.index)),
-    });
+    return this.run(
+      this.labelled({
+        label,
+        redo: () => this.insertPages(entries),
+        undo: () => this.removePages(entries.map((e) => e.index)),
+      }),
+    );
+  }
+
+  /**
+   * A step that changes which pages are where, made to keep page labels with their pages:
+   * each page stays in its label section, and sections are numbered again in order. Undo
+   * puts back the labels exactly as they were.
+   */
+  private labelled(step: Step): Step {
+    const pdf = this.requirePdf();
+    const plan = planLabels(pdf);
+    if (!plan) {
+      // No labels: keep it that way (MuPDF adds some when it inserts pages).
+      return {
+        label: step.label,
+        redo: () => {
+          step.redo();
+          removeLabels(pdf);
+        },
+        undo: () => {
+          step.undo();
+          removeLabels(pdf);
+        },
+      };
+    }
+    return {
+      label: step.label,
+      redo: () => {
+        step.redo();
+        applyLabels(pdf, plan);
+      },
+      undo: () => {
+        step.undo();
+        restoreLabels(pdf, plan);
+      },
+    };
   }
 
   private editResult(): EditResult {
