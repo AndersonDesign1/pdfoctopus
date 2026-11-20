@@ -12,6 +12,7 @@ import type {
   PageSize,
   PdfSource,
   RotationDelta,
+  SignatureSpec,
   TextStamp,
 } from "./engine";
 import { EngineCrashedError, errorFromCode, isFatalEngineError } from "./errors";
@@ -318,6 +319,27 @@ export class PdfWorkerClient {
   /** Unlock the file's permissions with its permissions password (null if it's wrong). */
   unlockPermissions(password: string) {
     return this.call<"unlockPermissions">({ type: "unlockPermissions", password });
+  }
+
+  /** Every signature field in the document, signed or not. */
+  signatureFields() {
+    return this.call<"signatureFields">({ type: "signatureFields" });
+  }
+
+  /**
+   * Save the document with a signature field and room for a certificate signature. The open
+   * document isn't changed; pass the signature over the returned byte range to
+   * finishSignature.
+   */
+  prepareSignature(spec: SignatureSpec) {
+    return this.call<"prepareSignature">({ type: "prepareSignature", spec });
+  }
+
+  /** Write the signature (DER CMS) in; the signed file becomes the open document. */
+  finishSignature(signature: Uint8Array) {
+    return this.call<"finishSignature">({ type: "finishSignature", signature }, [
+      signature.buffer as ArrayBuffer,
+    ]);
   }
 
   /** The full names of every field in the form. */

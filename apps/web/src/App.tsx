@@ -32,6 +32,7 @@ import {
   type RgbColor,
   type RotationDelta,
   type SearchHit,
+  type SignatureFieldInfo,
   type StampKind,
   ZIP_TYPE,
 } from "@pdfoctopus/core";
@@ -67,11 +68,18 @@ import {
   writeToDestination,
 } from "./saveFile";
 import { SecurityDialog } from "./security/SecurityDialog";
+import type { CertificateChoice } from "./sign/CertificatePanel";
+import { signatureBoxLines, signingTimeText } from "./sign/certificate";
 import { clampRect, formatToday, initialRect, type PageRect, placementKey } from "./sign/ink";
 import { Placement } from "./sign/Placement";
 import { SignDialog } from "./sign/SignDialog";
 import { StampDialog } from "./sign/StampDialog";
-import { dateToStamp, pictureToImage, type StampImage } from "./sign/stampImage";
+import {
+  certificateToStamp,
+  dateToStamp,
+  pictureToImage,
+  type StampImage,
+} from "./sign/stampImage";
 import {
   type ChosenPdf,
   InsertPdfDialog,
@@ -120,7 +128,7 @@ type PageDialog =
 
 /** A signature, initials or date being positioned on a page, before it's applied. */
 interface PendingStamp {
-  kind: StampKind | "stamp";
+  kind: StampKind | "stamp" | "certificate";
   /** The picture shown while placing it (and, except for text stamps, what's added). */
   image: StampImage;
   page: number;
@@ -129,9 +137,12 @@ interface PendingStamp {
   text?: string;
   /** For a text stamp: what it says, drawn by the engine as vector graphics. */
   textStamp?: { text: string; detail: string; color: RgbColor };
+  /** For a digital signature: the digital ID to sign with, and the reason and location. */
+  certificate?: CertificateChoice;
 }
 
 const STAMP_NOUN: Record<PendingStamp["kind"], string> = {
+  certificate: "digital signature",
   signature: "signature",
   initials: "initials",
   date: "date",
@@ -278,6 +289,10 @@ export function App() {
   const [pageDialog, setPageDialog] = useState<PageDialog>();
   /** Which dialog for making a signature is open, if any. */
   const [signDialog, setSignDialog] = useState<"signature" | "initials">();
+  /** The empty signature fields that can be signed (not read-only), looked up when Sign opens. */
+  const [emptySignatureFields, setEmptySignatureFields] = useState<SignatureFieldInfo[] | null>(
+    null,
+  );
   /** True while the dialog for choosing a stamp ("APPROVED", …) is open. */
   const [stampDialog, setStampDialog] = useState(false);
   /** True while the "Apply redactions?" confirmation is open. */
@@ -809,10 +824,110 @@ export function App() {
     setPending({ ...pending, page: index, rect: clampRect(rect, size) });
   }
 
+  /** Open the Sign dialog, and look up the empty signature fields a digital ID could sign. */
+  function openSignDialog() {
+    setSignDialog("signature");
+    setEmptySignatureFields(null);
+    const startedWith = docRef.current;
+    getClient()
+      .signatureFields()
+      .then(
+        (fields) => {
+          if (docRef.current === startedWith) {
+            setEmptySignatureFields(fields.filter((f) => !f.signed && !f.readOnly));
+          }
+        },
+        // Signing in a new box still works.
+        () => setEmptySignatureFields([]),
+      );
+  }
+
+  /** Signing with a digital ID was chosen: sign the field, or place a new box first. */
+  function chooseCertificate(choice: CertificateChoice) {
+    setSignDialog(undefined);
+    // Signing appends to the file, so it can't follow anything that makes the next save
+    // rewrite it. Say so now rather than after the box has been placed (the engine checks too).
+    const info = docRef.current?.info;
+    const blocker = !info
+      ? null
+      : info.redacted
+        ? "Redactions were applied, so the whole file has to be rewritten first. Save it, open the saved file and sign that."
+        : info.security.pending !== "none"
+          ? "A password change is waiting to be saved, which rewrites the whole file. Save it (or undo the change) first, then sign."
+          : info.security.encrypted
+            ? "Signing a file that has a password isn't supported yet. Remove the password, save, and sign the saved file."
+            : null;
+    if (blocker) {
+      setStatus(`Can't sign yet: ${blocker}`);
+      return;
+    }
+    if (choice.field) {
+      const { page, name } = choice.field;
+      void signWithCertificate(choice, page, { field: name });
+      return;
+    }
+    const lines = signatureBoxLines(
+      choice.identity.name,
+      signingTimeText(new Date()),
+      choice.reason,
+      choice.location,
+    );
+    startPlacing("certificate", certificateToStamp(lines));
+    setPending((p) => (p ? { ...p, certificate: choice } : p));
+  }
+
+  /**
+   * Sign with a digital ID: the engine adds the field and room for the signature, the
+   * signature is made here with the key (which never leaves the browser), and the engine
+   * writes it in. The signed file becomes the document; Save writes it.
+   */
+  function signWithCertificate(
+    choice: CertificateChoice,
+    page: number,
+    where: { field: string } | { rect: [number, number, number, number] },
+  ) {
+    return runTask("sign with your digital ID", async (pdf) => {
+      setStatus("Signing…");
+      const sign = await import("@pdfoctopus/sign");
+      const now = new Date();
+      const prepared = await pdf.prepareSignature({
+        page,
+        ...where,
+        signer: choice.identity.name,
+        dateText: signingTimeText(now),
+        signingTime: now.getTime(),
+        reason: choice.reason,
+        location: choice.location,
+        signatureSize: sign.signatureSizeFor(choice.identity),
+      });
+      const signature = await sign.signPdfBytes(
+        choice.identity,
+        prepared.bytes,
+        prepared.byteRange,
+      );
+      const result = await pdf.finishSignature(signature);
+      setPending(undefined);
+      // Signing can't be undone (the engine starts a new history from the signed file).
+      applyEdit(
+        { info: result.info, history: NO_HISTORY },
+        `Signed page ${page + 1} with ${choice.identity.name}'s digital ID. Save to keep it. ` +
+          "It can't be undone; to drop it, close the file without saving.",
+        undefined,
+        page,
+      );
+    });
+  }
+
   function applyPending() {
     const stamp = pending;
     if (!stamp) return;
     const { left, top, width, height } = stamp.rect;
+    if (stamp.kind === "certificate") {
+      const rect: [number, number, number, number] = [left, top, left + width, top + height];
+      if (stamp.certificate) void signWithCertificate(stamp.certificate, stamp.page, { rect });
+      return;
+    }
+    const kind = stamp.kind;
     void runTask(`add the ${STAMP_NOUN[stamp.kind]}`, async (pdf) => {
       const rect: [number, number, number, number] = [left, top, left + width, top + height];
       const result =
@@ -823,7 +938,7 @@ export function App() {
               rect,
               // A copy: the bytes are handed over to the worker, and a saved image may be reused.
               image: stamp.image.png.slice(),
-              kind: stamp.kind === "stamp" ? "image" : stamp.kind,
+              kind: kind === "stamp" ? "image" : kind,
               text: stamp.text,
             });
       setPending(undefined);
@@ -2089,8 +2204,8 @@ export function App() {
               type="button"
               className="tool"
               disabled={locked}
-              onClick={() => setSignDialog("signature")}
-              title="Draw, type or upload your signature and place it on the page"
+              onClick={openSignDialog}
+              title="Draw, type or upload your signature, or sign with a digital ID"
             >
               Sign
             </button>
@@ -2641,6 +2756,8 @@ export function App() {
             startPlacing(kind, image);
           }}
           onCancel={() => setSignDialog(undefined)}
+          signatureFields={emptySignatureFields}
+          onCertificate={chooseCertificate}
         />
       )}
 

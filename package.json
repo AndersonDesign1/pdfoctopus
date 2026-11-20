@@ -19,6 +19,9 @@
     "prepare": "bun .githooks/install.mjs",
     "deploy": "bun run build && wrangler deploy"
   },
+  "overrides": {
+    "@peculiar/utils": "4.1.0"
+  },
   "devDependencies": {
     "@biomejs/biome": "^2.6.7",
     "playwright": "1.65.1",

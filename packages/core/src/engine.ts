@@ -76,6 +76,21 @@ import {
   type PasswordSpec,
   type SecurityInfo,
 } from "./security";
+import {
+  type ByteRange,
+  DEFAULT_SIGNATURE_SIZE,
+  findPlaceholders,
+  MAX_SIGNATURE_SIZE,
+  type SignaturePlaceholders,
+  writeByteRange,
+  writeSignature,
+} from "./signature";
+import {
+  listSignatureFields,
+  MAX_SIGNATURE_TEXT,
+  placeSignature,
+  type SignatureFieldInfo,
+} from "./signatureField";
 import { checkStampText, MAX_STAMP_DETAIL, MAX_STAMP_TEXT, stampName } from "./stampRules";
 import { stampAppearance } from "./textStamp";
 
@@ -326,6 +341,42 @@ export interface TextStamp {
   color: RgbColor;
 }
 
+/** A certificate signature to prepare: where it goes and what its box says. */
+export interface SignatureSpec {
+  /** 0-based page. */
+  page: number;
+  /** An empty signature field on that page to sign, by its full name… */
+  field?: string;
+  /** …or where to put a new one: [left, top, right, bottom] in points as shown. */
+  rect?: [number, number, number, number];
+  /** The signer's name (from their certificate), shown in the box. */
+  signer: string;
+  /** The date and time shown in the box. */
+  dateText: string;
+  /** When it's signed, in milliseconds since 1970 (for the signature dictionary's /M). */
+  signingTime: number;
+  reason?: string;
+  location?: string;
+  /** Bytes to set aside for the signature (CMS); DEFAULT_SIGNATURE_SIZE if not given. */
+  signatureSize?: number;
+}
+
+/** A file with a signature dictionary waiting for its signature, and what to sign. */
+export interface PreparedSignature {
+  /** The whole file, with the real /ByteRange and zeros where the signature goes. */
+  bytes: Uint8Array;
+  /** The stretches of `bytes` to hash and sign. */
+  byteRange: ByteRange;
+  /** The new (or signed) field's name. */
+  field: string;
+}
+
+/** The signed file, now the open document. */
+export interface SignedResult {
+  bytes: Uint8Array;
+  info: DocumentInfo;
+}
+
 /** One undoable step. Each step knows how to reverse itself, so no copies are kept. */
 interface Step {
   label: string;
@@ -405,6 +456,15 @@ export class PdfEngine {
   /** Set once redactions are applied; never cleared (see DocumentInfo.redacted). */
   private redacted = false;
   private redoStack: Step[] = [];
+  /**
+   * How many changes the document has had since it was opened: up one for each step done or
+   * redone, down one for each undone. Zero means it's as it was opened.
+   */
+  private changes = 0;
+  /** After signing: the signed file, which saving gives back as it is until something changes. */
+  private signedFile: Uint8Array | null = null;
+  /** A file prepared for signing, waiting for its signature (see prepareSignature). */
+  private prepared: { bytes: Uint8Array; at: SignaturePlaceholders; field: string } | null = null;
   /**
    * Text layout of recently used pages, for selecting text; dropped whenever the document
    * changes. Only a few pages are kept, least recently used dropped first.
@@ -573,6 +633,128 @@ export class PdfEngine {
     }
   }
 
+  // ---------------------------------------------------------------------------------------
+  // Certificate signatures (PAdES). Signing happens in two steps, because the signature itself
+  // is made outside the engine (with the user's key, in packages/sign): prepareSignature saves
+  // the file with a signature dictionary and room for the signature, and finishSignature
+  // writes the signature in. The signed file then becomes the open document, so later changes
+  // are added after the signature and leave it valid.
+
+  /** Every signature field in the document, signed or not. */
+  signatureFields(): SignatureFieldInfo[] {
+    return listSignatureFields(this.requirePdf());
+  }
+
+  /**
+   * Why the document can't be signed as it is, or null if it can. Signing always appends to
+   * the file, so anything that makes the next save rewrite it rules signing out.
+   */
+  private signingBlocker(pdf: mupdf.PDFDocument): string | null {
+    if (this.redacted) {
+      return "Redactions were applied, so the whole file has to be rewritten first. Save it, open the saved file and sign that.";
+    }
+    if (this.securityChange) {
+      return "A password change is waiting to be saved, which rewrites the whole file. Save it (or undo the change) first, then sign.";
+    }
+    if (this.securityInfo().encrypted) {
+      return "Signing a file that has a password isn't supported yet. Remove the password, save, and sign the saved file.";
+    }
+    if (!pdf.canBeSavedIncrementally()) {
+      return "This PDF was damaged and had to be repaired, so a signature can't be added to it safely. Save a rebuilt copy, open it and sign that.";
+    }
+    return null;
+  }
+
+  /**
+   * Save the document (with any changes) plus a signature field and signature dictionary,
+   * with room for the signature. The open document isn't changed: the work is done on a copy.
+   * Returns the file and the byte range to sign; pass the signature to finishSignature.
+   */
+  prepareSignature(spec: SignatureSpec): PreparedSignature {
+    const pdf = this.requirePdf();
+    const blocker = this.signingBlocker(pdf);
+    if (blocker) throw new Error(blocker);
+    const [index] = this.checkPages([spec.page]) as [number];
+    const size = spec.signatureSize ?? DEFAULT_SIGNATURE_SIZE;
+    if (!Number.isInteger(size) || size < 1024 || size > MAX_SIGNATURE_SIZE) {
+      throw new Error("The space set aside for the signature isn't valid");
+    }
+    const time = new Date(spec.signingTime);
+    if (Number.isNaN(time.getTime())) throw new Error("The signing time isn't valid");
+    const text = (value: string | undefined, what: string) => {
+      const t = (value ?? "").trim();
+      if (t.length > MAX_SIGNATURE_TEXT) {
+        throw new Error(`The ${what} can be ${MAX_SIGNATURE_TEXT} characters at most`);
+      }
+      return t || undefined;
+    };
+    const details = {
+      signer: text(spec.signer, "name") ?? "",
+      dateText: text(spec.dateText, "date") ?? "",
+      signingTime: time,
+      reason: text(spec.reason, "reason"),
+      location: text(spec.location, "location"),
+    };
+    let target: { field: string } | { rect: readonly number[] };
+    if (spec.field !== undefined) {
+      target = { field: spec.field };
+    } else if (spec.rect) {
+      const [x0, y0, x1, y1] = checkRect(spec.rect);
+      if (x1 - x0 < MIN_FIELD_SIZE || y1 - y0 < MIN_FIELD_SIZE) {
+        throw new Error("The signature box is too small");
+      }
+      this.checkOnPage(index, [x0, y0, x1, y1], "The signature must be inside the page");
+      target = { rect: [x0, y0, x1, y1] };
+    } else {
+      throw new Error("Say where the signature goes");
+    }
+
+    // The file as it would be saved now: the original, or the original plus the changes.
+    const unsigned = this.changes === 0 && this.signedFile ? this.signedFile : this.save();
+    this.prepared = null;
+    const copy = mupdf.Document.openDocument(unsigned, "application/pdf");
+    let bytes: Uint8Array;
+    let field: string;
+    try {
+      const copyPdf = copy.asPDF() as mupdf.PDFDocument;
+      field = placeSignature(copyPdf, index, target, details, size);
+      // Only the signature's objects are written, after the file as it was.
+      const buffer = copyPdf.saveToBuffer("incremental,compress");
+      try {
+        bytes = buffer.asUint8Array().slice();
+      } finally {
+        buffer.destroy();
+      }
+    } finally {
+      copy.destroy();
+    }
+    if (bytes.length <= unsigned.length) throw new Error("The signature couldn't be added");
+    for (let i = 0; i < unsigned.length; i++) {
+      if (bytes[i] !== unsigned[i]) throw new Error("Saving the signature changed the file");
+    }
+    const at = findPlaceholders(bytes, unsigned.length, size);
+    const byteRange = writeByteRange(bytes, at);
+    this.prepared = { bytes, at, field };
+    return { bytes: bytes.slice(), byteRange, field };
+  }
+
+  /**
+   * Write the signature (a DER-encoded CMS SignedData) into the file prepared by
+   * prepareSignature, and make the signed file the open document. Signing can't be undone:
+   * the history is cleared, and saving gives back the signed file until something changes.
+   */
+  finishSignature(signature: Uint8Array): SignedResult {
+    const prepared = this.prepared;
+    if (!prepared) throw new Error("Nothing is waiting to be signed");
+    const bytes = prepared.bytes.slice();
+    writeSignature(bytes, prepared.at, signature);
+    this.prepared = null;
+    const opened = this.open(bytes);
+    if (opened.needsPassword) throw new Error("The signed file couldn't be opened");
+    this.signedFile = bytes;
+    return { bytes: bytes.slice(), info: this.info() };
+  }
+
   private securityStep(label: string, next: PdfEngine["securityChange"]): EditResult {
     const before = this.securityChange;
     let applied = true;
@@ -735,6 +917,9 @@ export class PdfEngine {
     // Adding or removing a password rewrites the whole file too (agreed to when setting it).
     const change = this.securityChange;
     if (change) incremental = false;
+    // Just signed, and not changed since: the signed file is the file. (An update with nothing
+    // in it would be harmless, but there's no reason to add one.)
+    if (incremental && this.signedFile && this.changes === 0) return this.signedFile.slice();
     if (incremental && !pdf.canBeSavedIncrementally()) {
       throw new IncrementalSaveError();
     }
@@ -782,6 +967,9 @@ export class PdfEngine {
     this.undoStack = [];
     this.redoStack = [];
     this.redacted = false;
+    this.changes = 0;
+    this.signedFile = null;
+    this.prepared = null;
   }
 
   // ---------------------------------------------------------------------------------------
@@ -2279,6 +2467,7 @@ export class PdfEngine {
     const step = this.undoStack.pop();
     if (!step) return null;
     step.undo();
+    this.changes--;
     this.redoStack.push(step);
     return this.editResult();
   }
@@ -2289,6 +2478,7 @@ export class PdfEngine {
     const step = this.redoStack.pop();
     if (!step) return null;
     step.redo();
+    this.changes++;
     this.undoStack.push(step);
     return this.editResult();
   }
@@ -2308,6 +2498,7 @@ export class PdfEngine {
   private run(step: Step, noOp = false): EditResult {
     if (noOp) return this.editResult();
     step.redo();
+    this.changes++;
     this.undoStack.push(step);
     if (this.undoStack.length > MAX_HISTORY) this.undoStack.shift();
     this.redoStack = [];

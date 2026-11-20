@@ -34,13 +34,17 @@ jobs:
       - run: cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml
 
   # Independent check that the signed test files still validate as documented in
-  # fixtures/README.md (pyhanko is a separate, well-tested PDF signature validator).
+  # fixtures/README.md (pyhanko is a separate, well-tested PDF signature validator), and
+  # that PDFs signed by this pull request's own signing code validate too.
   signatures:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: mkdir -p "$RUNNER_TEMP/signed" && bun fixtures/scripts/sign-with-pdfoctopus.ts "$RUNNER_TEMP/signed"
       - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
       - run: pip install --require-hashes -r fixtures/scripts/requirements.txt
-      - run: python3 fixtures/scripts/check-signatures.py
+      - run: python3 fixtures/scripts/check-signatures.py "$RUNNER_TEMP/signed"

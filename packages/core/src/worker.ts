@@ -140,6 +140,12 @@ async function handle(req: WorkerRequest): Promise<WorkerSuccess> {
       return success(req.id, "unlockPermissions", engine.unlockPermissions(req.password));
     case "listFieldNames":
       return success(req.id, "listFieldNames", engine.listFieldNames());
+    case "signatureFields":
+      return success(req.id, "signatureFields", engine.signatureFields());
+    case "prepareSignature":
+      return success(req.id, "prepareSignature", engine.prepareSignature(req.spec));
+    case "finishSignature":
+      return success(req.id, "finishSignature", engine.finishSignature(req.signature));
     case "deleteField":
       return success(req.id, "deleteField", engine.deleteField(req.page, req.field));
     case "listAnnotations":
@@ -175,6 +181,9 @@ function transferables(res: WorkerSuccess): Transferable[] {
   }
   if (res.type === "splitPages") return res.result.map((b) => b.buffer as ArrayBuffer);
   if (res.type === "compressedCopy") return [res.result.bytes.buffer as ArrayBuffer];
+  if (res.type === "prepareSignature" || res.type === "finishSignature") {
+    return [res.result.bytes.buffer as ArrayBuffer];
+  }
   return [];
 }
 

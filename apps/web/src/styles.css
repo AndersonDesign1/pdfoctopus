@@ -640,6 +640,7 @@ input {
 
 .pdfo-tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
   border-bottom: 1px solid var(--border);
   margin-bottom: 12px;
@@ -768,6 +769,27 @@ input {
 .pdfo-colour input:focus-visible + .pdfo-swatch {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+.pdfo-cert-intro {
+  margin-bottom: 10px;
+}
+
+/* The digital ID that's open: who it's for, who issued it, and a way to pick another. */
+.pdfo-cert-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  margin: 10px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.pdfo-cert-summary .pdfo-hint {
+  flex: 1 1 200px;
+  margin: 0;
 }
 
 .pdfo-sign-preview {

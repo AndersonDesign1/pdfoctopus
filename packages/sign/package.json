@@ -9,9 +9,15 @@
   },
   "scripts": {
     "typecheck": "tsc -p .",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "asn1js": "4.0.0",
+    "pkijs": "4.0.1"
   },
   "devDependencies": {
+    "@pdfoctopus/core": "workspace:*",
+    "@types/node": "^22",
     "vitest": "^5.1.0"
   }
 }

@@ -12,6 +12,29 @@ hand tests: work down it in any order. The ones that matter most, because nothin
 can do them, are opening and printing saved files in **Adobe Acrobat Reader**, and anything
 on the **desktop app** or a **phone**.
 
+## Needs you
+
+Things only the project owner can do or decide. The code uses the default named in each until
+then.
+
+- (2026-11-19) **Check our certificate signatures in Adobe Acrobat Reader** (the Phase 5 exit
+  criteria): see [Phase 5: certificate signing](#phase-5-certificate-signing). Until a real
+  certificate is used, Acrobat shows the signature as made by an unknown identity; trusting
+  `fixtures/trust/pdfoctopus-test-signing-ca.pem` in Acrobat (Preferences → Signatures →
+  Identities & Trusted Certificates → Import) should make it "valid".
+- (2026-11-19) **A real digital ID for a final check** (optional): a `.p12` / `.pfx` from a
+  certificate provider on Adobe's trust list (AATL), or a free personal one, to check a
+  signature shows as valid in Acrobat without trusting anything by hand. Never commit it.
+
+Decided (no action needed):
+
+- **Old `.p12` files with 3DES or RC2 encryption** (common from older Windows and macOS
+  exports): browsers' WebCrypto can't decrypt them. Until a later Phase 5 PR adds support, the
+  dialog explains how to export the file again with AES-256.
+- **Timestamps (B-T signatures)**: a later Phase 5 PR adds them as an opt-in, off by default.
+  When switched on, only a hash of the signature (never the file) is sent to a free public
+  RFC 3161 timestamp server (DigiCert's, with Sectigo's as the other choice).
+
 ## Phase 1: page tools and saving
 
 These close the last Phase 1 exit criterion in [PHASES.md](./PHASES.md).
@@ -342,6 +365,44 @@ text-only one (`fixtures/generated/contract-libreoffice.pdf`).
 - [ ] Save, and open the file in Acrobat Reader: its page box shows the same labels
 - [ ] A PDF without labels: move and insert pages, and the page box shows plain numbers
       (1, 2, 3), never "1, 1, 2"
+
+## Phase 5: certificate signing
+
+Use the test IDs in [`fixtures/test-ids`](./fixtures/test-ids) (password `test-only`; test keys
+only) or your own `.p12` / `.pfx`, and any PDF, e.g. `fixtures/generated/invoice.pdf`. To make
+Acrobat trust the test IDs, import `fixtures/trust/pdfoctopus-test-signing-ca.pem` in Acrobat
+(Preferences → Signatures → Identities & Trusted Certificates → Import) and tick "Use this
+certificate as a trusted root"; remove it again afterwards.
+
+- [ ] **Sign** (page tools row) → **Digital ID**: choose `test-signer-rsa.p12`, type the
+      password, **Open digital ID**. The dialog shows "Test Signer RSA" and who issued it
+- [ ] A wrong password says "The password is wrong."; `test-signer-3des.p12` says it uses old
+      encryption and how to export it again
+- [ ] Add a reason, **Place signature**, drag the box into place, **Apply**, **Save**. The box
+      shows the name, date and reason
+- [ ] Open the saved file in **Adobe Acrobat Reader**: the signature panel shows the signature
+      as **valid** ("Signed and all signatures are valid"), the document not changed since it
+      was signed, and the certificate details (Test Signer RSA, issued by PDFoctopus Test
+      Signing CA)
+- [ ] Without trusting the test CA, Acrobat says the signer's identity is unknown but the
+      document hasn't been changed (that's expected for an untrusted certificate)
+- [ ] **Sign twice:** reopen the signed file in PDFoctopus, sign again with
+      `test-signer-ec.p12` in another place, save. In Acrobat, **both** signatures are valid,
+      and the first says the document was changed after it (by the second signature), which is
+      allowed
+- [ ] Signing an empty signature field: add one with **Signature field** (Form row), save,
+      reopen, then **Sign** → **Digital ID** offers "In the field …". Sign it: the field shows the
+      signature, and Acrobat shows it as valid
+- [ ] Add a note after signing and save: Acrobat still shows the signature as valid, with a
+      change made after signing
+- [ ] Edits made before signing are in the signed version (Acrobat's "View signed version")
+- [ ] Undo doesn't remove the signature; closing without saving does (the app asks first)
+- [ ] After redacting, or with a password change waiting, signing is refused with a message
+      saying what to do
+- [ ] A real digital ID from a certificate provider (if you have one): Acrobat shows the
+      signature as valid without trusting anything by hand
+- [ ] Open the signed files in **Chrome/Edge** and **Firefox**: they open and show the box
+- [ ] **Phone:** the Digital ID tab fits the screen; signing works
 
 ## Problems found
 
