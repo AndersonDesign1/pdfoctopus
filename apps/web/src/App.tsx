@@ -925,6 +925,7 @@ export function App() {
         try {
           signature = await sign.signWithRoom(choice.identity, prepare, {
             send: desktopTransport(server),
+            roots: sign.tsaRoots()[server],
             serverName: serverName(server),
           });
           timestamped = true;

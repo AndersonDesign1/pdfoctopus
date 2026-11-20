@@ -142,8 +142,13 @@ export function timestampOf(
 ): string | undefined {
   const ts = s.check.timestamp;
   if (!ts) return undefined;
-  const line = `Timestamped by ${ts.authority} at ${formatTime(ts.time)}`;
-  return ts.valid ? `${line}.` : `${line}, but the timestamp doesn't check out.`;
+  const when = formatTime(ts.time);
+  if (!ts.valid)
+    return `Timestamped by ${ts.authority} at ${when}, but the timestamp doesn't check out.`;
+  if (!ts.trusted) {
+    return `A timestamp from ${ts.authority} at ${when} is present, but not verified against a trust list.`;
+  }
+  return `Timestamped by ${ts.authority} at ${when}.`;
 }
 
 /** What part of the file the signature covers. */

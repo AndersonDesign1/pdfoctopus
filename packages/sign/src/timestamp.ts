@@ -16,11 +16,15 @@ import {
   checkSigner,
   DIGESTS,
   digestOf,
+  engine,
   equalBytes,
   signerCertificate,
 } from "./cmsCheck";
 import { displayName } from "./p12";
 
+// DigiCert's server only answers over plain http (https connections are reset, checked
+// 2026-11-20). That's safe enough: only a hash goes out, and the answer is only accepted if it
+// chains to DigiCert's root (tsaRoots.ts).
 export const TIMESTAMP_SERVERS = {
   digicert: { name: "DigiCert", url: "http://timestamp.digicert.com" },
   sectigo: { name: "Sectigo", url: "https://timestamp.sectigo.com" },
@@ -88,6 +92,11 @@ export interface TimestampInfo {
   certificate?: pkijs.Certificate;
   /** The other certificates the token carries (its chain). */
   certificates: pkijs.Certificate[];
+  /**
+   * Whether the server's certificate chains, through the token's certificates, to one of the
+   * trusted roots given (false if none were given).
+   */
+  trusted: boolean;
 }
 
 function readToken(token: asn1js.BaseBlock): { signedData: pkijs.SignedData; tst: pkijs.TSTInfo } {
@@ -101,23 +110,83 @@ function readToken(token: asn1js.BaseBlock): { signedData: pkijs.SignedData; tst
   return { signedData, tst };
 }
 
-/** Whether a certificate may make timestamps (extended key usage timeStamping, if it says). */
-function canTimestamp(cert: pkijs.Certificate): boolean {
+/**
+ * Whether a certificate is a timestamp server's: RFC 3161 (2.3) requires a critical extended
+ * key usage extension with timeStamping as its only purpose.
+ */
+export function canTimestamp(cert: pkijs.Certificate): boolean {
   const ext = cert.extensions?.find((e) => e.extnID === OID.extKeyUsage);
-  if (!ext) return false;
-  const usage = ext.parsedValue as pkijs.ExtKeyUsage | undefined;
-  return !!usage?.keyPurposes?.includes(OID.timeStamping);
+  if (!ext?.critical) return false;
+  const purposes = (ext.parsedValue as pkijs.ExtKeyUsage | undefined)?.keyPurposes ?? [];
+  return purposes.length === 1 && purposes[0] === OID.timeStamping;
+}
+
+function sameKey(a: pkijs.Certificate, b: pkijs.Certificate): boolean {
+  return (
+    a.subject.isEqual(b.subject) &&
+    equalBytes(
+      new Uint8Array(a.subjectPublicKeyInfo.toSchema().toBER(false)),
+      new Uint8Array(b.subjectPublicKeyInfo.toSchema().toBER(false)),
+    )
+  );
+}
+
+async function signedBy(cert: pkijs.Certificate, issuer: pkijs.Certificate): Promise<boolean> {
+  if (!cert.issuer.isEqual(issuer.subject)) return false;
+  try {
+    return await cert.verify(issuer, engine());
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Whether `cert` chains to one of `roots` through `others` (the certificates a token carries),
+ * each link's signature checked. A certificate with a root's name and key counts as that root
+ * (a cross-signed copy of it).
+ */
+export async function chainsToRoot(
+  cert: pkijs.Certificate,
+  others: pkijs.Certificate[],
+  roots: pkijs.Certificate[],
+): Promise<boolean> {
+  let current = cert;
+  const used = new Set<pkijs.Certificate>([cert]);
+  for (let depth = 0; depth < 10; depth++) {
+    for (const root of roots) {
+      if (sameKey(current, root) || (await signedBy(current, root))) return true;
+    }
+    let next: pkijs.Certificate | undefined;
+    for (const candidate of others) {
+      if (!used.has(candidate) && (await signedBy(current, candidate))) {
+        next = candidate;
+        break;
+      }
+    }
+    if (!next) return false;
+    used.add(next);
+    current = next;
+  }
+  return false;
 }
 
 /**
  * Check a timestamp token (the DER-decoded ContentInfo) against the signature value it
- * should cover: its own signature, and that its hash is of `signatureValue`.
+ * should cover: its own signature, that its hash is of `signatureValue`, and whether its
+ * server's certificate chains to one of `roots`.
  */
 export async function verifyTimestampToken(
   token: asn1js.BaseBlock,
   signatureValue: Uint8Array,
+  roots: pkijs.Certificate[] = [],
 ): Promise<TimestampInfo> {
-  const result: TimestampInfo = { time: 0, authority: "", problems: [], certificates: [] };
+  const result: TimestampInfo = {
+    time: 0,
+    authority: "",
+    problems: [],
+    certificates: [],
+    trusted: false,
+  };
   let signedData: pkijs.SignedData;
   let tst: pkijs.TSTInfo;
   try {
@@ -177,6 +246,7 @@ export async function verifyTimestampToken(
   if (result.time < notBefore || result.time > notAfter) {
     result.problems.push("The timestamp server's certificate wasn't valid at that time.");
   }
+  result.trusted = roots.length > 0 && (await chainsToRoot(cert, result.certificates, roots));
   return result;
 }
 
@@ -190,11 +260,14 @@ function statusText(status: pkijs.PKIStatusInfo): string {
 
 /**
  * Get a timestamp token for a signature value from a timestamp server, through `send`.
- * Checks it fully before returning its DER bytes. Throws TimestampError with a message.
+ * Checks it fully before returning its DER bytes, including that the server's certificate
+ * chains to one of `roots` (that server's, from tsaRoots.ts): anyone could otherwise answer
+ * with a token signed by a certificate they made. Throws TimestampError with a message.
  */
 export async function requestTimestamp(
   signatureValue: Uint8Array,
   send: TimestampTransport,
+  roots: pkijs.Certificate[],
   serverName = "The timestamp server",
 ): Promise<Uint8Array> {
   const hash = await digestOf("SHA-256", signatureValue);
@@ -258,10 +331,20 @@ export async function requestTimestamp(
       "invalid",
     );
   }
-  const check = await verifyTimestampToken(asn1js.fromBER(tokenBytes).result, signatureValue);
+  const check = await verifyTimestampToken(
+    asn1js.fromBER(tokenBytes).result,
+    signatureValue,
+    roots,
+  );
   if (check.problems.length > 0) {
     throw new TimestampError(
       `${serverName} sent back a timestamp that doesn't check out: ${check.problems.join(" ")}`,
+      "invalid",
+    );
+  }
+  if (!check.trusted) {
+    throw new TimestampError(
+      `${serverName}'s answer couldn't be verified: its certificate doesn't lead to the server's known root certificate.`,
       "invalid",
     );
   }

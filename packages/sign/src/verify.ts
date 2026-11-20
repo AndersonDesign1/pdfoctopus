@@ -25,6 +25,7 @@ import {
 } from "./cmsCheck";
 import { displayName } from "./p12";
 import { timestampTokenOf, verifyTimestampToken } from "./timestamp";
+import { allTsaRoots } from "./tsaRoots";
 
 /** A certificate, described for people. */
 export interface CertificateInfo {
@@ -51,6 +52,11 @@ export interface TimestampCheck {
   authority: string;
   /** Whether the token checks out (its signature, and that it's for this signature). */
   valid: boolean;
+  /**
+   * Whether its server's certificate chains to a known timestamp root (tsaRoots.ts). Only a
+   * valid, trusted timestamp's time is relied on.
+   */
+  trusted: boolean;
   /** Why it doesn't, in plain words. */
   problems: string[];
   /** The timestamp server's certificate and its issuers, as far as the token carries them. */
@@ -169,11 +175,14 @@ async function buildChain(
 }
 
 /** Check the timestamp token on a signer, if it has one. */
-async function checkTimestamp(signerInfo: pkijs.SignerInfo): Promise<TimestampCheck | undefined> {
+async function checkTimestamp(
+  signerInfo: pkijs.SignerInfo,
+  roots: pkijs.Certificate[],
+): Promise<TimestampCheck | undefined> {
   const token = timestampTokenOf(signerInfo);
   if (!token) return undefined;
   const value = new Uint8Array(signerInfo.signature.valueBlock.valueHexView);
-  const info = await verifyTimestampToken(token, value);
+  const info = await verifyTimestampToken(token, value, roots);
   let chain: CertificateInfo[] = [];
   const problems = [...info.problems];
   if (info.certificate) {
@@ -187,6 +196,7 @@ async function checkTimestamp(signerInfo: pkijs.SignerInfo): Promise<TimestampCh
     time: info.time,
     authority: info.authority,
     valid: problems.length === 0,
+    trusted: problems.length === 0 && info.trusted,
     problems,
     chain,
   };
@@ -202,6 +212,7 @@ export async function verifySignature(
   der: Uint8Array,
   subFilter?: string,
   claimedTime?: number,
+  timestampRoots: pkijs.Certificate[] = allTsaRoots(),
 ): Promise<CryptoCheck> {
   const result: CryptoCheck = {
     intact: null,
@@ -246,22 +257,26 @@ export async function verifySignature(
       );
     }
   }
-  result.timestamp = await checkTimestamp(signerInfo);
+  result.timestamp = await checkTimestamp(signerInfo, timestampRoots);
   result.timestamped = !!result.timestamp;
   if (result.timestamp && !result.timestamp.valid) {
     result.warnings.push(
       `It has a timestamp, but it can't be relied on: ${result.timestamp.problems.join(" ")}`,
     );
+  } else if (result.timestamp && !result.timestamp.trusted) {
+    result.warnings.push(
+      `It has a timestamp from ${result.timestamp.authority}, but that timestamp server isn't one we know, so its time isn't relied on.`,
+    );
   }
 
   // The signing time: /M, or the signingTime attribute. Both are the signer's claim; a valid
-  // timestamp is used instead when there is one.
+  // timestamp from a known timestamp server is used instead when there is one.
   let time = claimedTime;
   const st = attribute(signerInfo.signedAttrs, OID.signingTime)?.values[0];
   if (time === undefined && st instanceof asn1js.UTCTime) time = st.toDate().getTime();
   if (time === undefined && st instanceof asn1js.GeneralizedTime) time = st.toDate().getTime();
   result.signingTime = time;
-  const checkedTime = result.timestamp?.valid ? result.timestamp.time : time;
+  const checkedTime = result.timestamp?.trusted ? result.timestamp.time : time;
   const signer = result.signer;
   if (signer && checkedTime !== undefined) {
     result.validAtSigning = checkedTime >= signer.notBefore && checkedTime <= signer.notAfter;

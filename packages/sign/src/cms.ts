@@ -18,6 +18,8 @@ import { addTimestampToken, requestTimestamp, type TimestampTransport } from "./
 /** How to get a timestamp for a signature (PAdES B-T), if one is wanted. */
 export interface TimestampOptions {
   send: TimestampTransport;
+  /** The root certificates the server's certificate must chain to (tsaRoots.ts). */
+  roots: pkijs.Certificate[];
   /** The server's name, for messages, e.g. "DigiCert's timestamp server". */
   serverName?: string;
 }
@@ -126,7 +128,12 @@ export async function padesSignature(
   if (timestamp) {
     const signerInfo = signedData.signerInfos[0] as pkijs.SignerInfo;
     const value = new Uint8Array(signerInfo.signature.valueBlock.valueHexView);
-    const token = await requestTimestamp(value, timestamp.send, timestamp.serverName);
+    const token = await requestTimestamp(
+      value,
+      timestamp.send,
+      timestamp.roots,
+      timestamp.serverName,
+    );
     addTimestampToken(signerInfo, token);
   }
 

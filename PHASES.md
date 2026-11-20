@@ -587,8 +587,9 @@ with the Digital ID tab the new signature shows as intact straight away.
 default, with DigiCert (the default) or Sectigo as the timestamp server; the choice is
 remembered in the browser. Once the signature is made, the SHA-256 hash of its signature value
 (never the file) goes to the server in an RFC 3161 request with a nonce. The answer is checked
-(granted, the hash we sent, our nonce, the token's own signature and a timestamping
-certificate) and added as the signatureTimeStampToken unsigned attribute. Room for it is set
+(granted, the hash we sent, our nonce, the token's own signature, a timestamping certificate
+whose extended key usage is critical and timeStamping only, and that this certificate chains to
+that server's own root, bundled in `packages/sign/src/tsaRoots.ts`) and added as the signatureTimeStampToken unsigned attribute. Room for it is set
 aside (12 KB more); if the token is bigger than that, the file is prepared again with more room
 and signed again. If the server can't be reached or its answer doesn't check out, signing stops
 with the reason and asks whether to sign without a timestamp: the timestamp asked for is never
@@ -603,17 +604,25 @@ dropped silently.
   reached, with a request of at most 1 KB, an answer of at most 256 KB, no redirects and a 30 s
   limit. The app's own commands now need a permission in `capabilities/default.json` too
   (`build.rs` lists them).
+- **Trusted roots:** DigiCert Trusted Root G4 and DigiCert Assured ID Root CA for DigiCert,
+  Sectigo Public Time Stamping Root R46 and USERTrust RSA for Sectigo (with their SHA-256
+  fingerprints in `tsaRoots.ts`; checked against real tokens). DigiCert's server only answers
+  over plain http (https connections are reset), which is why the root check matters.
 - **Checking:** `verifySignature` checks a timestamp token's signature, that its hash is of the
-  signature value, the timestamp server's certificate (timestamping use, valid at that time) and
-  its chain, and the panel shows "Timestamped by … at …". With a valid timestamp, its time (not
-  the claimed `/M`) is used for "was the certificate valid when it was signed". A timestamp that
-  doesn't check out is a warning; it doesn't break the signature.
+  signature value, the timestamp server's certificate (timestamping only, valid at that time)
+  and whether it chains to one of the bundled roots. Only then does the panel say "Timestamped
+  by … at …" and use its time (not the claimed `/M`) for "was the certificate valid when it was
+  signed". A timestamp from any other server shows as present but not verified against a trust
+  list (a warning), and `/M` is used. A timestamp that doesn't check out is a warning; neither
+  breaks the signature.
 - **Code:** `packages/sign/src/timestamp.ts` (request, checks, token), `cmsCheck.ts` (shared
   signer checks), `cms.ts` and `signWithRoom` in `index.ts`; `apps/web/src/sign/timestamp.ts`.
 - **Tests:** `timestamp.test.ts` with an in-process test timestamp server (`testTsa.ts`, key in
   `fixtures/test-ids/test-tsa.p12`): the request (and a fixed DER example), a good answer
   embedded byte for byte, fetch with the right method and type, more room when needed, the
-  timestamp's time used for validity, and refusals for a rejected request, a wrong hash, a wrong
+  timestamp's time used for validity, a home-made server refused (and its timestamp not
+  trusted in a file), certificates with a non-critical or wider extended key usage refused, and
+  refusals for a rejected request, a wrong hash, a wrong
   or missing nonce, a bad signature, no certificate, garbage, HTTP errors and no network.
   `signed-by-pdfoctopus-timestamped.pdf` is checked by pyhanko in CI as B-T (timestamp intact,
   trusted with `trust/pdfoctopus-test-tsa-ca.pem`, for this signature). By hand: files

@@ -5,6 +5,7 @@
 // digital ID and makes the CMS / PKCS #7 signature with PKI.js and WebCrypto. Everything runs
 // on the user's device: the file, the password and the key never leave it.
 
+import type * as pkijs from "pkijs";
 import { padesSignature, sha256, type TimestampOptions } from "./cms";
 import type { SigningIdentity } from "./p12";
 import { type CryptoCheck, verifySignature } from "./verify";
@@ -26,6 +27,7 @@ export {
   type TimestampServer,
   type TimestampTransport,
 } from "./timestamp";
+export { TSA_ROOTS_PEM, tsaRoots } from "./tsaRoots";
 
 export type SignatureLevel = "B-B" | "B-T";
 
@@ -124,6 +126,8 @@ export type SignatureStatus = "intact" | "changed" | "broken" | "unknown";
 export async function checkSignatures<T extends SignatureInput>(
   file: Uint8Array,
   signatures: readonly T[],
+  /** The roots a timestamp must chain to, to be trusted: the bundled ones, unless testing. */
+  timestampRoots?: pkijs.Certificate[],
 ): Promise<(T & { check: CryptoCheck; status: SignatureStatus })[]> {
   const out: (T & { check: CryptoCheck; status: SignatureStatus })[] = [];
   for (const signature of signatures) {
@@ -135,6 +139,7 @@ export async function checkSignatures<T extends SignatureInput>(
             signature.contents,
             signature.subFilter,
             signature.time,
+            timestampRoots,
           )
         : {
             intact: false,

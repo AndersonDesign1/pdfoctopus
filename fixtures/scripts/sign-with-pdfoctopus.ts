@@ -22,7 +22,7 @@ import {
   signWithRoom,
   type TimestampOptions,
 } from "../../packages/sign/src/index";
-import { testTsa } from "../../packages/sign/src/testTsa";
+import { testTsa, testTsaRoot } from "../../packages/sign/src/testTsa";
 
 const fixtures = join(import.meta.dir, "..");
 const out = process.argv[2] ?? join(fixtures, "generated");
@@ -93,6 +93,7 @@ const timestamped = new PdfEngine();
 timestamped.open(new Uint8Array(readFileSync(join(fixtures, "generated/invoice.pdf"))));
 const bt = await sign(timestamped, rsa, [40, 720, 250, 790], "Approved", signedAt, {
   send: tsa.send,
+  roots: [testTsaRoot()],
   serverName: "The test timestamp server",
 });
 writeFileSync(join(out, "signed-by-pdfoctopus-timestamped.pdf"), bt);

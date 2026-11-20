@@ -20,8 +20,9 @@ import {
   type TimestampOptions,
 } from "./index";
 import { readFixture, TEST_ID_PASSWORD, testId } from "./testIds";
-import { type TsaFault, testTsa } from "./testTsa";
-import { OID, timestampRequest, verifyTimestampToken } from "./timestamp";
+import { makeTsaIdentity, type TsaFault, testTsa, testTsaRoot } from "./testTsa";
+import { canTimestamp, OID, timestampRequest, verifyTimestampToken } from "./timestamp";
+import { tsaRoots } from "./tsaRoots";
 
 const SIGNED_AT = Date.UTC(2026, 10, 20, 9, 0);
 
@@ -31,11 +32,18 @@ function signer() {
   return rsa;
 }
 
-/** Sign the invoice as the app does, with a timestamp from `timestamp`. */
+/** In these tests, the test timestamp server's root stands in for the real servers' roots. */
+const TEST_ROOTS = [testTsaRoot()];
+
+/**
+ * Sign the invoice as the app does, with a timestamp from `timestamp` (trusting the test root
+ * unless it says otherwise), and check it trusting `checkRoots`.
+ */
 async function signInvoice(
-  timestamp: TimestampOptions | undefined,
+  timestamp: (Omit<TimestampOptions, "roots"> & { roots?: TimestampOptions["roots"] }) | undefined,
   signingTime = SIGNED_AT,
   sizes: number[] = [],
+  checkRoots = TEST_ROOTS,
 ) {
   const identity = await signer();
   const engine = new PdfEngine();
@@ -53,13 +61,13 @@ async function signInvoice(
         signatureSize,
       });
     },
-    timestamp,
+    timestamp && { roots: TEST_ROOTS, ...timestamp },
   );
   const signed = engine.finishSignature(cms);
   const inspection = engine.inspectSignatures();
   engine.close();
   if (!inspection.file) throw new Error("No signatures");
-  const [checked] = await checkSignatures(inspection.file, inspection.signatures);
+  const [checked] = await checkSignatures(inspection.file, inspection.signatures, checkRoots);
   return { cms, bytes: signed.bytes, checked };
 }
 
@@ -121,6 +129,7 @@ describe("a good answer", () => {
     expect(checked?.check.timestamped).toBe(true);
     expect(checked?.check.timestamp).toMatchObject({
       valid: true,
+      trusted: true,
       problems: [],
       authority: "PDFoctopus Test Timestamp Server",
       time: SIGNED_AT + 5000,
@@ -193,6 +202,70 @@ describe("bad answers are refused, never silently dropped", () => {
     );
     expect(err).toBeInstanceOf(TimestampError);
     expect(err.message).toMatch(/couldn't be reached \(HTTP 503\)/);
+  });
+});
+
+describe("only timestamps from known servers are trusted", () => {
+  test("asking for one: a server whose certificate doesn't lead to its root is refused", async () => {
+    // A valid token in every other way, from a certificate someone made themselves.
+    const tsa = await testTsa({ identity: await makeTsaIdentity() });
+    const err = await signInvoice({ send: tsa.send, serverName: "The test server" }).catch(
+      (e) => e,
+    );
+    expect(err).toBeInstanceOf(TimestampError);
+    expect(err.message).toMatch(/^The test server's answer couldn't be verified/);
+    // And the real servers' roots don't vouch for the test server either.
+    const test = await testTsa();
+    const real = await signInvoice({ send: test.send, roots: tsaRoots().digicert }).catch((e) => e);
+    expect(real).toBeInstanceOf(TimestampError);
+    expect(real.message).toMatch(/couldn't be verified/);
+  });
+
+  test("in a signed file: an unknown server's timestamp is shown but doesn't replace /M", async () => {
+    const claimed = Date.UTC(2060, 0, 1); // after the signer's certificate expired
+    const homeMade = await makeTsaIdentity();
+    const tsa = await testTsa({ identity: homeMade, now: () => new Date(SIGNED_AT) });
+    // Signed trusting the home-made server (as a forger would), checked trusting only ours.
+    const { checked } = await signInvoice(
+      { send: tsa.send, roots: [homeMade.signer.certificate] },
+      claimed,
+    );
+    expect(checked?.status).toBe("intact");
+    expect(checked?.check.timestamp).toMatchObject({ valid: true, trusted: false });
+    expect(checked?.check.validAtSigning).toBe(false);
+    expect(checked?.check.warnings.join(" ")).toMatch(/isn't one we know/);
+    // The same file checked with the bundled roots only (as the app does): not trusted either.
+    const { checked: bundled } = await signInvoice(
+      { send: tsa.send, roots: [homeMade.signer.certificate] },
+      claimed,
+      [],
+      tsaRoots().sectigo,
+    );
+    expect(bundled?.check.timestamp?.trusted).toBe(false);
+  });
+});
+
+describe("timestamp server certificates (RFC 3161: critical, timeStamping only)", () => {
+  test.each([
+    ["not critical", { critical: false }],
+    ["with another purpose too", { purposes: ["1.3.6.1.5.5.7.3.8", "1.3.6.1.5.5.7.3.3"] }],
+    ["for something else", { purposes: ["1.3.6.1.5.5.7.3.3"] }],
+  ])("refused when the extended key usage is %s", async (_what, eku) => {
+    const identity = await makeTsaIdentity(eku);
+    expect(canTimestamp(identity.signer.certificate)).toBe(false);
+    const tsa = await testTsa({ identity });
+    const err = await signInvoice({
+      send: tsa.send,
+      roots: [identity.signer.certificate],
+    }).catch((e) => e);
+    expect(err).toBeInstanceOf(TimestampError);
+    expect(err.message).toMatch(/certificate that isn't for timestamps/);
+  });
+
+  test("accepted when it's right (the test server, and one made here)", async () => {
+    expect(canTimestamp((await makeTsaIdentity()).signer.certificate)).toBe(true);
+    const tsa = await testTsa();
+    expect(canTimestamp(tsa.identity.signer.certificate)).toBe(true);
   });
 });
 

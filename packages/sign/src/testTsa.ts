@@ -50,11 +50,85 @@ export function testTsaIdentity(): Promise<SigningIdentity> {
   return identity;
 }
 
+/** The test timestamp server's root (fixtures/trust/pdfoctopus-test-tsa-ca.pem). */
+export function testTsaRoot(): pkijs.Certificate {
+  const pem = new TextDecoder().decode(readFixture("trust/pdfoctopus-test-tsa-ca.pem"));
+  const base64 = pem.replace(/-----[^-]+-----|\s/g, "");
+  return pkijs.Certificate.fromBER(Uint8Array.from(atob(base64), (c) => c.charCodeAt(0)));
+}
+
+/**
+ * A home-made timestamp server identity: a fresh key and a self-signed certificate, made here.
+ * Nothing trusts it (unless a test says so). `critical` and `purposes` set its extended key
+ * usage extension, to make certificates RFC 3161 doesn't allow.
+ */
+export async function makeTsaIdentity(
+  options: { name?: string; critical?: boolean; purposes?: string[] } = {},
+): Promise<SigningIdentity> {
+  const engine = new pkijs.CryptoEngine({ name: "webcrypto", crypto: globalThis.crypto });
+  const keys = (await globalThis.crypto.subtle.generateKey(
+    {
+      name: "RSASSA-PKCS1-v1_5",
+      modulusLength: 2048,
+      publicExponent: new Uint8Array([1, 0, 1]),
+      hash: "SHA-256",
+    },
+    false,
+    ["sign", "verify"],
+  )) as CryptoKeyPair;
+  const name = new pkijs.RelativeDistinguishedNames({
+    typesAndValues: [
+      new pkijs.AttributeTypeAndValue({
+        type: "2.5.4.3",
+        value: new asn1js.Utf8String({ value: options.name ?? "Home-made Timestamp Server" }),
+      }),
+    ],
+  });
+  const cert = new pkijs.Certificate();
+  cert.version = 2;
+  cert.serialNumber = new asn1js.Integer({ value: 4242 });
+  cert.subject = name;
+  cert.issuer = name;
+  cert.notBefore.value = new Date(Date.UTC(2026, 0, 1));
+  cert.notAfter.value = new Date(Date.UTC(2046, 0, 1));
+  cert.extensions = [
+    new pkijs.Extension({
+      extnID: "2.5.29.37",
+      critical: options.critical ?? true,
+      extnValue: new pkijs.ExtKeyUsage({
+        keyPurposes: options.purposes ?? ["1.3.6.1.5.5.7.3.8"],
+      })
+        .toSchema()
+        .toBER(false),
+    }),
+  ];
+  await cert.subjectPublicKeyInfo.importKey(keys.publicKey, engine);
+  await cert.sign(keys.privateKey, "SHA-256", engine);
+  const der = new Uint8Array(cert.toSchema(true).toBER(false));
+  const parsed = pkijs.Certificate.fromBER(der);
+  return {
+    privateKey: keys.privateKey,
+    signer: { certificate: parsed, der },
+    chain: [],
+    name: "Home-made Timestamp Server",
+    issuer: "Home-made Timestamp Server",
+    notBefore: parsed.notBefore.value,
+    notAfter: parsed.notAfter.value,
+    canSign: true,
+  };
+}
+
 /** A test timestamp server, optionally misbehaving, giving the time `now()`. */
 export async function testTsa(
-  options: { fault?: TsaFault; now?: () => Date; extraCertificates?: number } = {},
+  options: {
+    fault?: TsaFault;
+    now?: () => Date;
+    extraCertificates?: number;
+    /** Another key and certificate to sign with (see makeTsaIdentity). */
+    identity?: SigningIdentity;
+  } = {},
 ): Promise<TestTsa> {
-  const tsa = await testTsaIdentity();
+  const tsa = options.identity ?? (await testTsaIdentity());
   const requests: Uint8Array[] = [];
   const responses: Uint8Array[] = [];
   let serial = 1;
