@@ -16,7 +16,7 @@ tasks needed to finish it and the **exit criteria** that must be true before we 
 ## Next up
 
 Start here if you're picking the project up. Do these in order, and update this list in the
-same PR that changes it. Last updated: 2026-11-19, after redaction.
+same PR that changes it. Last updated: 2026-11-19, after export (PDF to pictures and text).
 
 ### 0. Keep `main` green (2026-11-18)
 
@@ -445,6 +445,39 @@ it.
   oddly), there's no page numbering or headers, and pictures can't be cropped or rotated in the
   dialog.
 
+### 15. Phase 4: export, PDF to pictures and text (2026-11-19)
+
+**Export** (top bar, next to Save as) saves pages as **PNG** or **JPEG** pictures (72, 150,
+300 or 600 dpi; JPEG at high, medium or low quality), **SVG** drawings, **plain text** or a
+**web page (HTML)**. Choose all pages, this page, the selected pages, or a range such as
+"1-3, 5". Pictures and SVG are one file per page, in a ZIP when there are several
+("report-page-03.png", numbered to sort); text is one .txt (a form feed after each page, as
+pdftotext does) and HTML one .html with each page as a sheet. Everything happens on the
+device, and the open file isn't changed.
+
+- **Engine:** `exportPage(page, options)` exports one page at a time (`convert.ts`), so a long
+  document shows progress ("Exporting page 31 of 500…"), can be stopped, and only one page's
+  pixels are in memory at once (about 15 pages a second at 150 dpi in Chromium). Unsaved
+  changes, annotations and form fields are included. Pictures over 60 megapixels are made
+  smaller, and record their resolution so they print at the page's size.
+- **Files** (`exportFiles.ts`, no MuPDF, so the UI uses it directly): names, the HTML wrapper
+  and a small ZIP writer (`zip.ts`: stored, UTF-8 names, checked with Python's `zipfile` and
+  `unzip -t`). The HTML page has a Content-Security-Policy that blocks scripts and anything
+  from elsewhere. An export over 1.5 GB is refused before it's saved.
+- **Permissions:** a file that doesn't allow copying its content can't be exported until its
+  permissions are unlocked with the permissions password.
+- **Saving** asks for a file of the right kind (`chooseDestination` takes a file kind now).
+- **Toolbar:** the search box now takes the room the top bar has left, and keeps none for the
+  match count before a search, so Export fits on one line at 1280 pixels.
+- **Tests:** `export.test.ts` (sizes at each resolution, JPEG quality, unsaved rotation, text,
+  SVG and escaped HTML, bad pages and options, the pixel limit, the copy permission, file
+  names, ZIP contents read back with CRCs) and `ExportDialog.test.ts` (which pages).
+- **Checked:** in Chromium: each format from a two-page contract (the HTML opened and looks
+  like the pages), a bad range explained, a 500-page export stopped at page 30 with nothing
+  saved, and a file that forbids copying refused.
+- **Not covered yet:** text from scanned pages (no OCR), HTML keeps positions but not links,
+  and SVG text is drawn as shapes (it can't be selected or searched).
+
 ### Where things are
 
 - **Engine:** `packages/core` (MuPDF in a Web Worker, plus a promise-based client). Tests:
@@ -466,8 +499,8 @@ it.
 | 0   | [Foundations](#phase-0-foundations)                               | 1–2 wks  | 🟨 In progress |
 | 1   | [Core viewer + page tools](#phase-1-core-viewer--page-tools)      | 2–3 wks  | 🟨 In progress |
 | 2   | [Sign, annotate & forms](#phase-2-sign-annotate--forms)           | 3–4 wks  | 🟨 In progress |
-| 3   | [Security, compress & create](#phase-3-security-compress--create) | 2–3 wks  | ⬜ Not started |
-| 4   | [Conversion](#phase-4-conversion)                                 | 2–3 wks  | ⬜ Not started |
+| 3   | [Security, compress & create](#phase-3-security-compress--create) | 2–3 wks  | 🟨 In progress |
+| 4   | [Conversion](#phase-4-conversion)                                 | 2–3 wks  | 🟨 In progress |
 | 5   | [Certificate signatures](#phase-5-certificate-signatures-pades)   | 2–3 wks  | ⬜ Not started |
 | 6   | [True text editing](#phase-6-true-text-editing)                   | 4–8+ wks | ⬜ Not started |
 | 7   | [Polish & launch](#phase-7-polish--launch)                        | 2–3 wks  | ⬜ Not started |
@@ -660,7 +693,8 @@ it.
 ### Exit criteria
 
 - [ ] Encrypted files open in Acrobat with the password and are refused without it
-- [ ] Compression never makes a file larger (fall back to the original if it would)
+- [x] Compression never makes a file larger (fall back to the original if it would): a copy
+      that isn't at least 1% smaller isn't offered for saving
 
 ---
 
@@ -670,11 +704,11 @@ it.
 
 ### PDF → other formats (in the browser)
 
-- [ ] PDF → PNG / JPG (choose resolution, pages)
-- [ ] PDF → HTML
-- [ ] PDF → plain text
-- [ ] PDF → SVG
-- [ ] Download multiple outputs as a ZIP
+- [x] PDF → PNG / JPG (choose resolution, pages)
+- [x] PDF → HTML
+- [x] PDF → plain text
+- [x] PDF → SVG
+- [x] Download multiple outputs as a ZIP
 
 ### PDF → Word (DOCX / ODT), labelled "beta"
 
