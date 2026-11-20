@@ -43,6 +43,7 @@ const PYHANKO: Record<string, Pyhanko[]> = {
     [true, "FORM_FILLING"],
     [true, false],
   ],
+  "generated/signed-by-pdfoctopus-timestamped.pdf": [[true, false]],
   "public-domain/gpo-public-law-118-1-signed.pdf": [[true, false]],
 };
 

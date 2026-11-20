@@ -28,12 +28,11 @@ then.
 
 Decided (no action needed):
 
-- **Old `.p12` files with 3DES or RC2 encryption** (common from older Windows and macOS
-  exports): browsers' WebCrypto can't decrypt them. Until a later Phase 5 PR adds support, the
-  dialog explains how to export the file again with AES-256.
-- **Timestamps (B-T signatures)**: a later Phase 5 PR adds them as an opt-in, off by default.
-  When switched on, only a hash of the signature (never the file) is sent to a free public
-  RFC 3161 timestamp server (DigiCert's, with Sectigo's as the other choice).
+- (2026-11-20) **Timestamps in the web app**: DigiCert's and Sectigo's timestamp servers don't
+  let websites call them (no CORS headers, and DigiCert's is plain http), so the web app shows
+  the timestamp option switched off with a note, and timestamps work in the desktop app only.
+  Running our own relay for the web app would mean sending the hash through our server; not
+  done unless you ask for it.
 - (2026-11-20) **Trusting signers**: the browser has no list of trusted certificates, so the
   Signatures panel shows who signed as their certificate says and that the identity isn't
   verified. A later PR can let people mark certificates as trusted (kept on their device).
@@ -379,8 +378,7 @@ certificate as a trusted root"; remove it again afterwards.
 
 - [ ] **Sign** (page tools row) → **Digital ID**: choose `test-signer-rsa.p12`, type the
       password, **Open digital ID**. The dialog shows "Test Signer RSA" and who issued it
-- [ ] A wrong password says "The password is wrong."; `test-signer-3des.p12` says it uses old
-      encryption and how to export it again
+- [ ] A wrong password says "The password is wrong."
 - [ ] Add a reason, **Place signature**, drag the box into place, **Apply**, **Save**. The box
       shows the name, date and reason
 - [ ] Open the saved file in **Adobe Acrobat Reader**: the signature panel shows the signature
@@ -431,6 +429,28 @@ lists each one.
 - [ ] Compare with **Adobe Acrobat Reader**'s signature panel for the same files: the same
       signatures are intact or broken, and the same ones were changed after signing
 - [ ] **Phone:** the banner and the panel fit the screen
+
+## Phase 5: timestamps and older digital IDs
+
+Test IDs as above (password `test-only`).
+
+- [x] Web app (Chromium): `test-signer-3des.p12` and `test-signer-rc2.p12` open and show "Test
+      Signer RSA"; signing with the RC2 one gives an intact signature (2026-11-20)
+- [x] Web app: "Add a trusted timestamp" is switched off, with the note that timestamps are in
+      the desktop app (2026-11-20)
+- [ ] An old `.p12` exported from **Windows** (Certificate Manager → Export, "TripleDES-SHA1")
+      or **macOS** Keychain Access opens, signs, and Acrobat shows the signature as valid
+- [ ] **Desktop app:** tick "Add a trusted timestamp" (DigiCert), sign, save. The status line
+      says "timestamped by DigiCert's timestamp server"; the Signatures panel shows
+      "Timestamped by DigiCert … at …"
+- [ ] Desktop app: choose Sectigo, close and reopen the dialog: Sectigo is still chosen; sign
+      and check the panel the same way
+- [ ] Desktop app, offline (Wi-Fi off): signing with a timestamp says the server couldn't be
+      reached and asks whether to sign without one; Cancel leaves the file unsigned, OK signs
+      without a timestamp
+- [ ] Open the timestamped file in **Adobe Acrobat Reader**: the signature panel says it
+      includes an embedded timestamp from DigiCert (or Sectigo), and the signing time is from
+      the timestamp
 
 ## Problems found
 

@@ -143,15 +143,16 @@ Signed fixtures are checked by [`scripts/check-signatures.py`](./scripts/check-s
 (also run in CI), using [pyhanko](https://github.com/MatthiasValvekens/pyHanko) as an
 independent validator. Expected results:
 
-| File                                            | Trusted root                            | Intact | Trusted | Changed after signing                       |
-| ----------------------------------------------- | --------------------------------------- | ------ | ------- | ------------------------------------------- |
-| `generated/signed.pdf`                          | `trust/pdfoctopus-test-root-ca.pem`     | yes    | yes     | no                                          |
-| `generated/signed-twice.pdf`                    | `trust/pdfoctopus-test-root-ca.pem`     | yes    | yes     | first signature: yes (the second signature) |
-| `generated/signed-then-annotated.pdf`           | `trust/pdfoctopus-test-root-ca.pem`     | yes    | yes     | yes (a note)                                |
-| `generated/signed-tampered.pdf`                 | `trust/pdfoctopus-test-root-ca.pem`     | **no** | —       | —                                           |
-| `generated/signed-by-pdfoctopus.pdf`            | `trust/pdfoctopus-test-signing-ca.pem`  | yes    | yes     | no                                          |
-| `generated/signed-by-pdfoctopus-twice.pdf`      | `trust/pdfoctopus-test-signing-ca.pem`  | yes    | yes     | first signature: yes (the second signature) |
-| `public-domain/gpo-public-law-118-1-signed.pdf` | `trust/digicert-assured-id-root-ca.pem` | yes    | yes     | no                                          |
+| File                                             | Trusted root                                                                  | Intact | Trusted | Changed after signing                       |
+| ------------------------------------------------ | ----------------------------------------------------------------------------- | ------ | ------- | ------------------------------------------- |
+| `generated/signed.pdf`                           | `trust/pdfoctopus-test-root-ca.pem`                                           | yes    | yes     | no                                          |
+| `generated/signed-twice.pdf`                     | `trust/pdfoctopus-test-root-ca.pem`                                           | yes    | yes     | first signature: yes (the second signature) |
+| `generated/signed-then-annotated.pdf`            | `trust/pdfoctopus-test-root-ca.pem`                                           | yes    | yes     | yes (a note)                                |
+| `generated/signed-tampered.pdf`                  | `trust/pdfoctopus-test-root-ca.pem`                                           | **no** | —       | —                                           |
+| `generated/signed-by-pdfoctopus.pdf`             | `trust/pdfoctopus-test-signing-ca.pem`                                        | yes    | yes     | no                                          |
+| `generated/signed-by-pdfoctopus-twice.pdf`       | `trust/pdfoctopus-test-signing-ca.pem`                                        | yes    | yes     | first signature: yes (the second signature) |
+| `generated/signed-by-pdfoctopus-timestamped.pdf` | `trust/pdfoctopus-test-signing-ca.pem` and `trust/pdfoctopus-test-tsa-ca.pem` | yes    | yes     | no                                          |
+| `public-domain/gpo-public-law-118-1-signed.pdf`  | `trust/digicert-assured-id-root-ca.pem`                                       | yes    | yes     | no                                          |
 
 - `pdfoctopus-test-root-ca.pem` is a throwaway root CA created by `scripts/sign.py`. Its
   private key was never saved, so nobody can sign with it. Tests choose to trust it, the
@@ -167,6 +168,9 @@ independent validator. Expected results:
   signingCertificateV2 that matches the signer, no signingTime, and `/M` set). In CI, the
   `signatures` job also signs fresh copies with the pull request's own code
   (`bun fixtures/scripts/sign-with-pdfoctopus.ts <folder>`) and checks those the same way.
+- `signed-by-pdfoctopus-timestamped.pdf` is PAdES B-T: it carries a timestamp from the test
+  timestamp server (`packages/sign/src/testTsa.ts`, answering in-process), which pyhanko must
+  find intact, trusted and made for that signature.
 
 ## Test IDs (test keys only)
 
@@ -177,13 +181,15 @@ for all of them is `test-only`, so a signature made with them proves nothing abo
 were issued by `trust/pdfoctopus-test-signing-ca.pem`, a throwaway root CA whose private key was
 never saved; only tests trust it.
 
-| File                            | What                                                                          |
-| ------------------------------- | ----------------------------------------------------------------------------- |
-| `test-signer-rsa.p12`           | RSA 2048 key and certificate, AES-256 encryption (the OpenSSL 3 default)      |
-| `test-signer-ec.p12`            | ECDSA P-256 key and certificate, AES-256 encryption                           |
-| `test-signer-3des.p12`          | The RSA ID with old 3DES encryption, which browsers can't decrypt             |
-| `test-signer-ec-unmarked.p12`   | The EC key with someone else's certificate first, and nothing marking its own |
-| `test-signer-ec-wrong-cert.p12` | The EC key with only someone else's certificate, so it can't sign             |
+| File                            | What                                                                             |
+| ------------------------------- | -------------------------------------------------------------------------------- |
+| `test-signer-rsa.p12`           | RSA 2048 key and certificate, AES-256 encryption (the OpenSSL 3 default)         |
+| `test-signer-ec.p12`            | ECDSA P-256 key and certificate, AES-256 encryption                              |
+| `test-signer-3des.p12`          | The RSA ID with old 3DES encryption (decrypted by our own code)                  |
+| `test-signer-rc2.p12`           | The RSA ID with old RC2 encryption (40-bit certificates, 128-bit key)            |
+| `test-tsa.p12`                  | A test timestamp server (RFC 3161), issued by `trust/pdfoctopus-test-tsa-ca.pem` |
+| `test-signer-ec-unmarked.p12`   | The EC key with someone else's certificate first, and nothing marking its own    |
+| `test-signer-ec-wrong-cert.p12` | The EC key with only someone else's certificate, so it can't sign                |
 
 ## Known gaps
 

@@ -135,11 +135,47 @@ describe("loading a digital ID", () => {
     });
   });
 
-  test("old 3DES encryption is explained", async () => {
-    const err = await loadDigitalId(testId("3des"), TEST_ID_PASSWORD).catch((e) => e);
+  test.each([
+    ["3des", "3DES for the certificates and the key"],
+    ["rc2", "40-bit RC2 for the certificates, 128-bit RC2 for the key"],
+  ] as const)("old encryption opens and signs: %s (%s)", async (name, _what) => {
+    const id = await loadDigitalId(testId(name), TEST_ID_PASSWORD);
+    expect(id.name).toBe("Test Signer RSA");
+    expect(id.chain.map((c) => displayName(c.certificate.subject))).toEqual([
+      "PDFoctopus Test Signing CA",
+    ]);
+    expect(id.privateKey.extractable).toBe(false);
+    // The same key as the AES file.
+    const aes = await loadDigitalId(testId("rsa"), TEST_ID_PASSWORD);
+    expect(id.signer.der).toEqual(aes.signer.der);
+    const engine = new PdfEngine();
+    engine.open(readFixture("generated/invoice.pdf"));
+    const { signed } = await sign(engine, id, { page: 0, rect: [40, 700, 240, 760] });
+    expect((await verify(signed.bytes, signaturesIn(signed.bytes)[0])).ok).toBe(true);
+  });
+
+  test.each(["3des", "rc2"] as const)("a wrong password for an old %s file", async (name) => {
+    await expect(loadDigitalId(testId(name), "wrong")).rejects.toMatchObject({
+      reason: "password",
+      message: "The password is wrong.",
+    });
+  });
+
+  test("encryption that still isn't supported (RC4) is explained", async () => {
+    // The 3DES file with its encryption marked as RC4, and its integrity check (which would
+    // otherwise fail) taken out.
+    const bytes = testId("3des").slice();
+    const des3 = [0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x0c, 0x01, 0x03];
+    for (let i = 0; i + des3.length <= bytes.length; i++) {
+      if (des3.every((b, j) => bytes[i + j] === b)) bytes[i + 9] = 0x01;
+    }
+    const pfx = asn1js.fromBER(bytes).result as asn1js.Sequence;
+    pfx.valueBlock.value.splice(2, 1);
+    const noMac = new Uint8Array(pfx.toBER(false));
+    const err = await loadDigitalId(noMac, TEST_ID_PASSWORD).catch((e) => e);
     expect(err).toBeInstanceOf(DigitalIdError);
     expect(err.reason).toBe("unsupported");
-    expect(err.message).toMatch(/old encryption/);
+    expect(err.message).toMatch(/encryption method that isn't supported.*AES-256/);
   });
 
   test("something that isn't a .p12 is refused", async () => {
