@@ -25,7 +25,9 @@ import {
   transformRect,
 } from "./annotationObjects";
 import { type CompressPreset, REBUILD_OPTIONS, shrinkImages } from "./compress";
+import { exportPage } from "./convert";
 import { IncrementalSaveError, PasswordRequiredError } from "./errors";
+import type { ExportOptions } from "./exportFiles";
 import {
   buildField,
   checkFieldName,
@@ -503,6 +505,30 @@ export class PdfEngine {
    * with a password that isn't being changed can't be compressed: its passwords aren't known,
    * so the copy couldn't be protected the same way.
    */
+  /**
+   * One page (0-based) as a picture, SVG drawing, text or HTML, with unsaved changes. Refused
+   * when the file doesn't allow copying its content, unless its permissions were unlocked.
+   */
+  exportPage(index: number, options: ExportOptions): Uint8Array {
+    const doc = this.requireDoc();
+    if (!Number.isInteger(index) || index < 0 || index >= doc.countPages()) {
+      throw new Error("There's no such page");
+    }
+    const security = this.securityInfo();
+    if (security.encrypted && !security.permissions.copy && !this.ownerUnlocked) {
+      throw new Error(
+        "This file doesn't allow copying its content. To export it, unlock its permissions " +
+          "with the permissions password first (Password).",
+      );
+    }
+    const page = doc.loadPage(index);
+    try {
+      return exportPage(page, index, options);
+    } finally {
+      page.destroy();
+    }
+  }
+
   compressedCopy(preset: CompressPreset): CompressResult {
     const pdf = this.requirePdf();
     if (!["high", "balanced", "smallest"].includes(preset)) throw new Error("Unknown preset");

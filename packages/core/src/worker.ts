@@ -132,6 +132,8 @@ async function handle(req: WorkerRequest): Promise<WorkerSuccess> {
       const { createPdf } = await import("./create");
       return success(req.id, "createPdf", createPdf(req.spec));
     }
+    case "exportPage":
+      return success(req.id, "exportPage", engine.exportPage(req.page, req.options));
     case "compressedCopy":
       return success(req.id, "compressedCopy", engine.compressedCopy(req.preset));
     case "unlockPermissions":
@@ -163,7 +165,12 @@ async function handle(req: WorkerRequest): Promise<WorkerSuccess> {
 /** Large binary results are transferred, not copied, back to the UI thread. */
 function transferables(res: WorkerSuccess): Transferable[] {
   if (res.type === "render") return [res.result.pixels.buffer as ArrayBuffer];
-  if (res.type === "save" || res.type === "extractPages" || res.type === "createPdf") {
+  if (
+    res.type === "save" ||
+    res.type === "extractPages" ||
+    res.type === "createPdf" ||
+    res.type === "exportPage"
+  ) {
     return [res.result.buffer as ArrayBuffer];
   }
   if (res.type === "splitPages") return res.result.map((b) => b.buffer as ArrayBuffer);

@@ -47,14 +47,25 @@ export interface SaveOutcome {
   fileName?: string;
 }
 
-const PDF_TYPE = { description: "PDF document", accept: { "application/pdf": [".pdf"] } };
+/** A kind of file to save: what the pickers call it, its media type and extension. */
+export interface FileKind {
+  label: string;
+  mime: string;
+  extension: string;
+}
+
+export const PDF_KIND: FileKind = {
+  label: "PDF document",
+  mime: "application/pdf",
+  extension: "pdf",
+};
 
 function isAbort(err: unknown): boolean {
   return err instanceof DOMException && err.name === "AbortError";
 }
 
-function pdfBlob(bytes: Uint8Array): Blob {
-  return new Blob([bytes as BlobPart], { type: "application/pdf" });
+function blobOf(bytes: Uint8Array, mime: string): Blob {
+  return new Blob([bytes as BlobPart], { type: mime });
 }
 
 function baseName(path: string): string {
@@ -66,14 +77,18 @@ async function tauriWrite(path: string, bytes: Uint8Array): Promise<void> {
   await writeFile(path, bytes);
 }
 
-async function handleWrite(handle: WritableFile, bytes: Uint8Array): Promise<void> {
+async function handleWrite(
+  handle: WritableFile,
+  bytes: Uint8Array,
+  mime = PDF_KIND.mime,
+): Promise<void> {
   const writable = await handle.createWritable();
-  await writable.write(pdfBlob(bytes));
+  await writable.write(blobOf(bytes, mime));
   await writable.close();
 }
 
-function download(bytes: Uint8Array, suggestedName: string): SaveOutcome {
-  const url = URL.createObjectURL(pdfBlob(bytes));
+function download(bytes: Uint8Array, suggestedName: string, mime = PDF_KIND.mime): SaveOutcome {
+  const url = URL.createObjectURL(blobOf(bytes, mime));
   const a = document.createElement("a");
   a.href = url;
   a.download = suggestedName;
@@ -87,57 +102,69 @@ function download(bytes: Uint8Array, suggestedName: string): SaveOutcome {
 }
 
 /** Where one file will be written, chosen before the bytes exist. */
-export type Destination =
+export type Destination = (
   | { kind: "target"; target: SaveTarget; fileName: string }
-  | { kind: "download"; fileName: string };
+  | { kind: "download"; fileName: string }
+) & {
+  /** The media type written (a PDF when not given). */
+  mime?: string;
+};
 
 /**
- * Ask where to save one PDF ("Save as"), or reuse `target` from an earlier save without
- * asking. Resolves to null if the user cancelled. Call it straight from the click handler,
- * before any slow work, so the browser still allows its picker.
+ * Ask where to save one file ("Save as"; a PDF unless `fileKind` says otherwise), or reuse
+ * `target` from an earlier save without asking. Resolves to null if the user cancelled. Call
+ * it straight from the click handler, before any slow work, so the browser still allows its
+ * picker.
  */
 export async function chooseDestination(
   suggestedName: string,
   target?: SaveTarget,
+  fileKind: FileKind = PDF_KIND,
 ): Promise<Destination | null> {
+  const mime = fileKind.mime;
   if (target) {
     const fileName = target.kind === "path" ? baseName(target.path) : target.handle.name;
-    return { kind: "target", target, fileName };
+    return { kind: "target", target, fileName, mime };
   }
   if (isTauri()) {
     const { save } = await import("@tauri-apps/plugin-dialog");
     const path = await save({
       defaultPath: suggestedName,
-      filters: [{ name: "PDF document", extensions: ["pdf"] }],
+      filters: [{ name: fileKind.label, extensions: [fileKind.extension] }],
     });
     if (!path) return null;
-    return { kind: "target", target: { kind: "path", path }, fileName: baseName(path) };
+    return { kind: "target", target: { kind: "path", path }, fileName: baseName(path), mime };
   }
   const fsWindow = window as FileSystemAccessWindow;
-  if (!fsWindow.showSaveFilePicker) return { kind: "download", fileName: suggestedName };
+  if (!fsWindow.showSaveFilePicker) return { kind: "download", fileName: suggestedName, mime };
   try {
     // Called as a method: the browser rejects it when detached from `window`.
-    const handle = await fsWindow.showSaveFilePicker({ suggestedName, types: [PDF_TYPE] });
-    return { kind: "target", target: { kind: "handle", handle }, fileName: handle.name };
+    const handle = await fsWindow.showSaveFilePicker({
+      suggestedName,
+      types: [{ description: fileKind.label, accept: { [mime]: [`.${fileKind.extension}`] } }],
+    });
+    return { kind: "target", target: { kind: "handle", handle }, fileName: handle.name, mime };
   } catch (err) {
     if (isAbort(err)) return null;
     // E.g. the browser refused the picker. Fall back to a plain download rather than failing.
-    return { kind: "download", fileName: suggestedName };
+    return { kind: "download", fileName: suggestedName, mime };
   }
 }
 
 /**
- * Write a PDF to a destination from `chooseDestination`. Errors writing a chosen file (disk
+ * Write a file to a destination from `chooseDestination`. Errors writing a chosen file (disk
  * full, no permission) are real failures and are thrown, not hidden behind a download.
  */
 export async function writeToDestination(
   destination: Destination,
   bytes: Uint8Array,
 ): Promise<SaveOutcome> {
-  if (destination.kind === "download") return download(bytes, destination.fileName);
+  if (destination.kind === "download") {
+    return download(bytes, destination.fileName, destination.mime);
+  }
   const { target } = destination;
   if (target.kind === "path") await tauriWrite(target.path, bytes);
-  else await handleWrite(target.handle, bytes);
+  else await handleWrite(target.handle, bytes, destination.mime);
   return { result: "saved", target, fileName: destination.fileName };
 }
 
