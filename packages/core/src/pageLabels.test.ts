@@ -3,9 +3,12 @@
 // Page labels follow their pages when pages are deleted, moved or inserted, and undo puts
 // them back as they were.
 
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import * as mupdf from "mupdf";
 import { afterEach, describe, expect, it } from "vitest";
 import { PdfEngine } from "./engine";
+import { formatLabelNumber, readPageLabels } from "./pageLabels";
 
 const opened: PdfEngine[] = [];
 afterEach(() => {
@@ -200,10 +203,10 @@ describe("page labels", () => {
     nums.push(0);
     nums.push(roman);
     leaf.put("Nums", nums);
-    // Each level refers to the one below twice: 2^18 visits if every reference were walked.
-    // (Deeper trees are slow in MuPDF's own label lookup, when the file is opened.)
+    // Each level refers to the one below twice: 2^30 visits if every reference were walked.
+    // (MuPDF's own label lookup and page insertion and deletion would never finish.)
     let node = pdf.addObject(leaf);
-    for (let level = 0; level < 18; level++) {
+    for (let level = 0; level < 30; level++) {
       const parent = pdf.newDictionary();
       const kids = pdf.newArray();
       kids.push(node);
@@ -215,13 +218,17 @@ describe("page labels", () => {
     const crafted = pdf.saveToBuffer("").asUint8Array().slice();
     doc.destroy();
 
-    const engine = open(crafted);
     const started = Date.now();
+    const engine = open(crafted);
+    expect(engine.info().labels).toEqual(["i", "ii", "iii"]);
     engine.deletePages([0]);
     engine.undo();
     engine.redo();
+    engine.movePages([1], 0);
+    engine.insertBlankPages(0);
+    engine.insertPdfs(1, [{ bytes: labelledPdf(1, null) }]);
+    expect(engine.info().labels).toEqual(["i", "ii", "iii", "iv"]);
     expect(Date.now() - started).toBeLessThan(3000);
-    expect(readBack(engine).labels).toBe("i,ii");
   });
 
   it("copes with a label tree that skips the first pages or has stray keys", () => {
@@ -236,5 +243,56 @@ describe("page labels", () => {
     expect(readBack(engine).labels).toBe("1,2,1,2");
     engine.deletePages([0]);
     expect(readBack(engine).labels).toBe("1,1,2");
+  });
+});
+
+describe("reading labels", () => {
+  it("formats numbers in each style", () => {
+    expect([1, 4, 9, 14, 40, 1994].map((n) => formatLabelNumber("R", n))).toEqual([
+      "I",
+      "IV",
+      "IX",
+      "XIV",
+      "XL",
+      "MCMXCIV",
+    ]);
+    expect(formatLabelNumber("r", 3)).toBe("iii");
+    expect([1, 26, 27, 53].map((n) => formatLabelNumber("A", n))).toEqual(["A", "Z", "AA", "AAA"]);
+    expect(formatLabelNumber("a", 28)).toBe("bb");
+    expect(formatLabelNumber("D", 12)).toBe("12");
+    expect(formatLabelNumber(undefined, 5)).toBe("");
+  });
+
+  it("gives the same labels as MuPDF on every fixture", () => {
+    const fixtures = join(import.meta.dirname, "..", "..", "..", "fixtures");
+    const files = (readdirSync(fixtures, { recursive: true }) as string[]).filter((f) =>
+      f.toLowerCase().endsWith(".pdf"),
+    );
+    let withLabels = 0;
+    for (const file of files) {
+      let doc: mupdf.Document;
+      try {
+        doc = mupdf.Document.openDocument(readFileSync(join(fixtures, file)), "application/pdf");
+      } catch {
+        continue;
+      }
+      try {
+        const pdf = doc.asPDF();
+        if (!pdf || doc.needsPassword()) continue;
+        const ours = readPageLabels(pdf);
+        if (!ours) continue;
+        withLabels++;
+        const theirs: string[] = [];
+        for (let i = 0; i < Math.min(doc.countPages(), 200); i++) {
+          const page = doc.loadPage(i);
+          theirs.push(page.getLabel());
+          page.destroy();
+        }
+        expect(ours.slice(0, theirs.length), file).toEqual(theirs);
+      } finally {
+        doc.destroy();
+      }
+    }
+    expect(withLabels).toBeGreaterThan(0);
   });
 });

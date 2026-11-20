@@ -105,6 +105,9 @@ function copyObject(
  * The number tree's pairs, from /Nums and any /Kids. Each node is read once, however often
  * it's referred to, and the walk is bounded.
  */
+/** Walks (by their `seen` sets) that met a node referred to more than once. */
+const repeats = new WeakSet<Set<number>>();
+
 function treeEntries(
   node: mupdf.PDFObject,
   budget = new Budget(),
@@ -114,7 +117,10 @@ function treeEntries(
   budget.spend();
   if (node.isIndirect()) {
     const num = node.asIndirect();
-    if (seen.has(num)) return [];
+    if (seen.has(num)) {
+      repeats.add(seen);
+      return [];
+    }
     seen.add(num);
   }
   if (depth > 32 || !node.isDictionary()) return [];
@@ -160,6 +166,88 @@ function readRanges(tree: mupdf.PDFObject, pageCount: number): LabelRange[] {
   return ranges.filter((r, i) => i === 0 || r.start !== (ranges[i - 1] as LabelRange).start);
 }
 
+/** A number in a label style: decimal, upper or lower roman, or upper or lower letters. */
+export function formatLabelNumber(style: string | undefined, n: number): string {
+  switch (style) {
+    case "D":
+      return String(n);
+    case "R":
+      return roman(n);
+    case "r":
+      return roman(n).toLowerCase();
+    case "A":
+      return letters(n);
+    case "a":
+      return letters(n).toLowerCase();
+    default:
+      // No style: the label is only the prefix.
+      return "";
+  }
+}
+
+function roman(n: number): string {
+  // Large numbers would make very long labels; show them as digits.
+  if (n < 1 || n > 4999) return String(n);
+  const parts: [number, string][] = [
+    [1000, "M"],
+    [900, "CM"],
+    [500, "D"],
+    [400, "CD"],
+    [100, "C"],
+    [90, "XC"],
+    [50, "L"],
+    [40, "XL"],
+    [10, "X"],
+    [9, "IX"],
+    [5, "V"],
+    [4, "IV"],
+    [1, "I"],
+  ];
+  let out = "";
+  for (const [value, symbol] of parts) {
+    while (n >= value) {
+      out += symbol;
+      n -= value;
+    }
+  }
+  return out;
+}
+
+/** A to Z, then AA to ZZ, then AAA… (PDF 32000-1, 12.4.2). */
+function letters(n: number): string {
+  if (n < 1 || n > 26 * 100) return String(n);
+  const letter = String.fromCharCode(65 + ((n - 1) % 26));
+  return letter.repeat(Math.floor((n - 1) / 26) + 1);
+}
+
+/**
+ * Every page's label, read from the label tree here (bounded) rather than with MuPDF's own
+ * lookup, which takes time that grows exponentially on a crafted tree that refers to the same
+ * nodes over and over. Null when the document has no labels, or a tree too complex to read.
+ */
+export function readPageLabels(pdf: mupdf.PDFDocument): string[] | null {
+  const tree = root(pdf).get("PageLabels");
+  if (!tree.isDictionary()) return null;
+  const pageCount = pdf.countPages();
+  let ranges: LabelRange[];
+  try {
+    ranges = readRanges(tree, pageCount);
+  } catch {
+    return null;
+  }
+  if (ranges.length === 0) return null;
+  const labels: string[] = [];
+  let r = 0;
+  for (let i = 0; i < pageCount; i++) {
+    while (r + 1 < ranges.length && (ranges[r + 1] as LabelRange).start <= i) r++;
+    const range = ranges[r] as LabelRange;
+    labels.push(
+      `${range.prefix ?? ""}${formatLabelNumber(range.style, range.first + (i - range.start))}`,
+    );
+  }
+  return labels;
+}
+
 /**
  * Note each page's label section before a change to the pages. Null when the document has no
  * labels (then nothing needs doing).
@@ -168,7 +256,15 @@ export function planLabels(pdf: mupdf.PDFDocument): LabelPlan | null {
   const before = root(pdf).get("PageLabels");
   if (!before.isDictionary()) return null;
   const pageCount = pdf.countPages();
-  const ranges = readRanges(before, pageCount);
+  let ranges: LabelRange[];
+  let copy: mupdf.PDFObject;
+  try {
+    ranges = readRanges(before, pageCount);
+    copy = copyObject(pdf, before);
+  } catch {
+    // A tree too complex to read (a crafted file): treated as no labels, and dropped.
+    return null;
+  }
   if (ranges.length === 0) return null;
 
   // Ranges become sections. A range that carries on the count of the latest section in the
@@ -197,7 +293,7 @@ export function planLabels(pdf: mupdf.PDFDocument): LabelPlan | null {
     const page = pdf.findPage(i);
     if (page.isIndirect()) sectionOf.set(page.asIndirect(), sectionOfRange[r] as number);
   }
-  return { before: copyObject(pdf, before), sections, sectionOf };
+  return { before: copy, sections, sectionOf };
 }
 
 /** Write the labels again for the pages as they are now, each in its old section. */
@@ -238,6 +334,38 @@ export function applyLabels(pdf: mupdf.PDFDocument, plan: LabelPlan): void {
   const tree = pdf.newDictionary();
   tree.put("Nums", nums);
   root(pdf).put("PageLabels", pdf.addObject(tree));
+}
+
+/**
+ * Make sure MuPDF only ever sees a simple label tree. A tree that refers to the same nodes
+ * more than once (only a crafted file does) makes MuPDF's own page insertion and deletion,
+ * which adjust the tree, run out of memory. Call before changing pages: such a tree is
+ * replaced by a plain one giving the same labels (or removed, if it can't be read).
+ */
+export function simplifyLabelTree(pdf: mupdf.PDFDocument): void {
+  const tree = root(pdf).get("PageLabels");
+  if (!tree.isDictionary()) return;
+  const seen = new Set<number>();
+  try {
+    treeEntries(tree, new Budget(), seen);
+  } catch {
+    removeLabels(pdf);
+    return;
+  }
+  if (!repeats.has(seen)) return;
+  const ranges = readRanges(tree, pdf.countPages());
+  const nums = pdf.newArray();
+  for (const range of ranges) {
+    const dict = pdf.newDictionary();
+    if (range.style) dict.put("S", pdf.newName(range.style));
+    if (range.prefix !== undefined) dict.put("P", pdf.newString(range.prefix));
+    if (range.first !== 1) dict.put("St", range.first);
+    nums.push(range.start);
+    nums.push(dict);
+  }
+  const plain = pdf.newDictionary();
+  plain.put("Nums", nums);
+  root(pdf).put("PageLabels", pdf.addObject(plain));
 }
 
 /**
