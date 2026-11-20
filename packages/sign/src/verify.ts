@@ -241,6 +241,11 @@ export async function verifySignature(
     result.signer = describeCertificate(cert);
     result.chain = chain.map(describeCertificate);
     result.chainLinked = linked;
+    if (!linked) {
+      result.warnings.push(
+        "A certificate in the chain doesn't match its issuer, so the chain can't be relied on.",
+      );
+    }
   }
   result.timestamped = !!attribute(signerInfo.unsignedAttrs, OID.timestampToken);
 

@@ -508,8 +508,8 @@ with the Digital ID tab the new signature shows as intact straight away.
 - **Engine:** `inspectSignatures` in `packages/core/src/engine.ts`, with
   `signatureCheck.ts`. For each signed field it reads the signature dictionary, checks the
   `/ByteRange` (starts at 0, leaves out exactly the `/Contents` hex string, which must be the
-  field's own, and ends where a saved version ends at `%%EOF`) and reads the signature from the
-  file's bytes. If the file was added to after a signature, the signed version (the bytes up to
+  field's own, and ends where a saved version ends: `startxref`, a number and `%%EOF`) and
+  reads the signature from the file's bytes. If the file was added to after a signature, the signed version (the bytes up to
   the end of its byte range) is opened on its own and compared with the whole file object by
   object: annotations added or changed, form fields filled in, more signatures (with their fields
   and appearances), the form's field list and the pages' `/Annots` lists are the allowed kinds;
@@ -532,9 +532,11 @@ with the Digital ID tab the new signature shows as intact straight away.
   `signed-then-annotated.pdf` pyhanko's strict policy says "OTHER", we say "comments added".
   Tampered files: a byte flipped inside the signed range or in the signature (broken), page
   content replaced, an existing content stream rewritten or a page added in a later update
-  ("other"), a note added by our editor (comments), a re-save with no changes, and a byte range
-  that doesn't start at 0. Also our own signing then checking (RSA then EC, the first "changed:
-  more signatures"). `signatureCheck.test.ts` covers the byte-level checks, and
+  ("other"), a note added by our editor (comments), a re-save with no changes, a byte range
+  that doesn't start at 0, a content stream replaced by one marked `/Type /XRef` ("other"), a
+  stream's bytes changed in place, a broken certificate chain (a warning), and "%%EOF" inside
+  a stream (not a version end). Also our own signing then checking (RSA then EC, the first
+  "changed: more signatures"). `signatureCheck.test.ts` covers the byte-level checks, and
   `fixtures.test.ts` reads the signatures of every fixture.
 - **Checked:** in Chromium at 1280 × 900: each signed fixture shows the banner and panel as
   above; the invoice shows no banner; signing it with the RSA test ID shows the new signature as

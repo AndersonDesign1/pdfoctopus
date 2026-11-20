@@ -930,7 +930,7 @@ export function App() {
       const sign = await import("@pdfoctopus/sign");
       const checked = await sign.checkSignatures(inspection.file, inspection.signatures);
       if (!current()) return;
-      setSignatures({ kind: "checked", signatures: checked, truncated: inspection.truncated });
+      setSignatures({ kind: "checked", signatures: checked, skipped: inspection.skipped });
     } catch (err) {
       if (!current()) return;
       setSignatures({

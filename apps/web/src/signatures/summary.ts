@@ -81,16 +81,27 @@ export function statusOf(s: CheckedSignature): { tone: Tone; title: string; deta
 
 const TONE_RANK: Record<Tone, number> = { good: 0, warn: 1, unknown: 2, bad: 3 };
 
-/** One line for the whole document, for the banner. */
-export function bannerFor(signatures: CheckedSignature[]): { tone: Tone; text: string } | null {
+/**
+ * One line for the whole document, for the banner. `skipped`: signatures that weren't checked
+ * (past the limit). A known bad result still wins; otherwise the banner says the check is
+ * incomplete, and is never green.
+ */
+export function bannerFor(
+  signatures: CheckedSignature[],
+  skipped = 0,
+): { tone: Tone; text: string } | null {
   if (signatures.length === 0) return null;
   const states = signatures.map((s) => ({ s, state: statusOf(s) }));
   const worst = states.reduce((a, b) =>
     TONE_RANK[b.state.tone] > TONE_RANK[a.state.tone] ? b : a,
   );
   const first = signerName(signatures[0] as CheckedSignature);
-  const others = signatures.length - 1;
+  const others = signatures.length - 1 + skipped;
   const who = others === 0 ? first : `${first} and ${others} other${others === 1 ? "" : "s"}`;
+  if (skipped > 0 && worst.state.tone !== "bad") {
+    const count = `${skipped} signature${skipped === 1 ? " wasn't" : "s weren't"}`;
+    return { tone: "warn", text: `Signed by ${who}. Check incomplete: ${count} checked.` };
+  }
   const subject = others === 0 ? "signature" : "signatures";
   switch (worst.state.tone) {
     case "good":

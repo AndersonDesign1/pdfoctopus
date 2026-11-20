@@ -1,15 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import { readFileSync } from "node:fs";
+import * as mupdf from "mupdf";
 import { describe, expect, test } from "vitest";
 import { PdfEngine } from "./engine";
 import {
   checkByteRange,
+  compareVersions,
   decodeHex,
   derLength,
-  eofPositions,
+  endsRevisionAt,
   MAX_CONTENTS,
   parsePdfDate,
+  revisionEnds,
 } from "./signatureCheck";
 
 const encode = (s: string) => new TextEncoder().encode(s);
@@ -39,28 +42,33 @@ describe("reading the bytes", () => {
     expect(parsePdfDate("yesterday")).toBeUndefined();
   });
 
-  test("%%EOF markers", () => {
-    expect(eofPositions(encode("a%%EOF\nb%%EOF"))).toEqual([6, 13]);
-    expect(eofPositions(encode("%%EO"))).toEqual([]);
+  test("only a %%EOF after startxref and a number ends a saved version", () => {
+    const text = "(a %%EOF in a string)\nstartxref\n12\n%%EOF\nstream %%EOF\nstartxref 99 %%EOF";
+    const bytes = encode(text);
+    const first = text.indexOf("12\n%%EOF") + 8;
+    expect(revisionEnds(bytes)).toEqual([first, bytes.length]);
+    expect(endsRevisionAt(bytes, first)).toBe(true);
+    expect(endsRevisionAt(bytes, first + 1)).toBe(true); // with its line end
+    expect(endsRevisionAt(bytes, text.indexOf("string)"))).toBe(false);
+    expect(endsRevisionAt(bytes, text.indexOf("\nstartxref 99"))).toBe(false);
+    expect(revisionEnds(encode("%%EO"))).toEqual([]);
   });
 });
 
 describe("checking a byte range", () => {
-  // "head <3003020100> tail%%EOF": the signature is the hex string.
-  const file = encode("head <3003020100> tail%%EOF\n");
+  // "head <3003020100> tail…%%EOF": the signature is the hex string.
+  const file = encode("head <3003020100> tail startxref 0 %%EOF\n");
   const gapStart = 5;
   const gapEnd = 17;
-  const eofs = eofPositions(file);
 
   test("a good one gives the signature", () => {
-    const result = checkByteRange(file, [0, gapStart, gapEnd, file.length - gapEnd], eofs);
+    const result = checkByteRange(file, [0, gapStart, gapEnd, file.length - gapEnd]);
     expect(result.problems).toEqual([]);
     expect(Array.from(result.contents)).toEqual([0x30, 0x03, 0x02, 0x01, 0x00]);
   });
 
   test("bad ones are refused with a reason", () => {
-    const check = (range: [number, number, number, number]) =>
-      checkByteRange(file, range, eofs).problems;
+    const check = (range: [number, number, number, number]) => checkByteRange(file, range).problems;
     expect(check([1, gapStart, gapEnd, file.length - gapEnd])).toContain(
       "Its byte range doesn't start at the beginning of the file.",
     );
@@ -82,7 +90,7 @@ describe("checking a byte range", () => {
     big[big.length - 1] = 0x3e;
     const padded = new Uint8Array(big.length + 1);
     padded.set(big, 1);
-    expect(checkByteRange(padded, [0, 1, padded.length, 0], []).problems).toEqual([
+    expect(checkByteRange(padded, [0, 1, padded.length, 0]).problems).toEqual([
       "The signature is too large to check.",
     ]);
   });
@@ -92,7 +100,12 @@ describe("the engine", () => {
   test("a file without signatures keeps no copy and lists none", () => {
     const engine = new PdfEngine();
     engine.open(fixture("generated/invoice.pdf"));
-    expect(engine.inspectSignatures()).toEqual({ file: null, signatures: [], truncated: false });
+    expect(engine.inspectSignatures()).toEqual({
+      file: null,
+      signatures: [],
+      truncated: false,
+      skipped: 0,
+    });
   });
 
   test("unsaved changes don't count as changes after signing", () => {
@@ -119,5 +132,59 @@ describe("the engine", () => {
     const [signature] = engine.inspectSignatures().signatures;
     expect(signature?.problems.length).toBeGreaterThan(0);
     expect(signature?.contents.length).toBe(0);
+  });
+});
+
+describe("comparing versions", () => {
+  /** The signed fixture, with an update that rewrites the page's content bytes in place. */
+  function sameLengthEdit(): { signed: Uint8Array; edited: Uint8Array } {
+    const signed = fixture("generated/signed-by-pdfoctopus.pdf");
+    const doc = mupdf.Document.openDocument(signed, "application/pdf");
+    try {
+      const pdf = doc.asPDF() as mupdf.PDFDocument;
+      const contents = pdf.findPage(0).get("Contents");
+      const stream = contents.isArray() ? contents.get(0) : contents;
+      const raw = stream.readRawStream().asUint8Array().slice();
+      raw[raw.length - 1] = (raw[raw.length - 1] as number) ^ 1;
+      // Same length and filter, so the stream's dictionary doesn't change.
+      stream.writeRawStream(raw);
+      const out = pdf.saveToBuffer("incremental");
+      try {
+        return { signed, edited: out.asUint8Array().slice() };
+      } finally {
+        out.destroy();
+      }
+    } finally {
+      doc.destroy();
+    }
+  }
+
+  function compare(signed: Uint8Array, edited: Uint8Array, budget?: number) {
+    const before = mupdf.Document.openDocument(signed, "application/pdf");
+    const after = mupdf.Document.openDocument(edited, "application/pdf");
+    try {
+      return compareVersions(
+        before.asPDF() as mupdf.PDFDocument,
+        after.asPDF() as mupdf.PDFDocument,
+        budget,
+      );
+    } finally {
+      before.destroy();
+      after.destroy();
+    }
+  }
+
+  test("a stream's bytes changed in place: other changes", () => {
+    const { signed, edited } = sameLengthEdit();
+    expect(compare(signed, edited).level).toBe("other");
+  });
+
+  test("the stream budget is charged before comparing, whatever the result", () => {
+    const { signed, edited } = sameLengthEdit();
+    // Too small for any stream: nothing is read, and the change can't be told apart.
+    expect(compare(signed, edited, 16)).toEqual({
+      level: "unknown",
+      notes: ["The file is too large to compare."],
+    });
   });
 });

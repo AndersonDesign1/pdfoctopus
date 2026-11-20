@@ -17,7 +17,7 @@ import {
 /** The signatures of the open file: being checked, checked, or failed to check. */
 export type SignaturesState =
   | { kind: "checking" }
-  | { kind: "checked"; signatures: CheckedSignature[]; truncated: boolean }
+  | { kind: "checked"; signatures: CheckedSignature[]; skipped: number }
   | { kind: "failed"; message: string };
 
 const ICON: Record<Tone, string> = { good: "✓", warn: "!", bad: "✕", unknown: "?" };
@@ -38,7 +38,7 @@ export function SignatureBanner({ state, onShow }: { state: SignaturesState; onS
   } else if (state.kind === "failed") {
     text = "This file is signed, but its signatures couldn't be checked.";
   } else {
-    const banner = bannerFor(state.signatures);
+    const banner = bannerFor(state.signatures, state.skipped);
     if (!banner) return null;
     tone = banner.tone;
     text = banner.text;
@@ -152,8 +152,11 @@ export function SignaturesDialog({
                 <SignatureItem key={`${s.field}:${s.byteRange?.join(",")}`} s={s} index={i} />
               ))}
             </ol>
-            {state.truncated && (
-              <p className="sig-hint">Only the first 50 signatures are listed.</p>
+            {state.skipped > 0 && (
+              <p className="sig-hint sig-text-warn">
+                Only the first {state.signatures.length} signatures were checked; {state.skipped}{" "}
+                more weren't.
+              </p>
             )}
             <p className="sig-hint">
               Who signed is shown as their certificate says. It isn't checked against a list of

@@ -92,6 +92,17 @@ describe("signature summaries", () => {
     expect(coverageOf(s)).toBe("");
   });
 
+  test("signatures past the limit make the check incomplete, never green", () => {
+    expect(bannerFor([signature()], 3)).toEqual({
+      tone: "warn",
+      text: "Signed by Ada Lovelace and 3 others. Check incomplete: 3 signatures weren't checked.",
+    });
+    expect(bannerFor([signature()], 1)?.text).toContain("1 signature wasn't checked.");
+    // A known bad result still wins.
+    const changed = signature({ status: "changed", coversWholeFile: false, changes: "other" });
+    expect(bannerFor([changed], 3)?.tone).toBe("bad");
+  });
+
   test("no certificate: the name from the signature, or unknown", () => {
     const check = { ...signature().check, signer: undefined };
     expect(bannerFor([signature({ check, name: "Bob" })])?.text).toContain("Signed by Bob.");

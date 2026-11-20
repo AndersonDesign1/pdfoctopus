@@ -87,20 +87,47 @@ export interface SignatureInspection {
   signatures: SignatureReport[];
   /** True if there were more signatures than are listed. */
   truncated: boolean;
+  /** How many signatures weren't read (beyond MAX_SIGNATURES; at least this many). */
+  skipped: number;
 }
 
 const LT = 0x3c;
 const GT = 0x3e;
 
-/** The positions just after each "%%EOF" marker in the file (at most 10,000). */
-export function eofPositions(bytes: Uint8Array): number[] {
+/** An object with its reference followed. A missing entry (MuPDF's shared null) stays null. */
+function resolved(obj: mupdf.PDFObject): mupdf.PDFObject {
+  return obj.isNull() ? obj : obj.resolve();
+}
+
+const latin1 = new TextDecoder("latin1");
+/** The end of a saved version: "startxref", the offset, "%%EOF" and at most a line end. */
+const REVISION_END = /startxref\s+\d+\s*%%EOF(?:\r\n|\r|\n)?$/;
+
+/**
+ * Whether a saved version of the file ends at `end`: the bytes just before it are "startxref",
+ * a number and "%%EOF" (perhaps with a line end). A "%%EOF" anywhere else, such as inside a
+ * string or stream, doesn't count.
+ */
+export function endsRevisionAt(bytes: Uint8Array, end: number): boolean {
+  if (end < 5 || end > bytes.length) return false;
+  return REVISION_END.test(latin1.decode(bytes.subarray(Math.max(0, end - 64), end)));
+}
+
+/**
+ * Where the saved versions of the file end: just after each "%%EOF" that follows "startxref"
+ * and a number. Only used to number the versions; at most 100,000 "%%EOF"s are looked at.
+ */
+export function revisionEnds(bytes: Uint8Array): number[] {
   const out: number[] = [];
   const marker = [0x25, 0x25, 0x45, 0x4f, 0x46]; // %%EOF
-  for (let i = 0; i + 5 <= bytes.length && out.length < 10_000; i++) {
+  let seen = 0;
+  for (let i = 0; i + 5 <= bytes.length && seen < 100_000; i++) {
     if (bytes[i] !== 0x25) continue;
     let k = 1;
     while (k < 5 && bytes[i + k] === marker[k]) k++;
-    if (k === 5) out.push(i + 5);
+    if (k < 5) continue;
+    seen++;
+    if (endsRevisionAt(bytes, i + 5)) out.push(i + 5);
   }
   return out;
 }
@@ -156,7 +183,6 @@ export function derLength(der: Uint8Array): number | null {
 export function checkByteRange(
   bytes: Uint8Array,
   range: ByteRange,
-  eofs: number[],
 ): { contents: Uint8Array; problems: string[] } {
   const [a, aLength, b, bLength] = range;
   const problems: string[] = [];
@@ -190,9 +216,8 @@ export function checkByteRange(
     problems.push("The signature can't be read.");
     return { contents: none, problems };
   }
-  // A saved version ends with %%EOF and perhaps a line end.
-  const endsVersion = eofs.some((e) => e <= end && end - e <= 2);
-  if (!endsVersion) problems.push("Its byte range doesn't end where a saved version ends.");
+  if (!endsRevisionAt(bytes, end))
+    problems.push("Its byte range doesn't end where a saved version ends.");
   return { contents: decoded.slice(0, length), problems };
 }
 
@@ -234,25 +259,25 @@ export function signedFields(pdf: mupdf.PDFDocument): SignedField[] {
   const seenValues = new Set<number>();
   let visited = 0;
   const walk = (node: mupdf.PDFObject, prefix: string, ft: string, depth: number) => {
-    if (depth > 32 || visited++ > MAX_FIELDS || out.length > MAX_SIGNATURES) return;
+    if (depth > 32 || visited++ > MAX_FIELDS) return;
     if (node.isIndirect()) {
       const num = node.asIndirect();
       if (seen.has(num)) return;
       seen.add(num);
     }
-    const dict = node.resolve();
+    const dict = resolved(node);
     if (!dict.isDictionary()) return;
     const t = dict.get("T");
     const name = t.isString() ? (prefix ? `${prefix}.${t.asString()}` : t.asString()) : prefix;
     const type = dict.get("FT").isName() ? dict.get("FT").asName() : ft;
     const value = dict.get("V");
-    if (type === "Sig" && value.resolve().isDictionary()) {
+    if (type === "Sig" && resolved(value).isDictionary()) {
       const num = value.isIndirect() ? value.asIndirect() : -1;
       if (num < 0 || !seenValues.has(num)) {
         if (num >= 0) seenValues.add(num);
         const kids = dict.get("Kids");
-        const widget = kids.isArray() && kids.length > 0 ? kids.get(0).resolve() : dict;
-        out.push({ name: name || "(unnamed)", signature: value.resolve(), widget });
+        const widget = kids.isArray() && kids.length > 0 ? resolved(kids.get(0)) : dict;
+        out.push({ name: name || "(unnamed)", signature: resolved(value), widget });
       }
       return;
     }
@@ -323,7 +348,7 @@ function fieldType(obj: mupdf.PDFObject): string | null {
   for (let depth = 0; depth < 32 && node.isDictionary(); depth++) {
     const ft = nameOf(node, "FT");
     if (ft) return ft;
-    node = node.get("Parent").resolve();
+    node = resolved(node.get("Parent"));
   }
   return null;
 }
@@ -351,13 +376,32 @@ const ANNOTATION_TYPES = new Set([
   "Widget",
 ]);
 
-function sameStream(a: mupdf.PDFObject, b: mupdf.PDFObject, budget: { bytes: number }): boolean {
+/** A stream's stated /Length, or 0 if it doesn't say. */
+function statedLength(stream: mupdf.PDFObject): number {
+  const length = resolved(stream.get("Length"));
+  return length.isNumber() ? Math.max(0, length.asNumber()) : 0;
+}
+
+/**
+ * Compare two streams' bytes, charging them to the budget first (by their stated lengths,
+ * then by what was really read). "over" when the budget runs out: they aren't compared.
+ */
+export function sameStream(
+  a: mupdf.PDFObject,
+  b: mupdf.PDFObject,
+  budget: { bytes: number },
+): "same" | "different" | "over" {
+  const stated = statedLength(a) + statedLength(b);
+  budget.bytes -= stated;
+  if (budget.bytes < 0) return "over";
   const x = a.readRawStream().asUint8Array();
   const y = b.readRawStream().asUint8Array();
-  budget.bytes -= x.length + y.length;
-  if (x.length !== y.length) return false;
-  for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return false;
-  return true;
+  // A /Length that understates the stream doesn't get round the budget.
+  budget.bytes -= Math.max(0, x.length + y.length - stated);
+  if (budget.bytes < 0) return "over";
+  if (x.length !== y.length) return "different";
+  for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return "different";
+  return "same";
 }
 
 /** Appearance streams of the annotations in a document: object number -> is a form field's. */
@@ -368,19 +412,20 @@ function appearanceStreams(pdf: mupdf.PDFDocument): Map<number, boolean> {
     if (v.isIndirect()) out.set(v.asIndirect(), widget);
   };
   for (let i = 0; i < count && out.size < 100_000; i++) {
-    const annots = pdf.findPage(i).get("Annots").resolve();
+    const annots = resolved(pdf.findPage(i).get("Annots"));
     if (!annots.isArray()) continue;
     for (let k = 0; k < annots.length && k < 10_000; k++) {
-      const annot = annots.get(k).resolve();
+      const annot = resolved(annots.get(k));
       if (!annot.isDictionary()) continue;
       const widget = nameOf(annot, "Subtype") === "Widget";
-      const ap = annot.get("AP").resolve();
+      const ap = resolved(annot.get("AP"));
       if (!ap.isDictionary()) continue;
       for (const key of ["N", "D", "R"]) {
         const entry = ap.get(key);
         add(entry, widget);
-        const states = entry.resolve();
-        if (states.isDictionary() && !states.isStream()) {
+        const states = resolved(entry);
+        // MuPDF only knows a stream through its reference, so ask the entry, not `states`.
+        if (states.isDictionary() && !entry.isStream()) {
           states.forEach((v) => {
             add(v, widget);
           });
@@ -404,6 +449,7 @@ interface Change {
 export function compareVersions(
   signed: mupdf.PDFDocument,
   current: mupdf.PDFDocument,
+  streamBudget = MAX_STREAM_BYTES,
 ): { level: ChangeLevel; notes: string[] } {
   const oldCount = signed.countObjects();
   const newCount = current.countObjects();
@@ -423,24 +469,28 @@ export function compareVersions(
   const formNum = formRef.isIndirect() ? formRef.asIndirect() : -1;
   const pages = pageNumbers(current);
   let streams: Map<number, boolean> | null = null;
-  const budget = { bytes: MAX_STREAM_BYTES };
+  const budget = { bytes: streamBudget };
 
   const classify = (
     num: number,
     a: mupdf.PDFObject | null,
     b: mupdf.PDFObject | null,
+    isStream: boolean,
   ): Change | null => {
     if (!b) return { level: "other", note: "Parts of the document were removed." };
     const type = nameOf(b, "Type");
     const subtype = nameOf(b, "Subtype");
-    if (type === "XRef" || type === "ObjStm") return null;
+    // A cross-reference or object stream the update added. An object that was in the signed
+    // version is never let off this way, whatever its /Type now says: replacing a page's
+    // content with a stream marked /Type /XRef must still count as a change.
+    if (!a && (type === "XRef" || type === "ObjStm")) return null;
     if (num === infoNum) return null;
     if (num === rootNum) {
       const keys = a ? changedKeys(a, b) : new Set(["*"]);
       if (only(keys, ["AcroForm", "DSS"])) return { level: "signatures", note: "" };
       return { level: "other", note: "The document's settings were changed." };
     }
-    if (num === formNum && b.isDictionary() && !b.isStream()) {
+    if (num === formNum && b.isDictionary() && !isStream) {
       const keys = a ? changedKeys(a, b) : new Set(["Fields", "SigFlags"]);
       if (only(keys, ["Fields", "SigFlags"])) return { level: "signatures", note: "" };
       if (only(keys, ["Fields", "SigFlags", "NeedAppearances", "DR", "DA"])) {
@@ -456,7 +506,7 @@ export function compareVersions(
       if (!only(keys, ["Annots"])) return { level: "other", note: `${where} was changed.` };
       // Annotations added to the page are judged on their own; removed ones count here.
       const refs = (o: mupdf.PDFObject) => {
-        const list = o.get("Annots").resolve();
+        const list = resolved(o.get("Annots"));
         const set = new Set<string>();
         if (list.isArray()) for (let i = 0; i < list.length; i++) set.add(list.get(i).toString());
         return set;
@@ -471,7 +521,7 @@ export function compareVersions(
       if (a) return { level: "other", note: "An earlier signature's details were changed." };
       return { level: "signatures", note: "Another signature was added." };
     }
-    if (type === "Annot" || (subtype && ANNOTATION_TYPES.has(subtype) && !b.isStream())) {
+    if (type === "Annot" || (subtype && ANNOTATION_TYPES.has(subtype) && !isStream)) {
       if (subtype !== "Widget") {
         return {
           level: "annotations",
@@ -492,7 +542,7 @@ export function compareVersions(
       }
       return { level: "other", note: "A form field was changed." };
     }
-    if (b.isDictionary() && !b.isStream() && (!b.get("FT").isNull() || !b.get("T").isNull())) {
+    if (b.isDictionary() && !isStream && (!b.get("FT").isNull() || !b.get("T").isNull())) {
       // A form field that isn't also a widget.
       const ft = fieldType(b);
       if (!a) {
@@ -507,7 +557,7 @@ export function compareVersions(
     // Anything new not covered above (fonts, pictures, appearances) can only be seen through
     // a changed object, which is judged on its own.
     if (!a) return null;
-    if (b.isStream()) {
+    if (isStream) {
       streams ??= appearanceStreams(signed);
       const widget = streams.get(num);
       if (widget === true) return { level: "form", note: "Form fields were filled in." };
@@ -526,23 +576,26 @@ export function compareVersions(
   };
   const last = Math.max(oldCount, newCount);
   for (let num = 1; num < last; num++) {
-    const before = num < oldCount ? signed.newIndirect(num).resolve() : null;
-    const after = num < newCount ? current.newIndirect(num).resolve() : null;
+    // The references are kept: MuPDF only treats an object as a stream through its reference.
+    const beforeRef = num < oldCount ? signed.newIndirect(num) : null;
+    const afterRef = num < newCount ? current.newIndirect(num) : null;
+    const before = beforeRef?.resolve() ?? null;
+    const after = afterRef?.resolve() ?? null;
     const a = before && !before.isNull() ? before : null;
     const b = after && !after.isNull() ? after : null;
     if (!a && !b) continue;
-    if (a && b) {
-      if (a.toString(true) === b.toString(true)) {
-        if (!b.isStream()) continue;
-        if (sameStream(a, b, budget)) {
-          if (budget.bytes < 0) {
-            return { level: "unknown", notes: ["The file is too large to compare."] };
-          }
-          continue;
+    const isStream = !!(b && afterRef?.isStream());
+    if (a && b && beforeRef && afterRef) {
+      if (a.toString(true) === b.toString(true) && beforeRef.isStream() === isStream) {
+        if (!isStream) continue;
+        const same = sameStream(beforeRef, afterRef, budget);
+        if (same === "over") {
+          return { level: "unknown", notes: ["The file is too large to compare."] };
         }
+        if (same === "same") continue;
       }
     }
-    record(classify(num, a, b));
+    record(classify(num, a, b, isStream));
     if (level === "other" && notes.length >= 6) break;
   }
   return { level, notes };
@@ -585,7 +638,7 @@ function readSignature(
     report.problems.push("It has no valid byte range.");
     return report;
   }
-  const checked = checkByteRange(bytes, range, eofs);
+  const checked = checkByteRange(bytes, range);
   report.contents = checked.contents;
   report.problems.push(...checked.problems);
   if (report.contents.length && !encrypted) {
@@ -613,9 +666,10 @@ export function inspectSignatures(
   current: mupdf.PDFDocument,
 ): SignatureInspection {
   const fields = signedFields(current);
-  if (fields.length === 0) return { file: null, signatures: [], truncated: false };
-  const truncated = fields.length > MAX_SIGNATURES;
-  const eofs = eofPositions(bytes);
+  if (fields.length === 0) return { file: null, signatures: [], truncated: false, skipped: 0 };
+  const skipped = Math.max(0, fields.length - MAX_SIGNATURES);
+  const truncated = skipped > 0;
+  const eofs = revisionEnds(bytes);
   const pages = pageNumbers(current);
   const method = current.getMetaData("encryption");
   const encrypted = !!method && method !== "None";
@@ -645,7 +699,7 @@ export function inspectSignatures(
     report.changeNotes = result.notes;
     report.signedPages = result.pages;
   }
-  return { file: bytes, signatures: reports, truncated };
+  return { file: bytes, signatures: reports, truncated, skipped };
 }
 
 function compareAt(

@@ -642,14 +642,14 @@ export class PdfEngine {
     // Not a PDF (an HTML file, say): no signatures, rather than an error.
     this.requireDoc();
     const bytes = this.signedBytes;
-    if (!bytes) return { file: null, signatures: [], truncated: false };
+    if (!bytes) return { file: null, signatures: [], truncated: false, skipped: 0 };
     // A separate copy of the file, so unsaved changes in the open document don't count.
     const current = mupdf.Document.openDocument(bytes, "application/pdf");
     try {
       const pdf = current.asPDF();
       const unlocked =
         !current.needsPassword() || current.authenticatePassword(this.password ?? "") !== 0;
-      if (!pdf || !unlocked) return { file: null, signatures: [], truncated: false };
+      if (!pdf || !unlocked) return { file: null, signatures: [], truncated: false, skipped: 0 };
       return inspectSignatures(bytes, pdf);
     } finally {
       current.destroy();
