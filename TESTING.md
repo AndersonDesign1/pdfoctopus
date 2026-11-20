@@ -25,15 +25,15 @@ then.
 - (2026-11-19) **A real digital ID for a final check** (optional): a `.p12` / `.pfx` from a
   certificate provider on Adobe's trust list (AATL), or a free personal one, to check a
   signature shows as valid in Acrobat without trusting anything by hand. Never commit it.
-- (2026-11-19) **Old `.p12` files with 3DES or RC2 encryption** aren't supported: browsers'
-  WebCrypto can't decrypt them, and supporting them means adding our own 3DES and RC2 code (or a
-  library such as node-forge). Default for now: the dialog explains how to export the file again
-  with AES-256. Say if older files (for example exported from old Windows or macOS versions)
-  matter enough to support.
-- (2026-11-19) **Timestamp server for B-T signatures** (a later Phase 5 PR): a timestamp means
-  sending a hash of the signature (not the file) to a public timestamp server, so it needs your
-  choice of server and an opt-in in the dialog. Suggested default: off, with a free RFC 3161
-  server such as DigiCert's or Sectigo's offered.
+
+Decided (no action needed):
+
+- **Old `.p12` files with 3DES or RC2 encryption** (common from older Windows and macOS
+  exports): browsers' WebCrypto can't decrypt them. Until a later Phase 5 PR adds support, the
+  dialog explains how to export the file again with AES-256.
+- **Timestamps (B-T signatures)**: a later Phase 5 PR adds them as an opt-in, off by default.
+  When switched on, only a hash of the signature (never the file) is sent to a free public
+  RFC 3161 timestamp server (DigiCert's, with Sectigo's as the other choice).
 
 ## Phase 1: page tools and saving
 
