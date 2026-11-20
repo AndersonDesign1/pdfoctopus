@@ -13,6 +13,6 @@ export function readFixture(path: string): Uint8Array {
   return new Uint8Array(readFileSync(new URL(path, fixtures)));
 }
 
-export function testId(name: "rsa" | "ec" | "3des"): Uint8Array {
+export function testId(name: "rsa" | "ec" | "3des" | "ec-unmarked" | "ec-wrong-cert"): Uint8Array {
   return readFixture(`test-ids/test-signer-${name}.p12`);
 }

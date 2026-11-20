@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import { readFileSync } from "node:fs";
+import * as mupdf from "mupdf";
 import { describe, expect, test } from "vitest";
 import { PdfEngine } from "./engine";
 import {
@@ -122,6 +123,54 @@ describe("prepareSignature", () => {
     });
     // The appearance is turned back, so it reads the right way up.
     expect(decode(prepared.bytes)).toMatch(/\/Matrix\[0 1 -1 0 0 0\]/);
+  });
+
+  /** A file with an empty signature field "Approver", its field and box changed by `edit`. */
+  function withField(edit: (widget: mupdf.PDFObject) => void): Uint8Array {
+    const engine = new PdfEngine();
+    engine.open(fixture("invoice.pdf"));
+    engine.addField({ page: 0, kind: "signature", rect: [50, 600, 250, 650], name: "Approver" });
+    const doc = mupdf.Document.openDocument(engine.save(), "application/pdf");
+    const pdf = doc.asPDF() as mupdf.PDFDocument;
+    const fields = pdf.getTrailer().get("Root").get("AcroForm").get("Fields");
+    edit(fields.get(fields.length - 1));
+    const buffer = pdf.saveToBuffer("incremental");
+    const bytes = buffer.asUint8Array().slice();
+    buffer.destroy();
+    doc.destroy();
+    return bytes;
+  }
+
+  test("refuses a read-only field, and says it's read-only", () => {
+    const engine = new PdfEngine();
+    engine.open(withField((w) => w.put("Ff", 1)));
+    expect(engine.signatureFields()).toEqual([
+      expect.objectContaining({ name: "Approver", signed: false, readOnly: true }),
+    ]);
+    expect(() => engine.prepareSignature({ ...SPEC, page: 0, field: "Approver" })).toThrow(
+      /read-only/,
+    );
+  });
+
+  test("keeps a box's own flags, such as hidden, when signing it", () => {
+    const engine = new PdfEngine();
+    engine.open(withField((w) => w.put("F", 2 | 32))); // hidden, no view
+    expect(engine.signatureFields()[0]?.readOnly).toBe(false);
+    const prepared = engine.prepareSignature({ ...SPEC, page: 0, field: "Approver" });
+    const doc = mupdf.Document.openDocument(prepared.bytes, "application/pdf");
+    try {
+      const pdf = doc.asPDF() as mupdf.PDFDocument;
+      const fields = pdf.getTrailer().get("Root").get("AcroForm").get("Fields");
+      // Hidden and no view kept; print and locked added.
+      expect(
+        fields
+          .get(fields.length - 1)
+          .get("F")
+          .asNumber(),
+      ).toBe(2 | 32 | 4 | 128);
+    } finally {
+      doc.destroy();
+    }
   });
 
   test("refuses a box outside the page, a missing field, and nonsense sizes", () => {

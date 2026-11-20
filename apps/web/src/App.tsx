@@ -277,7 +277,7 @@ export function App() {
   const [pageDialog, setPageDialog] = useState<PageDialog>();
   /** Which dialog for making a signature is open, if any. */
   const [signDialog, setSignDialog] = useState<"signature" | "initials">();
-  /** The document's empty signature fields, looked up when the Sign dialog opens. */
+  /** The empty signature fields that can be signed (not read-only), looked up when Sign opens. */
   const [emptySignatureFields, setEmptySignatureFields] = useState<SignatureFieldInfo[] | null>(
     null,
   );
@@ -813,7 +813,7 @@ export function App() {
       .then(
         (fields) => {
           if (docRef.current === startedWith) {
-            setEmptySignatureFields(fields.filter((f) => !f.signed));
+            setEmptySignatureFields(fields.filter((f) => !f.signed && !f.readOnly));
           }
         },
         // Signing in a new box still works.

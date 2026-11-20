@@ -32,6 +32,8 @@ export interface SignatureFieldInfo {
   /** Where on the page, in points from its top-left corner as shown. */
   rect: [number, number, number, number];
   signed: boolean;
+  /** Read-only fields can't be signed. */
+  readOnly: boolean;
 }
 
 /** /SigFlags: SignaturesExist (1) and AppendOnly (2). */
@@ -72,6 +74,7 @@ export function listSignatureFields(pdf: mupdf.PDFDocument): SignatureFieldInfo[
           page: i,
           rect: transformRect(shown, rect),
           signed: isSigned(object),
+          readOnly: w.isReadOnly(),
         });
       }
     } finally {
@@ -149,6 +152,9 @@ export function placeSignature(
       if (!w) throw new Error(`There's no signature field called "${target.field}" on that page`);
       widget = w.getObject();
       if (isSigned(widget)) throw new Error(`The field "${target.field}" is already signed`);
+      if (w.isReadOnly()) {
+        throw new Error(`The field "${target.field}" is read-only, so it can't be signed`);
+      }
     }
   } finally {
     loaded.destroy();
@@ -203,7 +209,9 @@ export function placeSignature(
     field = parent;
   }
   field.put("V", signatureDictionary(pdf, details, size));
-  widget.put("F", SIGNED_WIDGET_FLAGS);
+  // Added to the box's own flags, so a hidden box (or one not shown on screen) stays so.
+  const own = widget.get("F");
+  widget.put("F", (own.isNumber() ? own.asNumber() : 0) | SIGNED_WIDGET_FLAGS);
   if (widget.get("P").isNull()) widget.put("P", pageObject);
 
   // The box as shown, which is what the appearance is drawn for.

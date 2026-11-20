@@ -7,6 +7,7 @@ import * as pkijs from "pkijs";
 import { describe, expect, test } from "vitest";
 import {
   DigitalIdError,
+  displayName,
   identityProblem,
   loadDigitalId,
   rangeBytes,
@@ -103,6 +104,28 @@ describe("loading a digital ID", () => {
     const id = await loadDigitalId(testId("ec"), TEST_ID_PASSWORD);
     expect(id.name).toBe("Test Signer EC");
     expect(id.privateKey.algorithm.name).toBe("ECDSA");
+  });
+
+  test("the certificate that matches the key is used, not just the first one", async () => {
+    // Someone else's certificate comes first, and nothing marks which is the key's.
+    const id = await loadDigitalId(testId("ec-unmarked"), TEST_ID_PASSWORD);
+    expect(id.name).toBe("Test Signer EC");
+    expect(id.chain.map((c) => displayName(c.certificate.subject))).toEqual([
+      "Someone Else",
+      "PDFoctopus Test Signing CA",
+    ]);
+    // And a signature made with it verifies.
+    const engine = new PdfEngine();
+    engine.open(readFixture("generated/invoice.pdf"));
+    const { signed } = await sign(engine, id, { page: 0, rect: [40, 700, 240, 760] });
+    expect((await verify(signed.bytes, signaturesIn(signed.bytes)[0])).ok).toBe(true);
+  });
+
+  test("a file with no certificate for its key is refused", async () => {
+    const err = await loadDigitalId(testId("ec-wrong-cert"), TEST_ID_PASSWORD).catch((e) => e);
+    expect(err).toBeInstanceOf(DigitalIdError);
+    expect(err.reason).toBe("no-key");
+    expect(err.message).toMatch(/no certificate for its private key/);
   });
 
   test("a wrong password is refused", async () => {

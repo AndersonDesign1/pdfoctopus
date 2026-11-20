@@ -177,11 +177,13 @@ for all of them is `test-only`, so a signature made with them proves nothing abo
 were issued by `trust/pdfoctopus-test-signing-ca.pem`, a throwaway root CA whose private key was
 never saved; only tests trust it.
 
-| File                   | What                                                                     |
-| ---------------------- | ------------------------------------------------------------------------ |
-| `test-signer-rsa.p12`  | RSA 2048 key and certificate, AES-256 encryption (the OpenSSL 3 default) |
-| `test-signer-ec.p12`   | ECDSA P-256 key and certificate, AES-256 encryption                      |
-| `test-signer-3des.p12` | The RSA ID with old 3DES encryption, which browsers can't decrypt        |
+| File                            | What                                                                          |
+| ------------------------------- | ----------------------------------------------------------------------------- |
+| `test-signer-rsa.p12`           | RSA 2048 key and certificate, AES-256 encryption (the OpenSSL 3 default)      |
+| `test-signer-ec.p12`            | ECDSA P-256 key and certificate, AES-256 encryption                           |
+| `test-signer-3des.p12`          | The RSA ID with old 3DES encryption, which browsers can't decrypt             |
+| `test-signer-ec-unmarked.p12`   | The EC key with someone else's certificate first, and nothing marking its own |
+| `test-signer-ec-wrong-cert.p12` | The EC key with only someone else's certificate, so it can't sign             |
 
 ## Known gaps
 

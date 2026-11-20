@@ -232,40 +232,37 @@ export async function loadDigitalId(file: Uint8Array, password: string): Promise
     for (const k of keys.slice(1)) k.der.fill(0);
   }
 
-  // The signer's certificate: the one marked as the key's, or the one whose public key is
-  // the key's (RSA), or the only one that isn't a CA.
+  let imported: { key: CryptoKey; params: RsaHashedImportParams | EcKeyImportParams };
+  try {
+    imported = await importSigningKey(key.info, key.der);
+  } finally {
+    key.der.fill(0);
+  }
+  const privateKey = imported.key;
+
+  // The signer's certificate is the one whose public key belongs to the private key. The
+  // key's localKeyId and "not a CA" only decide which certificates are tried first: a file
+  // can hold other people's certificates too, and signing with the wrong one would make a
+  // signature that never validates.
   const isCa = (c: pkijs.Certificate) =>
     c.extensions?.some(
       (e) => e.extnID === "2.5.29.19" && (e.parsedValue as pkijs.BasicConstraints)?.cA,
     ) ?? false;
-  let signer =
-    (key.keyId &&
-      certificates.find((c) => c.keyId && sameBytes(c.keyId, key.keyId as Uint8Array))) ||
-    undefined;
-  const rsa = key.info.parsedKey instanceof pkijs.RSAPrivateKey ? key.info.parsedKey : null;
-  if (!signer && rsa) {
-    signer = certificates.find((c) => {
-      const pub = c.certificate.subjectPublicKeyInfo.parsedKey;
-      return (
-        pub instanceof pkijs.RSAPublicKey &&
-        sameBytes(
-          view(pub.modulus.valueBlock.valueHexView),
-          view(rsa.modulus.valueBlock.valueHexView),
-        )
-      );
-    });
+  const rank = (c: (typeof certificates)[number]) =>
+    (key.keyId && c.keyId && sameBytes(c.keyId, key.keyId) ? 0 : 2) + (isCa(c.certificate) ? 1 : 0);
+  const candidates = [...certificates].sort((a, b) => rank(a) - rank(b));
+  let signer: (typeof certificates)[number] | undefined;
+  for (const c of candidates) {
+    if (await keyMatches(privateKey, imported.params, c.certificate)) {
+      signer = c;
+      break;
+    }
   }
-  signer ??= certificates.find((c) => !isCa(c.certificate));
   if (!signer) {
-    key.der.fill(0);
-    throw new DigitalIdError("This file has no certificate for its private key.", "no-key");
-  }
-
-  let privateKey: CryptoKey;
-  try {
-    privateKey = await importSigningKey(key.info, key.der);
-  } finally {
-    key.der.fill(0);
+    throw new DigitalIdError(
+      "This file has no certificate for its private key, so it can't be used to sign.",
+      "no-key",
+    );
   }
 
   const cert = signer.certificate;
@@ -283,8 +280,34 @@ export async function loadDigitalId(file: Uint8Array, password: string): Promise
   };
 }
 
+/**
+ * Whether a certificate's public key belongs to the private key: a test value signed with
+ * the private key verifies with the certificate's key.
+ */
+async function keyMatches(
+  privateKey: CryptoKey,
+  params: RsaHashedImportParams | EcKeyImportParams,
+  cert: pkijs.Certificate,
+): Promise<boolean> {
+  const subtle = globalThis.crypto.subtle;
+  const sign = params.name === "ECDSA" ? { name: "ECDSA", hash: "SHA-256" } : params;
+  try {
+    const spki = new Uint8Array(cert.subjectPublicKeyInfo.toSchema().toBER(false));
+    const publicKey = await subtle.importKey("spki", spki, params, false, ["verify"]);
+    const test = globalThis.crypto.getRandomValues(new Uint8Array(32));
+    const signature = await subtle.sign(sign, privateKey, test);
+    return await subtle.verify(sign, publicKey, signature, test);
+  } catch {
+    // Another kind of key (RSA against EC, another curve): not this one.
+    return false;
+  }
+}
+
 /** The WebCrypto algorithm a key signs with: RSA PKCS #1 v1.5 or ECDSA, with SHA-256. */
-async function importSigningKey(info: pkijs.PrivateKeyInfo, der: Uint8Array): Promise<CryptoKey> {
+async function importSigningKey(
+  info: pkijs.PrivateKeyInfo,
+  der: Uint8Array,
+): Promise<{ key: CryptoKey; params: RsaHashedImportParams | EcKeyImportParams }> {
   const algorithm = info.privateKeyAlgorithm;
   let params: RsaHashedImportParams | EcKeyImportParams;
   if (algorithm.algorithmId === OID.rsa) {
@@ -309,9 +332,14 @@ async function importSigningKey(info: pkijs.PrivateKeyInfo, der: Uint8Array): Pr
     );
   }
   try {
-    return await globalThis.crypto.subtle.importKey("pkcs8", der as BufferSource, params, false, [
-      "sign",
-    ]);
+    const key = await globalThis.crypto.subtle.importKey(
+      "pkcs8",
+      der as BufferSource,
+      params,
+      false,
+      ["sign"],
+    );
+    return { key, params };
   } catch {
     throw new DigitalIdError("The private key in this file couldn't be read.", "unsupported");
   }
