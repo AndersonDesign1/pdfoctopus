@@ -78,8 +78,12 @@ What was built, for reference:
 - **Saving:** "Save" writes back to the file chosen at the first save (desktop, and
   Chrome/Edge); "Save as" always asks. Split writes all parts into a chosen folder, or
   downloads them in other browsers. The app warns before closing with unsaved changes.
-- **Known gaps:** page labels aren't renumbered after moving or deleting pages; the
-  desktop folder picker for split (`dialog:allow-open`) hasn't been tried on Windows yet.
+- **Page labels** ("i, ii, 1, 2") follow their pages when pages are deleted, moved or
+  inserted (fixed 2026-11-19, `pageLabels.ts`): each page keeps its section and sections are
+  numbered again in order; undo puts the labels back as they were. A document without labels
+  stays without them (MuPDF used to add a tree numbering moved pages "1, 1, 2").
+- **Known gaps:** the desktop folder picker for split (`dialog:allow-open`) hasn't been tried
+  on Windows yet.
 
 ### 3. Admin tasks still open from Phase 0
 
