@@ -89,13 +89,14 @@ const MAX_TOTAL_BYTES = 32 * 1024 * 1024;
 const MAX_GLYPHS = 400_000;
 const MAX_LINES = 20_000;
 const MAX_STATE_DEPTH = 256;
+const MAX_MARKS = 50_000;
 
 // ---------------------------------------------------------------------------------------------
 // Matrices
 
 const IDENTITY: Matrix6 = [1, 0, 0, 1, 0, 0];
 
-function mul(a: Matrix6, b: Matrix6): Matrix6 {
+export function mul(a: Matrix6, b: Matrix6): Matrix6 {
   return [
     a[0] * b[0] + a[1] * b[2],
     a[0] * b[1] + a[1] * b[3],
@@ -106,7 +107,7 @@ function mul(a: Matrix6, b: Matrix6): Matrix6 {
   ];
 }
 
-function apply(m: Matrix6, x: number, y: number): [number, number] {
+export function apply(m: Matrix6, x: number, y: number): [number, number] {
   return [x * m[0] + y * m[2] + m[4], x * m[1] + y * m[3] + m[5]];
 }
 
@@ -161,7 +162,7 @@ export function uprightRectangle(points: readonly (readonly [number, number])[])
 }
 
 /** A point in a frame where x runs along the text and y across it, for a reading rotation. */
-function toFrame(rotation: number, x: number, y: number): [number, number] {
+export function toFrame(rotation: number, x: number, y: number): [number, number] {
   switch (rotation) {
     case 90:
       return [y, -x];
@@ -174,7 +175,7 @@ function toFrame(rotation: number, x: number, y: number): [number, number] {
   }
 }
 
-function rectToFrame(rotation: number, r: Rect4): Rect4 {
+export function rectToFrame(rotation: number, r: Rect4): Rect4 {
   const [ax, ay] = toFrame(rotation, r[0], r[1]);
   const [bx, by] = toFrame(rotation, r[2], r[3]);
   return [Math.min(ax, bx), Math.min(ay, by), Math.max(ax, bx), Math.max(ay, by)];
@@ -185,7 +186,7 @@ function intersect(a: Rect4 | null, b: Rect4): Rect4 {
   return [Math.max(a[0], b[0]), Math.max(a[1], b[1]), Math.min(a[2], b[2]), Math.min(a[3], b[3])];
 }
 
-function contains(outer: Rect4, inner: Rect4, slack: number): boolean {
+export function contains(outer: Rect4, inner: Rect4, slack: number): boolean {
   return (
     inner[0] >= outer[0] - slack &&
     inner[1] >= outer[1] - slack &&
@@ -194,21 +195,21 @@ function contains(outer: Rect4, inner: Rect4, slack: number): boolean {
   );
 }
 
-function overlaps(a: Rect4, b: Rect4): boolean {
+export function overlaps(a: Rect4, b: Rect4): boolean {
   return a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3];
 }
 
 // ---------------------------------------------------------------------------------------------
 // The page's lines, as MuPDF sees them
 
-interface PageChar {
+export interface PageChar {
   c: string;
   x: number;
   y: number;
   line: number;
 }
 
-interface PageLine {
+export interface PageLine {
   text: string;
   bbox: Rect4;
   wmode: number;
@@ -305,13 +306,13 @@ function rgb(color: readonly number[]): [number, number, number] {
 // ---------------------------------------------------------------------------------------------
 // Following the content stream
 
-interface Place {
+export interface Place {
   stream: number;
   start: number;
   end: number;
 }
 
-interface Glyph {
+export interface Glyph {
   op: ShowOp;
   code: number;
   text: string;
@@ -325,7 +326,7 @@ interface Glyph {
 }
 
 /** One step of a text-showing operator: a glyph, or a move in a TJ array. Each moves `tx`. */
-type Item = { glyph: Glyph; bytes: Uint8Array; tx: number } | { value: number; tx: number };
+export type Item = { glyph: Glyph; bytes: Uint8Array; tx: number } | { value: number; tx: number };
 
 interface Marked {
   begin: Place;
@@ -334,7 +335,7 @@ interface Marked {
   ops: ShowOp[];
 }
 
-interface ShowOp extends Place {
+export interface ShowOp extends Place {
   op: string;
   operands: Operand[];
   font: FontInfo | null;
@@ -347,6 +348,12 @@ interface ShowOp extends Place {
   tr: number;
   /** Text rendering matrix where the op starts drawing (after any line move), or null. */
   trm: Matrix6 | null;
+  /** The text line matrix where the op starts (after any line move), and how far along the line
+   * from it (in text space) the op starts drawing: the text matrix is that far along it. */
+  tlm: Matrix6;
+  lineX: number;
+  /** Text space to page space, without the text matrix (the CTM and the page's transform). */
+  device: Matrix6;
   /** How far it moves along the line, in text space. */
   advance: number;
   glyphs: Glyph[];
@@ -406,6 +413,14 @@ export interface PageAnalysis {
   problem: string | null;
   /** The page's font resources: name to BaseFont. */
   fontNames: Map<string, string>;
+  /** Every glyph the page's content draws, with the listed line it's part of (or -1). */
+  glyphs: Glyph[];
+  /** Boxes of what else is drawn (shapes, lines, images, form XObjects), and whether some were
+   * left out because there were too many. */
+  marks: Rect4[];
+  marksFull: boolean;
+  /** The page's paragraphs, worked out when first asked for (paragraphs.ts). */
+  paragraphs?: unknown;
 }
 
 /** Read a page's text and work out which lines can be edited. */
@@ -428,6 +443,9 @@ export function analysePage(pdf: mupdf.PDFDocument, index: number): PageAnalysis
       bounds,
       problem: null,
       fontNames: new Map(),
+      glyphs: [],
+      marks: [],
+      marksFull: false,
     };
     const fonts = resources.isDictionary() ? resources.get("Font") : null;
     if (fonts?.isDictionary()) {
@@ -457,6 +475,9 @@ export function analysePage(pdf: mupdf.PDFDocument, index: number): PageAnalysis
       analysis.lines = merged.lines;
       analysis.groupOf = merged.groupOf;
       for (const g of walk.glyphs) if (g.line >= 0) g.line = merged.groupOf[g.line] as number;
+      analysis.glyphs = walk.glyphs;
+      analysis.marks = [...walk.marks, ...walk.forms];
+      analysis.marksFull = walk.marksFull;
     }
     const lines = analysis.lines;
     for (let i = 0; i < lines.length; i++) {
@@ -468,6 +489,32 @@ export function analysePage(pdf: mupdf.PDFDocument, index: number): PageAnalysis
       analysis.infos.push(describeLine(line, i, bounds, verdict.reason, verdict.ops));
     }
     return analysis;
+  } finally {
+    page.destroy();
+  }
+}
+
+/**
+ * The glyphs a page's content draws now, from its operators alone (no MuPDF text), or null if
+ * the content can't be followed. Used to check an edit left every other glyph where it was.
+ */
+export function drawnGlyphs(pdf: mupdf.PDFDocument, index: number): Glyph[] | null {
+  const page = pdf.loadPage(index);
+  try {
+    const pageObj = pdf.findPage(index);
+    const resources = pageObj.getInheritable("Resources");
+    const walk = new Walk(
+      resources.isDictionary() ? resources : null,
+      page.getTransform() as Matrix6,
+    );
+    const streams = readStreams(pageObj);
+    for (const { operation, stream } of parseContentStreams(streams.map((s) => s.bytes))) {
+      walk.step(operation, stream);
+    }
+    return walk.glyphs;
+  } catch (err) {
+    if (err instanceof Unreadable || err instanceof ContentStreamError) return null;
+    throw err;
   } finally {
     page.destroy();
   }
@@ -507,6 +554,10 @@ class Walk {
   readonly glyphs: Glyph[] = [];
   /** Boxes (in page space) of form XObjects drawn on the page. */
   readonly forms: Rect4[] = [];
+  /** Boxes (in page space) of everything else drawn that isn't text: shapes, lines, images. */
+  readonly marks: Rect4[] = [];
+  /** Set when there were too many to keep. */
+  marksFull = false;
   private state: State = {
     ctm: IDENTITY,
     clip: null,
@@ -525,6 +576,8 @@ class Walk {
   private stack: State[] = [];
   private tm: Matrix6 = IDENTITY;
   private tlm: Matrix6 = IDENTITY;
+  /** How far the text matrix is along the line from the text line matrix, in text space. */
+  private lineX = 0;
   /** Whether the text matrix is known (it isn't after text in an unreadable font). */
   private tmKnown = true;
   private inText = false;
@@ -569,6 +622,7 @@ class Walk {
         this.inText = true;
         this.tm = IDENTITY;
         this.tlm = IDENTITY;
+        this.lineX = 0;
         this.tmKnown = true;
         this.clipInText = false;
         break;
@@ -618,6 +672,7 @@ class Walk {
         if (!finiteMatrix(m)) throw new Unreadable("");
         this.tm = m;
         this.tlm = m;
+        this.lineX = 0;
         this.tmKnown = true;
         break;
       }
@@ -678,6 +733,7 @@ class Walk {
       case "B*":
       case "b":
       case "b*":
+        if (op.op !== "n" && this.path && !this.pathBroken) this.mark(this.path);
         if (this.pendingClip) {
           // An unreadable path clips to who knows what: nothing under it is edited.
           s.clip = this.pathBroken || !this.path ? [0, 0, 0, 0] : intersect(s.clip, this.path);
@@ -708,15 +764,37 @@ class Walk {
       case "Do":
         this.drawObject(op);
         break;
+      case "BI":
+        this.mark(this.unitSquare(this.device()));
+        break;
+      case "sh":
+        this.mark(this.state.clip ?? [-1e9, -1e9, 1e9, 1e9]);
+        break;
       case "gs":
         this.graphicsState(op);
         break;
     }
   }
 
+  private mark(box: Rect4): void {
+    if (this.marks.length < MAX_MARKS) this.marks.push(box);
+    else this.marksFull = true;
+  }
+
+  private unitSquare(m: Matrix6): Rect4 {
+    const pts = [apply(m, 0, 0), apply(m, 1, 0), apply(m, 0, 1), apply(m, 1, 1)];
+    return [
+      Math.min(...pts.map((p) => p[0])),
+      Math.min(...pts.map((p) => p[1])),
+      Math.max(...pts.map((p) => p[0])),
+      Math.max(...pts.map((p) => p[1])),
+    ];
+  }
+
   private moveLine(tx: number, ty: number): void {
     this.tlm = mul([1, 0, 0, 1, tx, ty], this.tlm);
     this.tm = this.tlm;
+    this.lineX = 0;
     this.tmKnown = true;
   }
 
@@ -773,6 +851,10 @@ class Walk {
     const object = xobjects?.isDictionary() ? xobjects.get(name.value) : null;
     if (!object?.isStream()) return;
     const subtype = object.get("Subtype");
+    if (subtype.isName() && subtype.asName() === "Image") {
+      this.mark(this.unitSquare(this.device()));
+      return;
+    }
     if (!subtype.isName() || subtype.asName() !== "Form") return;
     const bbox = object.get("BBox");
     const matrix = object.get("Matrix");
@@ -848,6 +930,9 @@ class Walk {
       ts: s.ts,
       tr: s.tr,
       trm: null,
+      tlm: this.tlm,
+      lineX: this.lineX,
+      device: this.device(),
       advance: 0,
       glyphs: [],
       items: [],
@@ -906,6 +991,7 @@ class Walk {
 
   private advance(record: ShowOp, tx: number): void {
     this.tm = mul([1, 0, 0, 1, tx, 0], this.tm);
+    this.lineX += tx;
     record.advance += tx;
   }
 }
@@ -913,7 +999,7 @@ class Walk {
 // ---------------------------------------------------------------------------------------------
 // Matching glyphs to MuPDF's characters
 
-const MATCH_TOLERANCE = 0.25;
+export const MATCH_TOLERANCE = 0.25;
 
 function matchGlyphs(glyphs: Glyph[], lines: PageLine[]): void {
   const grid = new Map<string, PageChar[]>();
@@ -1064,9 +1150,9 @@ function mergeLines(raw: PageLine[], ops: ShowOp[]): { lines: PageLine[]; groupO
   return { lines, groupOf };
 }
 
-const CJK =
+export const CJK =
   /[\u1100-\u11ff\u2e80-\u9fff\ua960-\ua97f\uac00-\ud7ff\uf900-\ufaff\uff00-\uffef]|[\u{20000}-\u{3ffff}]/u;
-const RTL = /[\u0590-\u08ff\ufb1d-\ufdff\ufe70-\ufeff]/;
+export const RTL = /[\u0590-\u08ff\ufb1d-\ufdff\ufe70-\ufeff]/;
 
 /** Whether a line can be edited: null and its ops, or the reason it can't. */
 function judgeLine(
@@ -1188,7 +1274,7 @@ function mergeStyle(a: FontStyle, b: FontStyle): FontStyle {
  */
 type Piece = { font: number; codes: number[] } | { gap: number };
 
-interface Encoded {
+export interface Encoded {
   pieces: Piece[];
   /** Width along the line in text space, at the op's size and spacing. */
   advance: number;
@@ -1201,7 +1287,7 @@ interface Encoded {
 export interface EditPlan {
   check: TextEditCheck;
   /** Byte-range replacements per stream index. */
-  edits: Map<number, { start: number; end: number; text: string }[]>;
+  edits: EditMap;
   /** A standard font to add to the page's resources, under this name. */
   addFont: { name: string; font: StandardFont } | null;
 }
@@ -1227,17 +1313,84 @@ export function checkNewText(text: string): string {
  */
 export function planLineEdit(analysis: PageAnalysis, id: number, newText: string): EditPlan {
   const text = checkNewText(newText);
+  const setup = prepareLine(analysis, id);
+  const { ops, first, line, rotation, start } = setup;
+  const fonts = pickFonts(setup, text);
+  const encoded = encode(text, fonts.fonts, first, setup.spaceGap, setup.font.twoByte);
+
+  // Width and room, along the line in page space.
+  const width = Math.abs(encoded.advance * setup.unit);
+  const lineBox = rectToFrame(rotation, line.bbox);
+  let limit = rectToFrame(rotation, analysis.bounds)[2];
+  for (let i = 0; i < analysis.lines.length; i++) {
+    if (i === id) continue;
+    const other = rectToFrame(rotation, (analysis.lines[i] as PageLine).bbox);
+    const overlap = Math.min(other[3], lineBox[3]) - Math.max(other[1], lineBox[1]);
+    const smaller = Math.min(other[3] - other[1], lineBox[3] - lineBox[1]);
+    if (overlap > smaller / 2 && other[0] >= lineBox[2] - 1) limit = Math.min(limit, other[0]);
+  }
+  const room = Math.max(0, limit - start - 1);
+  const oldWidth = lineBox[2] - start;
+  const tooWide = width > room && width > oldWidth + 0.5;
+  checkClips(setup, width, oldWidth);
+
+  const keys = new Set(ops.map((op) => `${op.fontResource}@${op.fs}`));
+  const check: TextEditCheck = {
+    font: readableFontName(
+      encoded.usesOwn || !fonts.fallback ? setup.font.baseFont : fonts.fallback,
+    ),
+    fallback: fonts.fallback ? readableFontName(fonts.fallback) : null,
+    missing: fonts.missing,
+    tooWide,
+    mixedFonts: keys.size > 1,
+    width,
+    room,
+  };
+  const fontName = fonts.fallback ? freeFontName(analysis, fonts.fallback) : null;
+  const edits: EditMap = new Map();
+  lineReplacements(setup, encoded, fontName, edits);
+  return {
+    check,
+    edits: finishEdits(edits, [setup]),
+    addFont: fonts.fallback && fontName ? { name: fontName, font: fonts.fallback } : null,
+  };
+}
+
+/** Byte-range replacements, per stream index. */
+export type EditMap = Map<number, { start: number; end: number; text: string }[]>;
+
+/** What's known about an editable line, for rewriting it. */
+export interface LineSetup {
+  id: number;
+  line: PageLine;
+  /** The operators that draw it, and where its glyphs are in each one's items. */
+  ops: ShowOp[];
+  ranges: Map<ShowOp, [number, number]>;
+  /** The op with its first glyph, which draws the new text, and that op's font. */
+  first: ShowOp;
+  font: FontInfo;
+  trm: Matrix6;
+  rotation: number;
+  /** The first glyph's item in `first`. */
+  startItem: Item & { glyph: Glyph };
+  /** A space's width (thousandths of the font size), for fonts that leave a gap instead. */
+  spaceGap: number;
+  /** Page units per unit of text space along the line, at the first op. */
+  unit: number;
+  /** Where the line starts, along it (x in the line's frame). */
+  start: number;
+}
+
+/** Everything needed to rewrite an editable line. Throws (in plain words) if it can't be. */
+export function prepareLine(analysis: PageAnalysis, id: number): LineSetup {
   const info = analysis.infos[id];
   const ops = analysis.lineOps.get(id);
   if (!info || !ops || ops.length === 0)
     throw new Error(info?.reason ?? "That line isn't on the page");
   const line = analysis.lines[id] as PageLine;
-  const firstGlyph = firstGlyphOf(line, ops, id);
-  const first = firstGlyph.op;
-  const font = first.font as FontInfo;
+  const first = firstGlyphOf(line, ops, id).op;
   const trm = first.trm as Matrix6;
   const rotation = readingRotation(trm) ?? 0;
-
   const ranges = new Map<ShowOp, [number, number]>();
   for (const op of ops) {
     const range = rangeIn(op, id, line);
@@ -1252,92 +1405,103 @@ export function planLineEdit(analysis: PageAnalysis, id: number, newText: string
   const startItem = first.items[(ranges.get(first) as [number, number])[0]] as Item & {
     glyph: Glyph;
   };
+  return {
+    id,
+    line,
+    ops,
+    ranges,
+    first,
+    font: first.font as FontInfo,
+    trm,
+    rotation,
+    startItem,
+    spaceGap: estimateSpace(line, ops, id),
+    unit: Math.hypot(trm[0], trm[1]) / (first.fs * first.th),
+    start: toFrame(rotation, startItem.glyph.x, startItem.glyph.y)[0],
+  };
+}
 
-  // In the line's own font if it has every character. If not, in a standard font that looks
-  // like it: all of the line if the standard font has every character, else only the
-  // characters the line's font lacks.
-  const spaceGap = estimateSpace(line, ops, id);
+/** The fonts to write new text in, and the standard font standing in, if any. */
+export interface FontChoice {
+  fonts: [number, FontInfo][];
+  fallback: StandardFont | null;
+  /** The characters the line's own font doesn't have. */
+  missing: string[];
+}
+
+/**
+ * In the line's own font if it has every character. If not, in a standard font that looks like
+ * it: all of the text if the standard font has every character, else only the characters the
+ * line's font lacks. Throws if neither has some character.
+ */
+export function pickFonts(
+  setup: LineSetup,
+  text: string,
+  { mixFirst = false, where = "this line" } = {},
+): FontChoice {
+  const { font, first, spaceGap } = setup;
   const own = encode(text, [[0, font]], first, spaceGap, font.twoByte);
-  let encoded = own;
-  let fallback: StandardFont | null = null;
-  if (own.missing.length > 0) {
-    fallback = pickStandardFont(font, line, ops, id);
-    const standard = standardFontInfo(fallback);
-    encoded = encode(text, [[1, standard]], first, spaceGap, font.twoByte);
-    if (encoded.missing.length > 0)
-      encoded = encode(
-        text,
-        [
-          [0, font],
-          [1, standard],
-        ],
-        first,
-        spaceGap,
-        font.twoByte,
-      );
-    if (encoded.missing.length > 0) {
-      throw new Error(
-        `${quoteList(encoded.missing)} can't be written in this line: neither its font nor the standard fonts have ${
-          encoded.missing.length === 1 ? "it" : "them"
-        }.`,
-      );
-    }
+  if (own.missing.length === 0) return { fonts: [[0, font]], fallback: null, missing: [] };
+  const fallback = pickStandardFont(font, setup.line, setup.ops, setup.id);
+  const standard = standardFontInfo(fallback);
+  // A paragraph keeps its own font for the characters it has (mixFirst).
+  let fonts: [number, FontInfo][] = mixFirst
+    ? [
+        [0, font],
+        [1, standard],
+      ]
+    : [[1, standard]];
+  let encoded = encode(text, fonts, first, spaceGap, font.twoByte);
+  if (encoded.missing.length > 0 && !mixFirst) {
+    fonts = [
+      [0, font],
+      [1, standard],
+    ];
+    encoded = encode(text, fonts, first, spaceGap, font.twoByte);
   }
+  if (encoded.missing.length > 0) {
+    throw new Error(
+      `${quoteList(encoded.missing)} can't be written in ${where}: neither its font nor the standard fonts have ${
+        encoded.missing.length === 1 ? "it" : "them"
+      }.`,
+    );
+  }
+  return { fonts, fallback, missing: own.missing };
+}
 
-  // Width and room, along the line in page space.
-  const unit = Math.hypot(trm[0], trm[1]) / (first.fs * first.th);
-  const width = Math.abs(encoded.advance * unit);
-  const start = toFrame(rotation, startItem.glyph.x, startItem.glyph.y)[0];
-  const lineBox = rectToFrame(rotation, line.bbox);
-  let limit = rectToFrame(rotation, analysis.bounds)[2];
-  for (let i = 0; i < analysis.lines.length; i++) {
-    if (i === id) continue;
-    const other = rectToFrame(rotation, (analysis.lines[i] as PageLine).bbox);
-    const overlap = Math.min(other[3], lineBox[3]) - Math.max(other[1], lineBox[1]);
-    const smaller = Math.min(other[3] - other[1], lineBox[3] - lineBox[1]);
-    if (overlap > smaller / 2 && other[0] >= lineBox[2] - 1) limit = Math.min(limit, other[0]);
-  }
-  const room = Math.max(0, limit - start - 1);
-  const oldWidth = lineBox[2] - start;
-  const tooWide = width > room && width > oldWidth + 0.5;
+/** Refuse new text that would be cut off by a clipping area. */
+export function checkClips(setup: LineSetup, width: number, oldWidth: number): void {
   // Under a clipping shape that isn't an upright rectangle, only its bounding box is known, and
   // longer text could go where the shape hides it: refused.
-  if (ops.some((op) => op.clipShaped) && width > oldWidth + 0.5) {
+  if (setup.ops.some((op) => op.clipShaped) && width > oldWidth + 0.5) {
     throw new Error(
       "This line is inside a shaped area that hides what's outside it, so the new text can't be longer than the old.",
     );
   }
   // Past the edge of a clipping area, the end of the text would be cut off: refused.
-  if (first.clip) {
-    const edge = rectToFrame(rotation, first.clip)[2];
-    if (start + width > edge + 0.5 && width > oldWidth + 0.5) {
+  if (setup.first.clip) {
+    const edge = rectToFrame(setup.rotation, setup.first.clip)[2];
+    if (setup.start + width > edge + 0.5 && width > oldWidth + 0.5) {
       throw new Error(
         "The new text is too long for the space this line is in: its end would be hidden. Try something shorter.",
       );
     }
   }
+}
 
-  const keys = new Set(ops.map((op) => `${op.fontResource}@${op.fs}`));
-  const check: TextEditCheck = {
-    font: readableFontName(encoded.usesOwn || !fallback ? font.baseFont : fallback),
-    fallback: fallback ? readableFontName(fallback) : null,
-    missing: own.missing,
-    tooWide,
-    mixedFonts: keys.size > 1,
-    width,
-    room,
-  };
-
-  // The replacements.
-  const edits = new Map<number, { start: number; end: number; text: string }[]>();
-  const add = (place: Place, replacement: string) => {
-    const list = edits.get(place.stream) ?? [];
-    list.push({ start: place.start, end: place.end, text: replacement });
-    edits.set(place.stream, list);
-  };
-  const fontName = fallback ? freeFontName(analysis, fallback) : null;
-  for (const op of ops) {
-    const [from, to] = ranges.get(op) as [number, number];
+/**
+ * The replacements that redraw a line with encoded text. `tail` is drawn straight after the new
+ * text in the first op (more lines of a paragraph), and must leave the text state as it found it.
+ */
+export function lineReplacements(
+  setup: LineSetup,
+  encoded: Pick<Encoded, "pieces" | "advance">,
+  standardName: string | null,
+  edits: EditMap,
+  tail = "",
+): void {
+  for (const op of setup.ops) {
+    const [from, to] = setup.ranges.get(op) as [number, number];
     // Before and after the line, the op's own glyphs and moves are kept as they were.
     const before = showItems(op.items.slice(0, from));
     const after = op.items.slice(to + 1);
@@ -1348,8 +1512,8 @@ export function planLineEdit(analysis: PageAnalysis, id: number, newText: string
     if (prefix) parts.push(prefix);
     if (before) parts.push(`[${before}] TJ`);
     let advance = 0;
-    if (op === first) {
-      parts.push(...drawRuns(encoded.pieces, op, font, fontName));
+    if (op === setup.first) {
+      parts.push(...drawRuns(encoded.pieces, op, setup.font, standardName));
       advance = encoded.advance;
     }
     // A move the length of what's gone, so whatever comes next stays where it was.
@@ -1358,21 +1522,36 @@ export function planLineEdit(analysis: PageAnalysis, id: number, newText: string
       .filter(Boolean)
       .join(" ");
     if (rest) parts.push(`[${rest}] TJ`);
-    add(op, parts.join(" "));
+    if (op === setup.first && tail) parts.push(tail);
+    addEdit(edits, op, parts.join(" "));
   }
-  // Marked content giving the old text as "actual text" would still read as the old words.
+}
+
+export function addEdit(edits: EditMap, place: Place, text: string): void {
+  const list = edits.get(place.stream) ?? [];
+  list.push({ start: place.start, end: place.end, text });
+  edits.set(place.stream, list);
+}
+
+/**
+ * Drop marked content giving the old text of rewritten lines as "actual text" (it would still
+ * read as the old words), sort the replacements and refuse overlapping ones.
+ */
+export function finishEdits(edits: EditMap, setups: LineSetup[]): EditMap {
+  const ranges = new Map<ShowOp, [number, number]>();
+  for (const s of setups) for (const [op, r] of s.ranges) ranges.set(op, r);
+  const whole = (o: ShowOp) => {
+    const r = ranges.get(o);
+    return r !== undefined && r[0] === 0 && r[1] === o.items.length - 1;
+  };
   const seen = new Set<Marked>();
-  for (const op of ops) {
+  for (const op of ranges.keys()) {
     for (const m of op.marked) {
       if (seen.has(m) || !m.actualText || !m.end) continue;
       seen.add(m);
-      const whole = (o: ShowOp) => {
-        const r = ranges.get(o);
-        return r !== undefined && r[0] === 0 && r[1] === o.items.length - 1;
-      };
       if (m.ops.every(whole)) {
-        add(m.begin, "");
-        add(m.end, "");
+        addEdit(edits, m.begin, "");
+        addEdit(edits, m.end, "");
       }
     }
   }
@@ -1380,18 +1559,14 @@ export function planLineEdit(analysis: PageAnalysis, id: number, newText: string
     list.sort((a, b) => a.start - b.start);
     for (let i = 1; i < list.length; i++) {
       if ((list[i] as { start: number }).start < (list[i - 1] as { end: number }).end) {
-        throw new Error("This line's drawing instructions overlap, so it can't be edited safely.");
+        throw new Error("This text's drawing instructions overlap, so it can't be edited safely.");
       }
     }
   }
-  return {
-    check,
-    edits,
-    addFont: fallback && fontName ? { name: fontName, font: fallback } : null,
-  };
+  return edits;
 }
 
-function firstGlyphOf(line: PageLine, ops: ShowOp[], id: number): Glyph {
+export function firstGlyphOf(line: PageLine, ops: ShowOp[], id: number): Glyph {
   // The glyph drawing the line's first character; the new text starts where its op starts.
   const all = ops.flatMap((op) => op.glyphs.filter((g) => g.line === id));
   for (const ch of line.chars) {
@@ -1455,19 +1630,36 @@ function showPieces(pieces: Piece[], twoByte: boolean): string {
  * spacing when the line's own font showed it (a simple font); when the line's font is a
  * two-byte one, where Tw never applied, it's turned off for the standard font (drawRuns).
  */
-function encode(
+export function encode(
   text: string,
   fonts: [number, FontInfo][],
   op: Pick<ShowOp, "fs" | "tc" | "tw" | "th">,
   spaceGap: number,
   ownTwoByte: boolean,
+  extra: { lead?: number; space?: number } = {},
 ): Encoded {
   const pieces: Piece[] = [];
   const missing: string[] = [];
   let advance = 0;
   let usesOwn = false;
+  // A move before the text (to align it) and after each space (to justify it), in thousandths
+  // of the font size.
+  const gap = (value: number) => {
+    if (Math.abs(value) < 1e-3) return;
+    const last = pieces[pieces.length - 1];
+    if (last && "gap" in last) last.gap += value;
+    else pieces.push({ gap: value });
+    advance += (value / 1000) * op.fs * op.th;
+  };
+  gap(extra.lead ?? 0);
   for (const ch of text) {
     const normal = ch === "\u00a0" ? " " : ch;
+    encodeChar(ch, normal);
+    if (normal === " " && extra.space) gap(extra.space);
+  }
+  return { pieces, advance, missing, usesOwn };
+
+  function encodeChar(ch: string, normal: string): void {
     let font = -1;
     let info: FontInfo | null = null;
     let code: number | null = null;
@@ -1481,12 +1673,11 @@ function encode(
     }
     if (code === null || !info) {
       if (normal === " ") {
-        pieces.push({ gap: spaceGap });
-        advance += (spaceGap / 1000) * op.fs * op.th;
+        gap(spaceGap);
       } else if (!missing.includes(ch)) {
         missing.push(ch);
       }
-      continue;
+      return;
     }
     if (font === 0) usesOwn = true;
     const last = pieces[pieces.length - 1];
@@ -1496,14 +1687,13 @@ function encode(
     const tw = !info.twoByte && code === 32 && !(font === 1 && ownTwoByte) ? op.tw : 0;
     advance += ((info.width(code) / 1000) * op.fs + op.tc + tw) * op.th;
   }
-  return { pieces, advance, missing, usesOwn };
 }
 
 /**
  * The operators that draw encoded text: TJ arrays, switching to the standard font (and back)
  * where it's used. Word spacing is turned off while the standard font is in use.
  */
-function drawRuns(
+export function drawRuns(
   pieces: Piece[],
   op: ShowOp,
   own: FontInfo,
@@ -1593,7 +1783,7 @@ function pickStandardFont(font: FontInfo, line: PageLine, ops: ShowOp[], id: num
 }
 
 /** A resource name for a standard font: ours if the page has it already, else one not in use. */
-function freeFontName(analysis: PageAnalysis, font: StandardFont): string {
+export function freeFontName(analysis: PageAnalysis, font: StandardFont): string {
   const base = `PdfoStd${font.replace(/[^A-Za-z]/g, "")}`;
   let name = base;
   for (let i = 2; analysis.fontNames.has(name) && analysis.fontNames.get(name) !== font; i++) {
@@ -1602,7 +1792,7 @@ function freeFontName(analysis: PageAnalysis, font: StandardFont): string {
   return name;
 }
 
-function quoteList(chars: string[]): string {
+export function quoteList(chars: string[]): string {
   const q = chars.map((c) => `“${c}”`);
   if (q.length === 1) return q[0] as string;
   return `${q.slice(0, -1).join(", ")} and ${q[q.length - 1]}`;
@@ -1623,7 +1813,7 @@ export function makeEdit(
   pdf: mupdf.PDFDocument,
   index: number,
   analysis: PageAnalysis,
-  plan: EditPlan,
+  plan: Pick<EditPlan, "edits" | "addFont">,
 ): MadeEdit {
   const pageObj = pdf.findPage(index);
   const created: mupdf.PDFObject[] = [];

@@ -7,15 +7,19 @@ import { Modal } from "../ui/Dialogs";
 
 export function TextEditConfirm({
   warnings,
+  title = "Change this line?",
+  applyLabel = "Change it",
   onApply,
   onCancel,
 }: {
   warnings: string[];
+  title?: string;
+  applyLabel?: string;
   onApply(): void;
   onCancel(): void;
 }) {
   return (
-    <Modal title="Change this line?" onClose={onCancel}>
+    <Modal title={title} onClose={onCancel}>
       {warnings.map((w) => (
         <p key={w}>{w}</p>
       ))}
@@ -25,7 +29,7 @@ export function TextEditConfirm({
           Keep editing
         </button>
         <button type="button" className="button" onClick={onApply}>
-          Change it
+          {applyLabel}
         </button>
       </div>
     </Modal>
@@ -37,8 +41,13 @@ export function TextEditHelp({ onClose }: { onClose(): void }) {
     <Modal title="Editing text" onClose={onClose}>
       <p>
         Click a line of text to change it, then press <kbd>Enter</kbd> to apply or <kbd>Esc</kbd> to
-        cancel. One line at a time: the new text starts where the line did, in the same font, size
-        and colour. Nothing else on the page moves.
+        cancel. The new text starts where the line did, in the same font, size and colour.
+      </p>
+      <p>
+        <strong>A whole paragraph:</strong> click one of its lines, then{" "}
+        <strong>Edit paragraph</strong>. The text flows from line to line inside the paragraph,
+        lined up as it was; <kbd>Ctrl</kbd>+<kbd>Enter</kbd> applies. If it no longer fits, you're
+        asked first, as the extra lines would overlap what's below. Nothing else on the page moves.
       </p>
       <p>
         <strong>Lines with a purple box</strong> can be edited. Lines with a grey dashed box can't;
@@ -46,7 +55,10 @@ export function TextEditHelp({ onClose }: { onClose(): void }) {
       </p>
       <p>What can't be edited yet:</p>
       <ul className="pdfo-help-list">
-        <li>Whole paragraphs: text doesn't flow onto the next line.</li>
+        <li>
+          A paragraph in more than one font or size (a bold word, say) as a whole: edit it a line at
+          a time. Text flowing from one column to the next, and tables.
+        </li>
         <li>Chinese, Japanese and Korean text, right-to-left text, and vertical text.</li>
         <li>Slanted or mirrored text, and text that's partly hidden.</li>
         <li>

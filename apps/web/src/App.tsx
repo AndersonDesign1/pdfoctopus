@@ -26,6 +26,7 @@ import {
   isFatalEngineError,
   type LoadProgress,
   type NewFieldKind,
+  type ParagraphInfo,
   PasswordRequiredError,
   type PasswordSpec,
   PdfWorkerClient,
@@ -89,7 +90,7 @@ import {
 } from "./signatures/SignaturesPanel";
 import { TextEditConfirm, TextEditHelp } from "./textedit/TextEditDialogs";
 import { type TextDraft, TextEditLayer } from "./textedit/TextEditLayer";
-import { editWarnings } from "./textedit/warnings";
+import { editWarnings, paragraphWarnings } from "./textedit/warnings";
 import {
   type ChosenPdf,
   InsertPdfDialog,
@@ -359,6 +360,8 @@ export function App() {
   /** Warnings before a line of text is changed, waiting for the user's answer. */
   const [textConfirm, setTextConfirm] = useState<{
     warnings: string[];
+    title?: string;
+    applyLabel?: string;
     answer(apply: boolean): void;
   } | null>(null);
   /** Whether the user has been told, for this file, that editing text shows on its signatures. */
@@ -1106,7 +1109,7 @@ export function App() {
     setFormTool(undefined);
     setEditingText(true);
     setStatus(
-      "Click a line of text to change it. Grey dashed lines can't be edited: click one to see why. Press Escape when you're done.",
+      "Click a line of text to change it; for a whole paragraph, click one of its lines, then Edit paragraph. Grey dashed lines can't be edited: click one to see why. Press Escape when you're done.",
     );
   }
 
@@ -1141,6 +1144,56 @@ export function App() {
           ? ` It's in ${fallback}.`
           : ` Some of it is in ${fallback}.`;
       applyEdit(result, `Changed the line.${font} Undo with Ctrl+Z.`);
+    });
+    return done;
+  }
+
+  /**
+   * Change a paragraph's text, flowing it over its lines: check it first, show any warnings
+   * (the text no longer fits, a stand-in font, a signed file), then make the change.
+   */
+  async function editParagraphText(
+    page: number,
+    paragraph: ParagraphInfo,
+    line: TextLineInfo,
+    text: string,
+    signed: boolean,
+  ) {
+    if (workingRef.current) return false;
+    let check: Awaited<ReturnType<PdfWorkerClient["checkParagraphEdit"]>>;
+    try {
+      check = await getClient().checkParagraphEdit(page, paragraph.id, paragraph.text, text);
+    } catch (err) {
+      reportError("change the paragraph", err);
+      return false;
+    }
+    const warnings = paragraphWarnings(check, signed && !signedWarned.current, line.font);
+    if (warnings.length > 0) {
+      const apply = await new Promise<boolean>((answer) =>
+        setTextConfirm({
+          warnings,
+          title: check.overflow ? "The new text doesn't fit" : "Change this paragraph?",
+          applyLabel: check.overflow ? "Apply anyway" : "Change it",
+          answer,
+        }),
+      );
+      setTextConfirm(null);
+      if (!apply) return false;
+      if (signed) signedWarned.current = true;
+    }
+    let done = false;
+    await runTask("change the paragraph", async (pdf) => {
+      const result = await pdf.editParagraph(page, paragraph.id, paragraph.text, text);
+      done = true;
+      const { lines, oldLines, overflow, fallback } = result.check;
+      const shape =
+        lines === oldLines
+          ? ""
+          : lines < oldLines
+            ? ` It takes ${lines} ${lines === 1 ? "line" : "lines"} now, not ${oldLines}.`
+            : ` It takes ${lines} lines now, not ${oldLines}${overflow ? ", and overlaps what's below" : ""}.`;
+      const font = fallback ? ` Some of it is in ${fallback}.` : "";
+      applyEdit(result, `Changed the paragraph.${shape}${font} Undo with Ctrl+Z.`);
     });
     return done;
   }
@@ -2451,7 +2504,7 @@ export function App() {
               className="tool"
               disabled={locked}
               aria-pressed={editingText}
-              title="Change a line of text in the document"
+              title="Change text in the document: a line, or a whole paragraph"
               onClick={pickEditText}
             >
               Edit text
@@ -2694,7 +2747,10 @@ export function App() {
                         setTextDraft(draft ? { ...draft, page: index } : null)
                       }
                       onEdit={(line, text, signed) => editText(index, line, text, signed)}
-                      onExplain={(line) => setStatus(line.reason ?? "This line can't be edited.")}
+                      onEditParagraph={(paragraph, line, text, signed) =>
+                        editParagraphText(index, paragraph, line, text, signed)
+                      }
+                      onExplain={(reason) => setStatus(reason ?? "This text can't be edited.")}
                     />
                   );
                 }
@@ -2919,6 +2975,8 @@ export function App() {
       {textConfirm && (
         <TextEditConfirm
           warnings={textConfirm.warnings}
+          title={textConfirm.title}
+          applyLabel={textConfirm.applyLabel}
           onApply={() => textConfirm.answer(true)}
           onCancel={() => textConfirm.answer(false)}
         />

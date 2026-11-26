@@ -5,3 +5,6 @@
 
 /** The longest new text for one line, in characters. */
 export const MAX_LINE_TEXT = 1000;
+
+/** The longest new text for a paragraph, in characters. */
+export const MAX_PARAGRAPH_TEXT = 10_000;

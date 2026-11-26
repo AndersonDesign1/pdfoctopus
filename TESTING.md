@@ -33,6 +33,10 @@ Decided (no action needed):
   the timestamp option switched off with a note, and timestamps work in the desktop app only.
   Running our own relay for the web app would mean sending the hash through our server; not
   done unless you ask for it.
+- (2026-11-26) **Paragraphs that no longer fit**: the default is to warn and let the user
+  apply anyway (the extra lines overlap what's below), never to move other content. Lines
+  that would run off the page are refused. A paragraph with a bold word can only be edited a
+  line at a time for now.
 - (2026-11-26) **Stand-in font for edited text**: when a line's embedded font lacks a
   character, the standard Helvetica, Times or Courier is used, not embedded (every PDF reader
   has them, and the file stays small). A PDF/A file edited that way is no longer strictly PDF/A;
@@ -484,6 +488,36 @@ Open `fixtures/generated/invoice.pdf`, then **Edit text** (start of the Annotate
 - [ ] A rotated page (rotate it first): its lines can still be edited, and the text box is
       turned the same way
 - [ ] **Phone:** tapping a line opens the text box; the on-screen keyboard's Enter applies it
+
+## Phase 6: paragraph reflow
+
+Open `fixtures/generated/contract-libreoffice.pdf`, then **Edit text** (start of the Annotate
+row).
+
+- [ ] Click a line of "The Provider will deliver…" (under "1. Services"): **Edit paragraph**
+      appears above it; click it and a box covers the whole paragraph with its text
+- [ ] Shorten it to two sentences and press **Ctrl+Enter**: it now takes fewer lines, from the
+      same left edge, justified to the same right edge (except the last line), and nothing else
+      on the page moves; the space left is blank
+- [ ] Make it a little longer (one more line): it takes the room above "2. Term", same spacing
+- [ ] Paste the paragraph in twice: a dialog says it needs more lines than fit and that the
+      last ones will overlap what's below; **Keep editing** goes back, **Apply anyway** applies
+      it (the text runs over "2. Term")
+- [ ] Type a line break in the box: the text after it starts a new line
+- [ ] **Esc** or **Cancel** in the box: nothing changes
+- [ ] The opening paragraph (with "Fabrikam Consulting LLC" in bold): **Edit paragraph** is grey;
+      clicking it says the paragraph mixes fonts; its lines can still be edited one at a time
+- [ ] Undo (Ctrl+Z) and redo (Ctrl+Y) each paragraph edit
+- [ ] Save, reopen: the new text is there, and **Adobe Acrobat Reader**, **Chrome/Edge** and
+      **Firefox** show the same; selecting or searching the new text finds it
+- [ ] `contract-chromium.pdf`: the same on a paragraph there (its letters are placed one by one)
+- [ ] `third-party/py-pdf/026-latex-multicolumn_multicolumn.pdf`: a paragraph in each column is
+      edited on its own; the other column doesn't move (the TeX fonts lack most letters, so a
+      warning says Helvetica will be used)
+- [ ] `invoice.pdf`: table rows and headings aren't offered as paragraphs; the dates block on
+      the right stays lined up on the right when edited
+- [ ] **?** next to Edit text explains paragraphs too
+- [ ] **Phone:** tapping a line, then **Edit paragraph**, opens the box; **Apply** applies it
 
 ## Problems found
 
