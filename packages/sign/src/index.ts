@@ -5,11 +5,12 @@
 // digital ID and makes the CMS / PKCS #7 signature with PKI.js and WebCrypto. Everything runs
 // on the user's device: the file, the password and the key never leave it.
 
-import { padesSignature, sha256 } from "./cms";
+import type * as pkijs from "pkijs";
+import { padesSignature, sha256, type TimestampOptions } from "./cms";
 import type { SigningIdentity } from "./p12";
 import { type CryptoCheck, verifySignature } from "./verify";
 
-export { padesSignature, sha256 } from "./cms";
+export { padesSignature, sha256, type TimestampOptions } from "./cms";
 export {
   DigitalIdError,
   displayName,
@@ -18,6 +19,15 @@ export {
   loadDigitalId,
   type SigningIdentity,
 } from "./p12";
+export {
+  fetchTransport,
+  requestTimestamp,
+  TIMESTAMP_SERVERS,
+  TimestampError,
+  type TimestampServer,
+  type TimestampTransport,
+} from "./timestamp";
+export { TSA_ROOTS_PEM, tsaRoots } from "./tsaRoots";
 
 export type SignatureLevel = "B-B" | "B-T";
 
@@ -38,22 +48,57 @@ export function rangeBytes(bytes: Uint8Array, range: ByteRange): Uint8Array {
   return out;
 }
 
+/** Room for a timestamp token: real ones (with the server's certificates) are 5 to 7 KB. */
+export const TIMESTAMP_ROOM = 12_288;
+
+/** The most room a signature can have (MAX_SIGNATURE_SIZE in packages/core). */
+const MAX_ROOM = 262_144;
+
 /**
  * Bytes to set aside in the PDF for a signature made with this identity: its certificates,
- * plus room for the signature and signed attributes, rounded up, and at least 16 KB.
+ * plus room for the signature and signed attributes (and a timestamp, if wanted), rounded up,
+ * and at least 16 KB.
  */
-export function signatureSizeFor(identity: SigningIdentity): number {
+export function signatureSizeFor(identity: SigningIdentity, timestamped = false): number {
   const certificates = [identity.signer, ...identity.chain].reduce((n, c) => n + c.der.length, 0);
-  return Math.max(16_384, Math.ceil((certificates + 8_192) / 1024) * 1024);
+  const extra = timestamped ? TIMESTAMP_ROOM : 0;
+  return Math.max(16_384, Math.ceil((certificates + 8_192 + extra) / 1024) * 1024);
 }
 
-/** Sign a prepared PDF: hash its byte range and make the PAdES B-B signature (DER). */
+/**
+ * Sign a prepared PDF: hash its byte range and make the PAdES signature (DER): B-B, or B-T
+ * with `timestamp`.
+ */
 export async function signPdfBytes(
   identity: SigningIdentity,
   bytes: Uint8Array,
   range: ByteRange,
+  timestamp?: TimestampOptions,
 ): Promise<Uint8Array> {
-  return padesSignature(identity, await sha256(rangeBytes(bytes, range)));
+  return padesSignature(identity, await sha256(rangeBytes(bytes, range)), timestamp);
+}
+
+/**
+ * Prepare a PDF for signing with room for the signature, and sign it. `prepare` saves the
+ * file with `size` bytes set aside (packages/core's prepareSignature). If the signature turns
+ * out bigger than that (a timestamp server sent more certificates than usual), the file is
+ * prepared again with more room and signed again. Returns the signature for finishSignature.
+ */
+export async function signWithRoom(
+  identity: SigningIdentity,
+  prepare: (size: number) => Promise<{ bytes: Uint8Array; byteRange: ByteRange }>,
+  timestamp?: TimestampOptions,
+): Promise<Uint8Array> {
+  let size = signatureSizeFor(identity, !!timestamp);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const prepared = await prepare(size);
+    const signature = await signPdfBytes(identity, prepared.bytes, prepared.byteRange, timestamp);
+    if (signature.length <= size) return signature;
+    const needed = Math.ceil((signature.length + 4096) / 1024) * 1024;
+    if (needed > MAX_ROOM) break;
+    size = needed;
+  }
+  throw new Error("The signature is too big to fit in the file.");
 }
 
 export { type CertificateInfo, type CryptoCheck, verifySignature } from "./verify";
@@ -81,6 +126,8 @@ export type SignatureStatus = "intact" | "changed" | "broken" | "unknown";
 export async function checkSignatures<T extends SignatureInput>(
   file: Uint8Array,
   signatures: readonly T[],
+  /** The roots a timestamp must chain to, to be trusted: the bundled ones, unless testing. */
+  timestampRoots?: pkijs.Certificate[],
 ): Promise<(T & { check: CryptoCheck; status: SignatureStatus })[]> {
   const out: (T & { check: CryptoCheck; status: SignatureStatus })[] = [];
   for (const signature of signatures) {
@@ -92,6 +139,7 @@ export async function checkSignatures<T extends SignatureInput>(
             signature.contents,
             signature.subFilter,
             signature.time,
+            timestampRoots,
           )
         : {
             intact: false,

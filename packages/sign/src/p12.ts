@@ -1,12 +1,26 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// Reading a digital ID from a .p12 / .pfx file (PKCS #12) with PKI.js and WebCrypto. The
-// private key is imported into WebCrypto as non-extractable, for signing only, and our copy
-// of the decrypted key bytes is wiped once imported (as far as JavaScript allows: PKI.js's own
-// objects are left to the garbage collector). Nothing is stored or sent anywhere.
+// Reading a digital ID from a .p12 / .pfx file (PKCS #12) with PKI.js and WebCrypto. Files
+// encrypted with AES (PBES2) are decrypted by PKI.js; older ones with 3DES or RC2, which
+// WebCrypto can't do, by our own code (pkcs12Pbe.ts). The file's integrity check is ours too.
+// The private key is imported into WebCrypto as non-extractable, for signing only, and our
+// copies of the decrypted key bytes and of the password are wiped once used (as far as
+// JavaScript allows: PKI.js's own objects are left to the garbage collector). Nothing is
+// stored or sent anywhere.
 
 import * as asn1js from "asn1js";
 import * as pkijs from "pkijs";
+import { BadPaddingError } from "./legacyCiphers";
+import {
+  bmpPassword,
+  checkPkcs12Mac,
+  LEGACY_PBE,
+  legacyPbeDecrypt,
+  MAX_ITERATIONS,
+  macHashName,
+  type PbeParams,
+  UnsupportedPbeError,
+} from "./pkcs12Pbe";
 
 /** A certificate and its DER encoding, exactly as it was in the file. */
 export interface LoadedCertificate {
@@ -65,10 +79,14 @@ const CURVES: Record<string, string> = {
   "1.3.132.0.35": "P-521",
 };
 
-const OLD_ENCRYPTION =
-  "This file uses old encryption (3DES or RC2) that browsers can't decrypt. Export it again " +
-  "with AES-256 encryption (in Windows: tick “AES256-SHA256” when exporting; with OpenSSL 3, " +
-  "the default), then try again.";
+const UNSUPPORTED_ENCRYPTION =
+  "This file uses an encryption method that isn't supported. Export it again with AES-256 " +
+  "encryption (in Windows: tick “AES256-SHA256” when exporting; with OpenSSL 3, the default), " +
+  "then try again.";
+
+const WRONG_PASSWORD = "The password is wrong.";
+
+const NOT_P12 = "This isn't a .p12 or .pfx file.";
 
 /** Make sure PKI.js uses this environment's WebCrypto (the browser's, or Node's in tests). */
 function engine(): pkijs.ICryptoEngine {
@@ -105,25 +123,91 @@ function keyUsageAllowsSigning(cert: pkijs.Certificate): boolean {
   return (first & 0xc0) !== 0;
 }
 
-function encryptionOf(content: pkijs.ContentInfo): string | null {
-  if (content.contentType !== OID.encryptedData) return null;
-  // From a copy: PKI.js changes the schema objects it reads, so they can't be read twice.
-  const copy = asn1js.fromBER((content.content as asn1js.BaseBlock).toBER(false)).result;
-  const encrypted = new pkijs.EncryptedData({ schema: copy });
-  return encrypted.encryptedContentInfo.contentEncryptionAlgorithm.algorithmId;
+/** The bytes of an OCTET STRING, joined up if it's in pieces (BER). */
+function octets(value: unknown): Uint8Array {
+  if (!(value instanceof asn1js.OctetString)) throw new Error("Not an OCTET STRING");
+  return new Uint8Array(value.getValue());
 }
 
-/** Turn PKI.js's errors into ones a person can act on. */
-function explain(err: unknown, algorithm: string | null): DigitalIdError {
-  if (err instanceof DigitalIdError) return err;
-  if (algorithm && algorithm !== OID.pbes2)
-    return new DigitalIdError(OLD_ENCRYPTION, "unsupported");
-  const message = err instanceof Error ? err.message : String(err);
-  if (/Unknown "contentEncryptionAlgorithm"|Unsupported|not supported/i.test(message)) {
-    return new DigitalIdError(OLD_ENCRYPTION, "unsupported");
+/** The salt and rounds of an old PKCS #12 PBE scheme: SEQUENCE { OCTET STRING, INTEGER }. */
+function pbeParams(algorithm: pkijs.AlgorithmIdentifier): PbeParams {
+  const params = algorithm.algorithmParams;
+  const [salt, rounds] = params instanceof asn1js.Sequence ? params.valueBlock.value : [];
+  if (!(salt instanceof asn1js.OctetString) || !(rounds instanceof asn1js.Integer)) {
+    throw new DigitalIdError("This file's encryption settings can't be read.", "unsupported");
   }
-  // A wrong password fails the integrity check, or (without one) the decryption.
-  return new DigitalIdError("The password is wrong.", "password");
+  const iterations = rounds.valueBlock.valueDec;
+  if (!Number.isSafeInteger(iterations) || iterations < 1 || iterations > MAX_ITERATIONS) {
+    throw new DigitalIdError(UNSUPPORTED_ENCRYPTION, "unsupported");
+  }
+  return { salt: new Uint8Array(salt.valueBlock.valueHexView), iterations };
+}
+
+/** The password as each kind of encryption wants it. */
+interface Passwords {
+  /** UTF-8, for AES (PBES2), as OpenSSL and Windows use. */
+  utf8: ArrayBuffer;
+  /** UTF-16 with two zero bytes at the end, for the old schemes and the integrity check. */
+  bmp: Uint8Array;
+}
+
+/**
+ * Decrypt something encrypted with the password: with PKI.js for AES (PBES2), with our own
+ * code for the old 3DES and RC2 schemes. Throws DigitalIdError with a message to show.
+ */
+async function decryptWithPassword(
+  algorithm: pkijs.AlgorithmIdentifier,
+  data: Uint8Array,
+  passwords: Passwords,
+  pbes2: () => Promise<Uint8Array>,
+): Promise<Uint8Array> {
+  const oid = algorithm.algorithmId;
+  try {
+    if (oid === OID.pbes2) return await pbes2();
+    if (LEGACY_PBE[oid]) {
+      return await legacyPbeDecrypt(oid, pbeParams(algorithm), passwords.bmp, data);
+    }
+  } catch (err) {
+    if (err instanceof DigitalIdError) throw err;
+    if (err instanceof UnsupportedPbeError) {
+      throw new DigitalIdError(UNSUPPORTED_ENCRYPTION, "unsupported");
+    }
+    if (err instanceof BadPaddingError) throw new DigitalIdError(WRONG_PASSWORD, "password");
+    const message = err instanceof Error ? err.message : String(err);
+    if (/Unknown|Unsupported|not supported/i.test(message)) {
+      throw new DigitalIdError(UNSUPPORTED_ENCRYPTION, "unsupported");
+    }
+    // A wrong password makes AES decryption fail (when no integrity check said so first).
+    throw new DigitalIdError(WRONG_PASSWORD, "password");
+  }
+  // RC4, or something newer or stranger.
+  throw new DigitalIdError(UNSUPPORTED_ENCRYPTION, "unsupported");
+}
+
+/**
+ * Check the file's integrity (MacData): an HMAC keyed from the password with the PKCS #12
+ * derivation. A wrong password fails here. Returns false if it doesn't match.
+ */
+async function checkIntegrity(
+  pfx: pkijs.PFX,
+  content: Uint8Array,
+  passwords: Passwords,
+): Promise<boolean> {
+  const mac = pfx.macData;
+  if (!mac) return true;
+  const hashOid = mac.mac.digestAlgorithm.algorithmId;
+  if (!macHashName(hashOid)) throw new DigitalIdError(UNSUPPORTED_ENCRYPTION, "unsupported");
+  const iterations = mac.iterations ?? 1;
+  if (!Number.isSafeInteger(iterations) || iterations < 1 || iterations > MAX_ITERATIONS) {
+    throw new DigitalIdError(UNSUPPORTED_ENCRYPTION, "unsupported");
+  }
+  const salt = new Uint8Array(mac.macSalt.valueBlock.valueHexView);
+  const expected = new Uint8Array(mac.mac.digest.valueBlock.valueHexView);
+  const check = (password: Uint8Array) =>
+    checkPkcs12Mac(hashOid, password, salt, iterations, content, expected);
+  if (await check(passwords.bmp)) return true;
+  // With no password, some programs use nothing at all rather than two zero bytes.
+  return passwords.bmp.length === 2 && check(new Uint8Array(0));
 }
 
 /**
@@ -134,43 +218,90 @@ export async function loadDigitalId(file: Uint8Array, password: string): Promise
   const crypto = engine();
   const asn = asn1js.fromBER(file);
   let pfx: pkijs.PFX;
+  let content: Uint8Array;
   try {
     if (asn.offset === -1) throw new Error("not DER");
     pfx = new pkijs.PFX({ schema: asn.result });
-  } catch {
-    throw new DigitalIdError("This isn't a .p12 or .pfx file.", "not-p12");
-  }
-  // PKCS #12 passwords are text; PKI.js turns them into what each algorithm needs.
-  const secret = new TextEncoder().encode(password).buffer as ArrayBuffer;
-
-  let authenticated: pkijs.AuthenticatedSafe;
-  try {
-    await pfx.parseInternalValues({ password: secret, checkIntegrity: !!pfx.macData }, crypto);
-    const parsed = pfx.parsedValue?.authenticatedSafe;
-    if (!parsed) throw new Error("No contents");
-    authenticated = parsed;
-  } catch (err) {
-    throw explain(err, null);
-  }
-
-  const contents = authenticated.safeContents;
-  for (const c of contents) {
-    if (c.contentType !== OID.data && c.contentType !== OID.encryptedData) {
+    if (pfx.authSafe.contentType !== OID.data) {
       throw new DigitalIdError(
         "This file is protected with a certificate instead of a password, which isn't supported.",
         "unsupported",
       );
     }
-  }
-  let algorithm: string | null = null;
-  try {
-    for (const c of contents) algorithm = encryptionOf(c) ?? algorithm;
-    await authenticated.parseInternalValues(
-      { safeContents: contents.map(() => ({ password: secret })) },
-      crypto,
-    );
+    content = octets(pfx.authSafe.content);
   } catch (err) {
-    throw explain(err, algorithm);
+    if (err instanceof DigitalIdError) throw err;
+    throw new DigitalIdError(NOT_P12, "not-p12");
+  }
+  const passwords: Passwords = {
+    utf8: new TextEncoder().encode(password).buffer as ArrayBuffer,
+    bmp: bmpPassword(password),
+  };
+  try {
+    return await readDigitalId(crypto, pfx, content, passwords);
+  } finally {
+    new Uint8Array(passwords.utf8).fill(0);
+    passwords.bmp.fill(0);
+  }
+}
+
+async function readDigitalId(
+  crypto: pkijs.ICryptoEngine,
+  pfx: pkijs.PFX,
+  content: Uint8Array,
+  passwords: Passwords,
+): Promise<SigningIdentity> {
+  let intact: boolean;
+  try {
+    intact = await checkIntegrity(pfx, content, passwords);
+  } catch (err) {
+    if (err instanceof DigitalIdError) throw err;
+    throw new DigitalIdError(UNSUPPORTED_ENCRYPTION, "unsupported");
+  }
+  if (!intact) throw new DigitalIdError(WRONG_PASSWORD, "password");
+
+  let authenticated: pkijs.AuthenticatedSafe;
+  try {
+    authenticated = pkijs.AuthenticatedSafe.fromBER(content as Uint8Array<ArrayBuffer>);
+  } catch {
+    throw new DigitalIdError(NOT_P12, "not-p12");
+  }
+
+  const safes: pkijs.SafeContents[] = [];
+  for (const c of authenticated.safeContents) {
+    if (c.contentType === OID.data) {
+      try {
+        safes.push(pkijs.SafeContents.fromBER(octets(c.content) as Uint8Array<ArrayBuffer>));
+      } catch {
+        throw new DigitalIdError(NOT_P12, "not-p12");
+      }
+    } else if (c.contentType === OID.encryptedData) {
+      let encrypted: pkijs.EncryptedData;
+      let data: Uint8Array;
+      try {
+        encrypted = new pkijs.EncryptedData({ schema: c.content });
+        data = new Uint8Array(encrypted.encryptedContentInfo.getEncryptedContent());
+      } catch {
+        throw new DigitalIdError(NOT_P12, "not-p12");
+      }
+      const decrypted = await decryptWithPassword(
+        encrypted.encryptedContentInfo.contentEncryptionAlgorithm,
+        data,
+        passwords,
+        async () => new Uint8Array(await encrypted.decrypt({ password: passwords.utf8 }, crypto)),
+      );
+      try {
+        safes.push(pkijs.SafeContents.fromBER(decrypted as Uint8Array<ArrayBuffer>));
+      } catch {
+        // Decrypted into nonsense: a wrong password, in a file with no integrity check.
+        throw new DigitalIdError(WRONG_PASSWORD, "password");
+      }
+    } else {
+      throw new DigitalIdError(
+        "This file is protected with a certificate instead of a password, which isn't supported.",
+        "unsupported",
+      );
+    }
   }
 
   const certificates: (LoadedCertificate & { keyId: Uint8Array | null })[] = [];
@@ -180,8 +311,8 @@ export async function loadDigitalId(file: Uint8Array, password: string): Promise
     const value = attribute?.values[0];
     return value instanceof asn1js.OctetString ? view(value.valueBlock.valueHexView).slice() : null;
   };
-  for (const safe of authenticated.parsedValue?.safeContents ?? []) {
-    for (const bag of safe.value.safeBags) {
+  for (const safe of safes) {
+    for (const bag of safe.safeBags) {
       if (bag.bagId === OID.certBag) {
         const certBag = bag.bagValue as pkijs.CertBag;
         if (certBag.certId !== OID.x509Certificate) continue;
@@ -195,26 +326,10 @@ export async function loadDigitalId(file: Uint8Array, password: string): Promise
         });
       } else if (bag.bagId === OID.shroudedKeyBag || bag.bagId === OID.keyBag) {
         let info: pkijs.PrivateKeyInfo;
-        try {
-          if (bag.bagId === OID.shroudedKeyBag) {
-            const shrouded = bag.bagValue as pkijs.PKCS8ShroudedKeyBag;
-            const keyAlgorithm = shrouded.encryptionAlgorithm.algorithmId;
-            if (keyAlgorithm !== OID.pbes2) throw new DigitalIdError(OLD_ENCRYPTION, "unsupported");
-            // Public in PKI.js's code, but typed as protected.
-            const decrypt = shrouded as unknown as {
-              parseInternalValues(
-                p: { password: ArrayBuffer },
-                c: pkijs.ICryptoEngine,
-              ): Promise<void>;
-            };
-            await decrypt.parseInternalValues({ password: secret }, crypto);
-            if (!shrouded.parsedValue) throw new Error("No key");
-            info = shrouded.parsedValue;
-          } else {
-            info = bag.bagValue as pkijs.PrivateKeyInfo;
-          }
-        } catch (err) {
-          throw explain(err, null);
+        if (bag.bagId === OID.shroudedKeyBag) {
+          info = await decryptKeyBag(crypto, bag.bagValue as pkijs.PKCS8ShroudedKeyBag, passwords);
+        } else {
+          info = bag.bagValue as pkijs.PrivateKeyInfo;
         }
         keys.push({ info, der: view(info.toSchema().toBER(false)), keyId: keyIdOf(bag) });
       }
@@ -278,6 +393,43 @@ export async function loadDigitalId(file: Uint8Array, password: string): Promise
     notAfter: cert.notAfter.value,
     canSign: keyUsageAllowsSigning(cert),
   };
+}
+
+/** Decrypt a private key (PKCS #8, encrypted with the password). */
+async function decryptKeyBag(
+  crypto: pkijs.ICryptoEngine,
+  shrouded: pkijs.PKCS8ShroudedKeyBag,
+  passwords: Passwords,
+): Promise<pkijs.PrivateKeyInfo> {
+  // Public in PKI.js's code, but typed as protected.
+  const pki = shrouded as unknown as {
+    parseInternalValues(p: { password: ArrayBuffer }, c: pkijs.ICryptoEngine): Promise<void>;
+  };
+  let data: Uint8Array;
+  try {
+    data = octets(shrouded.encryptedData);
+  } catch {
+    throw new DigitalIdError(NOT_P12, "not-p12");
+  }
+  let parsed: pkijs.PrivateKeyInfo | undefined;
+  const decrypted = await decryptWithPassword(
+    shrouded.encryptionAlgorithm,
+    data,
+    passwords,
+    async () => {
+      await pki.parseInternalValues({ password: passwords.utf8 }, crypto);
+      if (!shrouded.parsedValue) throw new Error("No key");
+      parsed = shrouded.parsedValue;
+      return new Uint8Array(0);
+    },
+  );
+  try {
+    return parsed ?? pkijs.PrivateKeyInfo.fromBER(decrypted as Uint8Array<ArrayBuffer>);
+  } catch {
+    throw new DigitalIdError(WRONG_PASSWORD, "password");
+  } finally {
+    decrypted.fill(0);
+  }
 }
 
 /**

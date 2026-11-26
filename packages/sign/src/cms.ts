@@ -6,10 +6,23 @@
 // signature to the signer's certificate. There's no signingTime attribute: PAdES puts the
 // time in the signature dictionary's /M instead. The signer's certificate and the others
 // from the .p12 file (its chain) are included, so validators can build the chain.
+//
+// With a timestamp (PAdES B-T), the signature value's hash is sent to a timestamp server
+// once the signature is made, and the token it sends back is added as an unsigned attribute.
 
 import * as asn1js from "asn1js";
 import * as pkijs from "pkijs";
 import type { SigningIdentity } from "./p12";
+import { addTimestampToken, requestTimestamp, type TimestampTransport } from "./timestamp";
+
+/** How to get a timestamp for a signature (PAdES B-T), if one is wanted. */
+export interface TimestampOptions {
+  send: TimestampTransport;
+  /** The root certificates the server's certificate must chain to (tsaRoots.ts). */
+  roots: pkijs.Certificate[];
+  /** The server's name, for messages, e.g. "DigiCert's timestamp server". */
+  serverName?: string;
+}
 
 const OID = {
   data: "1.2.840.113549.1.7.1",
@@ -40,7 +53,7 @@ function compareBytes(a: Uint8Array, b: Uint8Array): number {
  * signingCertificateV2: the SHA-256 hash of the signer's certificate, with its issuer and
  * serial number. The hash algorithm is left out, as SHA-256 is the default.
  */
-async function signingCertificateV2(identity: SigningIdentity): Promise<asn1js.Sequence> {
+export async function signingCertificateV2(identity: SigningIdentity): Promise<asn1js.Sequence> {
   const cert = identity.signer.certificate;
   const hash = await sha256(identity.signer.der);
   const issuerSerial = new asn1js.Sequence({
@@ -65,11 +78,13 @@ async function signingCertificateV2(identity: SigningIdentity): Promise<asn1js.S
 
 /**
  * Make a PAdES B-B signature for a PDF: a DER-encoded CMS SignedData over `digest`, the
- * SHA-256 hash of the bytes in the signature's byte range.
+ * SHA-256 hash of the bytes in the signature's byte range. With `timestamp`, B-T: a trusted
+ * timestamp is added (throws TimestampError if it can't be).
  */
 export async function padesSignature(
   identity: SigningIdentity,
   digest: Uint8Array,
+  timestamp?: TimestampOptions,
 ): Promise<Uint8Array> {
   if (digest.length !== 32) throw new Error("The digest must be a SHA-256 hash");
   const cert = identity.signer.certificate;
@@ -109,6 +124,18 @@ export async function padesSignature(
     certificates: [cert, ...identity.chain.map((c) => c.certificate)],
   });
   await signedData.sign(identity.privateKey, 0, "SHA-256", undefined, engine());
+
+  if (timestamp) {
+    const signerInfo = signedData.signerInfos[0] as pkijs.SignerInfo;
+    const value = new Uint8Array(signerInfo.signature.valueBlock.valueHexView);
+    const token = await requestTimestamp(
+      value,
+      timestamp.send,
+      timestamp.roots,
+      timestamp.serverName,
+    );
+    addTimestampToken(signerInfo, token);
+  }
 
   const contentInfo = new pkijs.ContentInfo({
     contentType: pkijs.ContentInfo.SIGNED_DATA,
