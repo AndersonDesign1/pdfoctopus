@@ -73,8 +73,9 @@ export interface ParagraphEditCheck {
   fit: number;
   /** More lines than fit: the last ones will overlap what's below. */
   overflow: boolean;
-  /** A word is wider than the paragraph, so it sticks out on the right. */
-  tooWide: boolean;
+  /** A word (a long web address, say) is wider than the paragraph, so it was split across
+   * lines between letters. */
+  splitWords: boolean;
 }
 
 export interface ParagraphPlan extends Omit<EditPlan, "check"> {
@@ -551,32 +552,47 @@ export function planParagraphEdit(
         s.setup.unit,
     );
 
-  // Break the text into lines, a word at a time; a line break typed starts a new line.
+  // Break the text into lines, a word at a time; a line break typed starts a new line. A word
+  // too wide for a line of its own is split between letters.
   const lines: { text: string; end: boolean }[] = [];
-  let tooWide = false;
+  let splitWords = false;
+  const push = (t: string, end: boolean) => {
+    lines.push({ text: t, end });
+    if (lines.length > MAX_NEW_LINES) throw tooManyLines();
+  };
   for (const block of text.split("\n")) {
     const words = block.split(/[ \t\u00a0]+/).filter(Boolean);
     let current = "";
     for (const word of words) {
-      const s = slot(lines.length);
       const candidate = current ? `${current} ${word}` : word;
-      if (!current || measure(s, candidate) <= s.room + 0.5) {
+      if (measure(slot(lines.length), candidate) <= slot(lines.length).room + 0.5) {
         current = candidate;
         continue;
       }
-      lines.push({ text: current, end: false });
-      if (lines.length > MAX_NEW_LINES) throw tooManyLines();
-      current = word;
+      if (current) {
+        push(current, false);
+        current = "";
+      }
+      // The word alone: split it while it's too wide for the line it's on.
+      let rest = word;
+      while (measure(slot(lines.length), rest) > slot(lines.length).room + 0.5) {
+        const chars = [...rest];
+        let n = 1;
+        while (
+          n < chars.length &&
+          measure(slot(lines.length), chars.slice(0, n + 1).join("")) <=
+            slot(lines.length).room + 0.5
+        ) {
+          n++;
+        }
+        if (n >= chars.length) break;
+        splitWords = true;
+        push(chars.slice(0, n).join(""), false);
+        rest = chars.slice(n).join("");
+      }
+      current = rest;
     }
-    if (current && measure(slot(lines.length), current) > slot(lines.length).room + 0.5)
-      tooWide = true;
-    lines.push({ text: current, end: true });
-    if (lines.length > MAX_NEW_LINES) throw tooManyLines();
-  }
-  // A long word on a line of its own may stick out.
-  for (let i = 0; i < lines.length; i++) {
-    const s = slot(i);
-    if (measure(s, (lines[i] as { text: string }).text) > s.room + 0.5) tooWide = true;
+    push(current, true);
   }
   // Trailing empty lines (a line break typed at the end) are dropped.
   while (lines.length > 1 && !(lines[lines.length - 1] as { text: string }).text) lines.pop();
@@ -618,6 +634,43 @@ export function planParagraphEdit(
     );
   }
 
+  // Every line, old and added, must be drawn where it can be seen: on the page, and inside the
+  // area its text is clipped to (for a clip that isn't an upright rectangle, no further out
+  // than the line went before). Refused otherwise, whether or not the text overflows.
+  const page0 = page;
+  const hidden = () =>
+    new Error(
+      "Some of the new text would be hidden or off the page (a word too long for the space, say), so it can't be applied. Make it shorter.",
+    );
+  const checkBounds = (
+    s: Slot,
+    start: number,
+    end: number,
+    old: { left: number; right: number; top: number; bottom: number } | null,
+  ) => {
+    const line = s.own ? (para.lines.find((l) => l.id === s.setup.id) as ParaLine) : lastLine;
+    const top = s.baseline - (line.baseline - line.top);
+    const bottom = s.baseline + (line.bottom - line.baseline);
+    const box: Rect4 = [Math.min(start, end), top, Math.max(start, end), bottom];
+    const beyond = (limit: Rect4) =>
+      box[0] < limit[0] - 0.5 ||
+      box[2] > limit[2] + 0.5 ||
+      box[1] < limit[1] - 0.5 ||
+      box[3] > limit[3] + 0.5;
+    // Only where it goes further than the old line did (an old line may already poke out).
+    const grows =
+      !old ||
+      box[0] < old.left - 0.5 ||
+      box[2] > old.right + 0.5 ||
+      box[1] < old.top - 0.5 ||
+      box[3] > old.bottom + 0.5;
+    if (!grows) return;
+    if (beyond(page0)) throw hidden();
+    const op = s.setup.first;
+    if (op.clipShaped) throw hidden();
+    if (op.clip && beyond(rectToFrame(rotation, op.clip))) throw hidden();
+  };
+
   // The replacements: each old line redrawn with its new line (or emptied), and lines added
   // under the last one.
   const fontName = fonts.fallback ? freeFontName(analysis, fonts.fallback) : null;
@@ -641,7 +694,14 @@ export function planParagraphEdit(
       lead,
       space,
     });
+    // Where it really ends: the whole advance (lead, letters, spacing and justifying moves).
+    const reach = (s.own ? s.start : start) + encoded.advance * s.setup.unit;
+    if (t) checkBounds(s, start, reach, s.own ? oldBox(i) : null);
     return { slot: s, encoded, start, width };
+  };
+  const oldBox = (i: number) => {
+    const l = para.lines[i] as ParaLine;
+    return { left: l.left, right: l.right, top: l.top, bottom: l.bottom };
   };
   const drawnLast = encodeLine(setups.length - 1);
   // Lines added under the last one, drawn by its first operator.
@@ -671,14 +731,6 @@ export function planParagraphEdit(
     const back = (-(op.lineX + op.advance) * 1000) / (op.fs * op.th);
     tailParts.push(`${formatNumber(-px)} ${formatNumber(-py)} Td`);
     if (Math.abs(back) > 1e-4) tailParts.push(`[${formatNumber(back)}] TJ`);
-    // Hidden by a clipping area there: refused.
-    const clip = op.clip ? rectToFrame(rotation, op.clip) : null;
-    const bottom = lowest + descent;
-    if (clip && (bottom > clip[3] + 0.5 || para.left < clip[0] - 0.5 || right > clip[2] + 0.5)) {
-      throw new Error(
-        "The new text needs more lines than the paragraph has, and the lines added would be hidden here. Make it shorter.",
-      );
-    }
     if (op.clipShaped) {
       throw new Error(
         "This paragraph is inside a shaped area that hides what's outside it, so it can't take more lines than it has.",
@@ -725,7 +777,7 @@ export function planParagraphEdit(
     oldLines: setups.length,
     fit,
     overflow,
-    tooWide,
+    splitWords,
   };
   return {
     check,
@@ -836,13 +888,31 @@ export function paragraphEditLooksRight(
       chars.set(k, (chars.get(k) as number) - 1);
     }
   }
-  // The new lines, where they don't run into anything.
-  const count = plan.check.overflow ? plan.check.oldLines : plan.newLines.length;
-  const all = squash(afterLines.map((l) => l.text).join(""));
-  for (const line of plan.newLines.slice(0, count)) {
+  // The new glyphs (those that aren't the old ones outside the paragraph) must be on the page
+  // and inside the area they're clipped to: overlapping what's below is allowed, hidden isn't.
+  const fresh = afterGlyphs.filter((g) => !used.has(g));
+  const page = before.bounds;
+  for (const g of fresh) {
+    for (const [x, y] of [
+      [g.x, g.y],
+      [g.ex, g.ey],
+    ] as const) {
+      if (x < page[0] - 0.5 || x > page[2] + 0.5 || y < page[1] - 0.5 || y > page[3] + 0.5)
+        return false;
+      const clip = g.op.clip;
+      if (
+        clip &&
+        (x < clip[0] - 0.5 || x > clip[2] + 0.5 || y < clip[1] - 0.5 || y > clip[3] + 0.5)
+      )
+        return false;
+    }
+  }
+  // Every new line drawn, whether or not it runs into what's below. (By the glyphs
+  // drawn rather than MuPDF's text, which mixes up lines drawn over each other.)
+  const drawn = squash(fresh.map((g) => g.text).join(""));
+  for (const line of plan.newLines) {
     const want = squash(line);
-    if (want && !afterLines.some((l) => squash(l.text).includes(want)) && !all.includes(want))
-      return false;
+    if (want && !drawn.includes(want)) return false;
   }
   return true;
 }

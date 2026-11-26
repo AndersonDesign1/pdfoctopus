@@ -415,6 +415,7 @@ describe("editing a left-aligned paragraph", () => {
 
 describe("text that no longer fits", () => {
   it("is flagged before it's applied, and can be applied anyway", () => {
+    // (Overlapping what's below is allowed; hidden or off the page isn't, see below.)
     const original = fixture("generated/contract-libreoffice.pdf");
     const engine = open(original);
     const target = paragraph(engine, "The Provider will deliver");
@@ -603,5 +604,60 @@ describe("made-up paragraphs", () => {
     const done = linesIn(centre, [0, 0, 400, 400]);
     expect(done.map((l) => l.text.trim())).toEqual(["Centred text", "stays centred"]);
     for (const l of done) expect(Math.abs(mid(l) - middle)).toBeLessThan(1.5);
+  });
+
+  const para3 =
+    "BT /F1 10 Tf 12 TL 40 330 Td (The first line of a short paragraph) Tj T* " +
+    "(and its second line, a little shorter) Tj T* (and the end.) Tj ET";
+  const url = "https://example.com/a/very/long/address/that/has/no/spaces/in/it/at/all/anywhere";
+
+  it("splits a word too wide for a line, so none of it is hidden by a clip", () => {
+    // Clipped to a box a little wider than the paragraph, with room below it.
+    const engine = open(makePdf(`q 30 100 240 260 re W n ${para3} Q`));
+    const target = paragraph(engine, "The first line");
+    const text = `${target.text} See ${url} for more.`;
+    const check = engine.checkParagraphEdit(0, target.id, target.text, text);
+    expect(check.splitWords).toBe(true);
+    expect(check.overflow).toBe(false);
+    engine.editParagraph(0, target.id, target.text, text);
+    const lines = linesIn(engine, [0, 0, 400, 400]);
+    // All of the address is drawn, in pieces, and every piece is inside the clip.
+    expect(
+      lines
+        .map((l) => l.text.trim())
+        .join("")
+        .replace(/\s+/g, ""),
+    ).toContain(`See${url}formore.`);
+    for (const l of lines) expect(l.rect[2]).toBeLessThanOrEqual(270.5);
+  });
+
+  it("refuses lines added under a paragraph where a clip would hide them", () => {
+    // The clip ends just under the last line; nothing else is below, so the text fits, but
+    // the line added would be hidden.
+    const engine = open(makePdf(`q 30 300 240 60 re W n ${para3} Q`));
+    const target = paragraph(engine, "The first line");
+    const text = `${target.text} And now another sentence that needs one more line here.`;
+    expect(() => engine.checkParagraphEdit(0, target.id, target.text, text)).toThrow(
+      /hidden or off the page/,
+    );
+    expect(() => engine.editParagraph(0, target.id, target.text, text)).toThrow(
+      /hidden or off the page/,
+    );
+    expect(engine.history().canUndo).toBe(false);
+  });
+
+  it("refuses new text that would run off the side of the page", () => {
+    // A paragraph that already runs past the right edge of the 400-point page.
+    const engine = open(
+      makePdf(
+        "BT /F1 10 Tf 12 TL 300 330 Td (A paragraph near the edge of the page, running off it) Tj T* " +
+          "(and its second line, which also runs off the side) Tj ET",
+      ),
+    );
+    const target = paragraph(engine, "A paragraph near");
+    const text = `${target.text} with yet more words that need a third line to hold them all.`;
+    expect(() => engine.checkParagraphEdit(0, target.id, target.text, text)).toThrow(
+      /hidden or off the page/,
+    );
   });
 });

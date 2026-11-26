@@ -2,7 +2,7 @@
 //
 // What to tell the user before text is changed: a stand-in font, text that runs into the next
 // thing on the line, a line that had more than one font, a paragraph that no longer fits its
-// space, and a signed file.
+// space or has a word split across lines, and a signed file.
 
 import type { ParagraphEditCheck, TextEditCheck } from "@pdfoctopus/core";
 
@@ -61,9 +61,9 @@ export function paragraphWarnings(
       } will overlap what's below the paragraph. Nothing else on the page moves to make room.`,
     );
   }
-  if (check.tooWide) {
+  if (check.splitWords) {
     out.push(
-      "A word is wider than the paragraph, so it will stick out past the paragraph's right edge.",
+      "A word (a long web address, say) is wider than the paragraph, so it will be split across lines between letters.",
     );
   }
   if (signed) out.push(SIGNED);

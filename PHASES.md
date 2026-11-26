@@ -735,11 +735,15 @@ the paragraph's box, in its font, from its left edge, on its baselines, lined up
   character only (a line edit uses it for the whole line), with a warning first.
 - **Fitting:** the room is down to the next text or shape under the paragraph, or the bottom
   margin. More lines than fit: a warning saying the last lines will overlap what's below, with
-  **Apply anyway**. Text that would run off the page, or into a clipping edge, is refused.
+  **Apply anyway**. Every line, old or added, is measured where it will really be drawn
+  (spacing and justifying moves included); if any of it would be off the page or hidden by a
+  clipping area, the edit is refused, overflow or not. A word wider than the paragraph (a long
+  web address) is split between letters, with a warning.
 - **Checked after every edit:** every glyph outside the paragraph must be drawn exactly where
   it was (worked out from the new content streams, not MuPDF's text), and every character
-  MuPDF reads away from the new text must still be there. If not, the edit is undone and
-  refused.
+  MuPDF reads away from the new text must still be there, and every new line must be drawn, on
+  the page and inside its clip (even when it overlaps what's below). If not, the edit is undone
+  and refused.
 - **Refused as a paragraph, with the reason:** paragraphs in more than one font or size (a bold
   word); their lines can still be edited one at a time. A line that can't be edited makes its
   paragraph not editable, with that line's reason.

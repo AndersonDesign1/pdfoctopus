@@ -54,7 +54,7 @@ describe("paragraphWarnings", () => {
     oldLines: 3,
     fit: 4,
     overflow: false,
-    tooWide: false,
+    splitWords: false,
   };
 
   it("says nothing when the new text fits", () => {
@@ -77,13 +77,13 @@ describe("paragraphWarnings", () => {
 
   it("names a stand-in font for the paragraph, a word too wide and a signed file", () => {
     const all = paragraphWarnings(
-      { ...fits, font: "Helvetica", fallback: "Helvetica", missing: ["é"], tooWide: true },
+      { ...fits, font: "Helvetica", fallback: "Helvetica", missing: ["é"], splitWords: true },
       true,
       "CMR10",
     );
     expect(all).toHaveLength(3);
     expect(all[0]).toContain("so the paragraph will use Helvetica instead");
-    expect(all[1]).toMatch(/wider than the paragraph/);
+    expect(all[1]).toMatch(/split across lines between letters/);
     expect(all[2]).toMatch(/digitally signed/);
   });
 });
