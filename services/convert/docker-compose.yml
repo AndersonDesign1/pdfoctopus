@@ -17,7 +17,7 @@ services:
   # mupdf-docx: small native MuPDF service for PDF -> DOCX/ODT. To be added in Phase 4.
 
   cloudflared:
-    image: cloudflare/cloudflared:2026.10.7
+    image: cloudflare/cloudflared:2026.11.1
     restart: unless-stopped
     command: tunnel --no-autoupdate run
     environment:
