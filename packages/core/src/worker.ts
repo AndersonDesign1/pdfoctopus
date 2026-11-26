@@ -160,6 +160,20 @@ async function handle(req: WorkerRequest): Promise<WorkerSuccess> {
         "editAnnotation",
         engine.editAnnotation(req.page, req.annotation, req.change),
       );
+    case "listTextLines":
+      return success(req.id, "listTextLines", engine.listTextLines(req.page));
+    case "checkTextEdit":
+      return success(
+        req.id,
+        "checkTextEdit",
+        engine.checkTextEdit(req.page, req.line, req.expected, req.text),
+      );
+    case "editTextLine":
+      return success(
+        req.id,
+        "editTextLine",
+        engine.editTextLine(req.page, req.line, req.expected, req.text),
+      );
     case "undo":
       return success(req.id, "undo", engine.undo());
     case "redo":

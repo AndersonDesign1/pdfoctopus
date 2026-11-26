@@ -1410,6 +1410,63 @@ textarea.pdfo-form-text {
   outline-offset: 1px;
 }
 
+/* Edit text: each line outlined, and a text box over the one being edited. */
+.pdfo-text-edit-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+
+.pdfo-text-line {
+  position: absolute;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  border: 1px solid rgb(107 60 245 / 0.45);
+  border-radius: 2px;
+  background: transparent;
+  cursor: text;
+}
+
+.pdfo-text-line:hover,
+.pdfo-text-line:focus-visible {
+  background: rgb(107 60 245 / 0.12);
+  border-color: var(--accent);
+  outline: none;
+}
+
+.pdfo-text-line.locked {
+  border: 1px dashed rgb(120 120 130 / 0.6);
+  cursor: help;
+}
+
+.pdfo-text-line.locked:hover,
+.pdfo-text-line.locked:focus-visible {
+  background: rgb(120 120 130 / 0.12);
+}
+
+.pdfo-text-input {
+  position: absolute;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0 2px;
+  border: 1.5px solid var(--accent);
+  border-radius: 2px;
+  /* Paper-white, so it covers the old text while typing, in both themes. */
+  background: #fff;
+  line-height: 1;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.2);
+}
+
+.pdfo-help-list {
+  margin: 0 0 12px;
+  padding-left: 20px;
+}
+
+.pdfo-help-list li {
+  margin: 4px 0;
+}
+
 .pdfo-field-form {
   display: flex;
   flex-direction: column;

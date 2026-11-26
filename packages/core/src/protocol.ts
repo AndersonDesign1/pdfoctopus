@@ -16,6 +16,7 @@ import type {
   OpenResult,
   PagePoint,
   PageSize,
+  PageText,
   PdfSource,
   PreparedSignature,
   RedactionResult,
@@ -24,6 +25,7 @@ import type {
   SearchHit,
   SignatureSpec,
   SignedResult,
+  TextEditResult,
   TextStamp,
 } from "./engine";
 import type { PdfErrorCode } from "./errors";
@@ -32,6 +34,7 @@ import type { FieldChanges, NewField } from "./formBuild";
 import type { PasswordSpec } from "./security";
 import type { SignatureInspection } from "./signatureCheck";
 import type { SignatureFieldInfo } from "./signatureField";
+import type { TextEditCheck } from "./textEdit";
 
 export type WorkerRequest =
   | { id: number; type: "init" }
@@ -79,6 +82,16 @@ export type WorkerRequest =
       annotation: number;
       change: AnnotationChange;
     }
+  | { id: number; type: "listTextLines"; page: number }
+  | {
+      id: number;
+      type: "checkTextEdit";
+      page: number;
+      line: number;
+      expected: string;
+      text: string;
+    }
+  | { id: number; type: "editTextLine"; page: number; line: number; expected: string; text: string }
   | { id: number; type: "undo" }
   | { id: number; type: "redo" }
   | { id: number; type: "close" };
@@ -125,6 +138,9 @@ export interface WorkerResults {
   exportPage: Uint8Array;
   deleteAnnotation: EditResult;
   editAnnotation: EditResult;
+  listTextLines: PageText;
+  checkTextEdit: TextEditCheck;
+  editTextLine: TextEditResult;
   undo: EditResult | null;
   redo: EditResult | null;
   close: null;

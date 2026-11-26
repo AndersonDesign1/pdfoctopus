@@ -93,6 +93,16 @@ import {
   type SignatureFieldInfo,
 } from "./signatureField";
 import { checkStampText, MAX_STAMP_DETAIL, MAX_STAMP_TEXT, stampName } from "./stampRules";
+import {
+  analysePage,
+  contentLines,
+  editLooksRight,
+  makeEdit,
+  type PageAnalysis,
+  planLineEdit,
+  type TextEditCheck,
+  type TextLineInfo,
+} from "./textEdit";
 import { stampAppearance } from "./textStamp";
 
 /** A rendered page as raw, non-premultiplied RGBA pixels (ready for `ImageData`). */
@@ -378,6 +388,18 @@ export interface SignedResult {
   info: DocumentInfo;
 }
 
+/** The lines of text on a page, for the Edit text tool. */
+export interface PageText {
+  lines: TextLineInfo[];
+  /** The file has signatures: editing text will show as a change made after signing. */
+  signed: boolean;
+}
+
+/** A line edited: the document as it is now, and what the edit did (a fallback font, say). */
+export interface TextEditResult extends EditResult {
+  check: TextEditCheck;
+}
+
 /** One undoable step. Each step knows how to reverse itself, so no copies are kept. */
 interface Step {
   label: string;
@@ -478,6 +500,8 @@ export class PdfEngine {
    * changes. Only a few pages are kept, least recently used dropped first.
    */
   private textCache = new Map<number, mupdf.StructuredText>();
+  /** Text lines of recently listed pages, for editing them; dropped whenever the document changes. */
+  private lineCache = new Map<number, PageAnalysis>();
 
   /**
    * Open a PDF. If it needs a password, nothing else can be read until `authenticate`
@@ -2508,6 +2532,129 @@ export class PdfEngine {
     }
   }
 
+  // ---------------------------------------------------------------------------------------
+  // Editing text in place (see textEdit.ts). One line at a time, in the page's own content.
+
+  /** The lines of text on a page, each with whether it can be edited and, if not, why not. */
+  listTextLines(pageIndex: number): PageText {
+    const pdf = this.requirePdf();
+    const [index] = this.checkPages([pageIndex]) as [number];
+    const blocker = this.textEditBlocker();
+    const lines = this.lineAnalysis(index).infos.map((line) =>
+      blocker && line.editable ? { ...line, editable: false, reason: blocker } : line,
+    );
+    return { lines, signed: signedFields(pdf).length > 0 };
+  }
+
+  /**
+   * What replacing a line's text would do (the font used, whether it fits), without doing it.
+   * `expected` is the line's text as listed, so a stale list is caught.
+   */
+  checkTextEdit(pageIndex: number, id: number, expected: string, text: string): TextEditCheck {
+    const [index] = this.checkPages([pageIndex]) as [number];
+    const analysis = this.editableLine(index, id, expected);
+    return planLineEdit(analysis, id, text).check;
+  }
+
+  /**
+   * Replace a line of text, as one undoable step. Only the operators that draw the line change;
+   * undo puts the page's original content streams back, byte for byte.
+   */
+  editTextLine(pageIndex: number, id: number, expected: string, text: string): TextEditResult {
+    const pdf = this.requirePdf();
+    const [index] = this.checkPages([pageIndex]) as [number];
+    const analysis = this.editableLine(index, id, expected);
+    const plan = planLineEdit(analysis, id, text);
+    if (text === expected) return { ...this.editResult(), check: plan.check };
+    const made = makeEdit(pdf, index, analysis, plan);
+    const page = pdf.findPage(index);
+    const oldContents = page.get("Contents");
+    const oldResources = page.get("Resources");
+    const apply = () => {
+      page.put("Contents", made.contents);
+      if (made.resources) page.put("Resources", made.resources);
+    };
+    const revert = () => {
+      page.put("Contents", oldContents);
+      if (made.resources) {
+        if (oldResources.isNull()) page.delete("Resources");
+        else page.put("Resources", oldResources);
+      }
+    };
+    // Make the change and check it before keeping it: every other line must be where it was.
+    apply();
+    let right = false;
+    try {
+      const loaded = pdf.loadPage(index);
+      try {
+        right = editLooksRight(analysis, id, contentLines(loaded), text);
+      } finally {
+        loaded.destroy();
+      }
+    } finally {
+      if (!right) {
+        revert();
+        for (const object of made.created) pdf.deleteObject(object);
+      }
+    }
+    if (!right) {
+      throw new Error(
+        "This line couldn't be changed without affecting other text, so it was left as it was.",
+      );
+    }
+    let applied = true;
+    const result = this.run({
+      label: "Edit text",
+      redo: () => {
+        if (applied) return;
+        apply();
+        applied = true;
+      },
+      undo: () => {
+        revert();
+        applied = false;
+      },
+    });
+    return { ...result, check: plan.check };
+  }
+
+  /** Why no text in the file can be edited, or null. */
+  private textEditBlocker(): string | null {
+    const security = this.securityInfo();
+    if (security.encrypted && !security.permissions.edit && !this.ownerUnlocked) {
+      return (
+        "This file doesn't allow changes to its content. To edit its text, unlock its " +
+        "permissions with the permissions password first (Password)."
+      );
+    }
+    return null;
+  }
+
+  private lineAnalysis(index: number): PageAnalysis {
+    let analysis = this.lineCache.get(index);
+    if (!analysis) {
+      analysis = analysePage(this.requirePdf(), index);
+      if (this.lineCache.size >= TEXT_CACHE_PAGES) {
+        const oldest = this.lineCache.keys().next().value as number;
+        this.lineCache.delete(oldest);
+      }
+      this.lineCache.set(index, analysis);
+    }
+    return analysis;
+  }
+
+  private editableLine(index: number, id: number, expected: string): PageAnalysis {
+    const blocker = this.textEditBlocker();
+    if (blocker) throw new Error(blocker);
+    const analysis = this.lineAnalysis(index);
+    const line = Number.isInteger(id) ? analysis.infos[id] : undefined;
+    if (!line || line.text !== expected) {
+      throw new Error("The page has changed since its text was read. Try again.");
+    }
+    if (!line.editable) throw new Error(line.reason ?? "This line can't be edited.");
+    return analysis;
+  }
+
   /** Undo the last page operation. Returns null when there is nothing to undo. */
   undo(): EditResult | null {
     this.requirePdf();
@@ -2606,6 +2753,7 @@ export class PdfEngine {
   private clearTextCache(): void {
     for (const text of this.textCache.values()) text.destroy();
     this.textCache.clear();
+    this.lineCache.clear();
   }
 
   private pageText(index: number): mupdf.StructuredText {
@@ -2759,12 +2907,20 @@ export function lastStartxref(bytes: Uint8Array): number | null {
 export function fixUpdatePrev(bytes: Uint8Array, baseLength: number, prev: number): Uint8Array {
   const latin1 = new TextDecoder("latin1");
   const update = latin1.decode(bytes.subarray(baseLength));
-  const trailer = update.lastIndexOf("trailer");
-  // MuPDF writes a classic trailer for the update; anything else is left alone.
-  if (trailer < 0) return bytes;
-  const match = /\/Prev\s+(\d+)/.exec(update.slice(trailer));
+  // MuPDF writes a classic trailer for the update, or, for a file that uses cross-reference
+  // streams, a last object with /Type /XRef whose dictionary (never compressed) has the /Prev.
+  let from = update.lastIndexOf("trailer");
+  let to = update.length;
+  if (from < 0) {
+    const xref = update.lastIndexOf("/XRef");
+    if (xref < 0) return bytes;
+    from = update.lastIndexOf("<<", xref);
+    to = update.indexOf("stream", xref);
+    if (from < 0 || to < 0) return bytes;
+  }
+  const match = /\/Prev\s+(\d+)/.exec(update.slice(from, to));
   if (!match || Number(match[1]) === prev) return bytes;
-  const at = baseLength + trailer + match.index;
+  const at = baseLength + from + match.index;
   const replacement = new TextEncoder().encode(`/Prev ${prev}`);
   const out = new Uint8Array(bytes.length - match[0].length + replacement.length);
   out.set(bytes.subarray(0, at), 0);

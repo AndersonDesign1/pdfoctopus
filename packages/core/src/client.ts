@@ -243,6 +243,21 @@ export class PdfWorkerClient {
     return this.call<"addTextStamp">({ type: "addTextStamp", stamp });
   }
 
+  /** The lines of text on a page, each with whether it can be edited (and why not). */
+  listTextLines(page: number) {
+    return this.call<"listTextLines">({ type: "listTextLines", page });
+  }
+
+  /** What replacing a line's text would do (font, fit), without doing it. */
+  checkTextEdit(page: number, line: number, expected: string, text: string) {
+    return this.call<"checkTextEdit">({ type: "checkTextEdit", page, line, expected, text });
+  }
+
+  /** Replace a line of text in place, as one undoable step. */
+  editTextLine(page: number, line: number, expected: string, text: string) {
+    return this.call<"editTextLine">({ type: "editTextLine", page, line, expected, text });
+  }
+
   /** Add a highlight, drawing, shape, note, text box or white-out, as one undoable step. */
   addAnnotation(spec: AnnotationSpec) {
     return this.call<"addAnnotation">({ type: "addAnnotation", spec });

@@ -16,7 +16,7 @@ tasks needed to finish it and the **exit criteria** that must be true before we 
 ## Next up
 
 Start here if you're picking the project up. Do these in order, and update this list in the
-same PR that changes it. Last updated: 2026-11-20, after the signature panel.
+same PR that changes it. Last updated: 2026-11-26, after single-line text edits.
 
 ### 0. Keep `main` green (2026-11-18)
 
@@ -582,6 +582,63 @@ with the Digital ID tab the new signature shows as intact straight away.
   checking timestamps, DocMDP (certifying signatures' permissions), and highlighting what changed
   on the page. Not yet compared with Acrobat's panel; see TESTING.md.
 
+### 19. Phase 6: single-line text edits (2026-11-26)
+
+**Edit text** (start of the Annotate row) outlines every line of text on the page: purple if it
+can be edited, grey and dashed if not (hover or click for the reason). Click a line, type, and
+press Enter to apply or Escape to cancel. The new text starts where the line did, in the same
+font, size, colour and spacing, and nothing else on the page moves. **?** next to the tool says
+what can and can't be edited. It's one undoable step, and saving stays incremental.
+
+- **Engine:** `listTextLines`, `checkTextEdit` and `editTextLine` in
+  `packages/core/src/engine.ts`, with `textEdit.ts` (finding and rewriting lines),
+  `contentStream.ts` (a bounded content stream tokenizer and parser that keeps each operator's
+  byte range), `textFonts.ts` and `fontEncoding.ts` (widths, encodings, ToUnicode CMaps,
+  standard fonts).
+- **How:** MuPDF's structured text (of the page's own content, not annotations) gives the lines.
+  The content streams are followed operator by operator (text state, CTM, clipping, marked
+  content) to work out where every glyph lands, and glyphs are matched to MuPDF's characters by
+  position. Parts of a line MuPDF splits at a wide gap but one operator draws are joined.
+  Only the operators that draw the line change: the first draws the new text, as a TJ array in
+  the line's own font; the line's part of each other operator becomes a move of the same
+  length (`[n] TJ`), so text after it in the same text object stays put. Glyphs before and
+  after the line in the same operator (a table drawn by one TJ) are kept. Every other byte is
+  unchanged, and the new stream replaces only the one it came from; undo puts the page's
+  original streams back, byte for byte. "Actual text" marks around the old words are dropped.
+- **Fonts:** a character is written in the line's own font only when the font is known to have
+  its glyph (its ToUnicode map, a `/Differences` name, or the embedded program). Otherwise a
+  standard font (Helvetica, Times or Courier, bold and italic matched, the family chosen by
+  style and widths) is added to the page and used, for the whole line if it has every
+  character, else only for the missing ones; the user is told which characters and font first.
+  Characters neither has (Cyrillic, say) are refused.
+- **Checked after every edit:** the page is read again and every other line must still be where
+  it was, and the new text there; if not, the edit is undone and refused.
+- **Warnings** (before applying): a stand-in font, text longer than the room before the next
+  thing on the line or the page edge (allowed), a line that had several fonts, and a signed
+  file (once per file). Text that would run past a clipping edge (a table cell) is refused.
+- **Refused, with the reason:** Chinese, Japanese and Korean text, right-to-left and vertical
+  text, slanted or mirrored text, partly hidden (clipped) text, invisible text (scans' OCR
+  layers), clipping text, Type 3 fonts, text in form XObjects, fonts with other encodings, text
+  mixed in with other lines in one operator, and pages whose content can't be read (or past the
+  limits: 32 MB of content, a million operators). Files whose permissions don't allow changes
+  are refused until unlocked.
+- **Also fixed:** a second save of a file that uses cross-reference streams pointed its /Prev
+  at a section that isn't there, so it needed repair or didn't open (`fixUpdatePrev`).
+- **Tests:** `contentStream.test.ts` (strings, escapes, hex, nested brackets, TJ arrays,
+  comments, inline images, broken input, limits) and `textEdit.test.ts`: the invoice edited
+  (new text there, old gone, every other line where it was, pixels changed only around the
+  line, incremental save that reopens unrepaired, undo restoring the exact streams), a body
+  line on both contracts and two TeX files, the fallback font and its warning, refused
+  characters, too wide, stale lists, each refusal on made-up pages, `'` and `"`, one cell of a
+  one-TJ table, actual text, several content streams, rotated pages; a sweep listing the lines
+  of the first two pages of every fixture (under a minute); and on eight fixtures, up to 25
+  lines each edited and undone with a render compared before and after.
+- **Checked:** in Chromium at 1280 × 900: the invoice edited, a line with "Ü" and "ö" (warning,
+  then Helvetica), Escape, the help, saved, reopened with the new text; the CJK file refused.
+- **Not covered yet:** paragraphs (text doesn't flow to the next line), multi-column, RTL and
+  CJK (steps 2 and 3), text in form XObjects, and adding glyphs to subset fonts (a standard
+  font is used instead). Not yet checked in Acrobat; see TESTING.md.
+
 ### Where things are
 
 - **Engine:** `packages/core` (MuPDF in a Web Worker, plus a promise-based client). Tests:
@@ -606,7 +663,7 @@ with the Digital ID tab the new signature shows as intact straight away.
 | 3   | [Security, compress & create](#phase-3-security-compress--create) | 2–3 wks  | 🟨 In progress |
 | 4   | [Conversion](#phase-4-conversion)                                 | 2–3 wks  | 🟨 In progress |
 | 5   | [Certificate signatures](#phase-5-certificate-signatures-pades)   | 2–3 wks  | 🟨 In progress |
-| 6   | [True text editing](#phase-6-true-text-editing)                   | 4–8+ wks | ⬜ Not started |
+| 6   | [True text editing](#phase-6-true-text-editing)                   | 4–8+ wks | 🟨 In progress |
 | 7   | [Polish & launch](#phase-7-polish--launch)                        | 2–3 wks  | ⬜ Not started |
 | —   | [Later (post-launch)](#later-post-launch)                         | —        | ⬜ Not started |
 
@@ -885,11 +942,11 @@ with the Digital ID tab the new signature shows as intact straight away.
 
 ### Step 1: single-line edits
 
-- [ ] Find text runs with structured-text extraction
-- [ ] Click-to-edit a line of text
-- [ ] Check the embedded font has the glyphs needed
-- [ ] Replace the run in the page content using the same embedded font
-- [ ] Fall back to the closest system font by metrics when glyphs are missing, and warn the user
+- [x] Find text runs with structured-text extraction
+- [x] Click-to-edit a line of text
+- [x] Check the embedded font has the glyphs needed
+- [x] Replace the run in the page content using the same embedded font
+- [x] Fall back to the closest system font by metrics when glyphs are missing, and warn the user
 
 ### Step 2: paragraph reflow
 
@@ -904,8 +961,9 @@ with the Digital ID tab the new signature shows as intact straight away.
 
 ### Quality
 
-- [ ] Regression tests against every fixture (render before/after and compare)
-- [ ] Clear in-app explanation of what can and can't be edited
+- [ ] Regression tests against every fixture (render before/after and compare) (started: eight
+      fixtures in `textEdit.test.ts`, and every fixture's lines listed)
+- [x] Clear in-app explanation of what can and can't be edited
 
 ### Exit criteria
 
