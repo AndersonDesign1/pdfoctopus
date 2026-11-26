@@ -18,6 +18,7 @@ export type {
   OpenResult,
   PagePoint,
   PageSize,
+  PageText,
   PdfSource,
   PreparedSignature,
   RedactionResult,
@@ -28,6 +29,7 @@ export type {
   SignatureSpec,
   SignedResult,
   StampKind,
+  TextEditResult,
   TextStamp,
 } from "./engine";
 export {
@@ -82,4 +84,6 @@ export {
   type StampLayout,
   stampName,
 } from "./stampRules";
+export type { TextEditCheck, TextLineInfo } from "./textEdit";
+export { MAX_LINE_TEXT } from "./textLimits";
 export { crc32 } from "./zip";

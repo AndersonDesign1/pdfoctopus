@@ -33,6 +33,10 @@ Decided (no action needed):
   the timestamp option switched off with a note, and timestamps work in the desktop app only.
   Running our own relay for the web app would mean sending the hash through our server; not
   done unless you ask for it.
+- (2026-11-26) **Stand-in font for edited text**: when a line's embedded font lacks a
+  character, the standard Helvetica, Times or Courier is used, not embedded (every PDF reader
+  has them, and the file stays small). A PDF/A file edited that way is no longer strictly PDF/A;
+  embedding a font instead can come later if that matters.
 - (2026-11-20) **Trusting signers**: the browser has no list of trusted certificates, so the
   Signatures panel shows who signed as their certificate says and that the identity isn't
   verified. A later PR can let people mark certificates as trusted (kept on their device).
@@ -451,6 +455,35 @@ Test IDs as above (password `test-only`).
 - [ ] Open the timestamped file in **Adobe Acrobat Reader**: the signature panel says it
       includes an embedded timestamp from DigiCert (or Sectigo), and the signing time is from
       the timestamp
+
+## Phase 6: single-line text edits
+
+Open `fixtures/generated/invoice.pdf`, then **Edit text** (start of the Annotate row).
+
+- [ ] Every line of text has a purple box; hovering one shows "Edit …"
+- [ ] Click "Riverton 98765", change it to "Riverton 12345", press **Enter**: the line changes
+      in the same font, size and colour, and nothing else on the page moves
+- [ ] Click a line and press **Escape**: nothing changes, and the tool stays on
+- [ ] Change "7 Sample Road" to "7 Ünique Röad": a dialog says the font doesn't include "Ü" and
+      "ö" and that Helvetica will be used; **Change it** makes the change
+- [ ] Make "Description" (table header) much longer: a dialog warns it runs into what's next
+- [ ] Undo (Ctrl+Z) and redo (Ctrl+Y) each edit
+- [ ] Save, reopen: the new text is there, and **Adobe Acrobat Reader**, **Chrome/Edge** and
+      **Firefox** show the same; selecting or searching the new text finds it
+- [ ] `contract-libreoffice.pdf` and `contract-chromium.pdf`: edit a line of a paragraph (it
+      won't flow onto the next line; it starts where the line did)
+- [ ] `cjk-text.pdf`: every line is grey and dashed; clicking one says CJK text can't be
+      edited yet
+- [ ] A scanned file with searchable text (`third-party/internet-archive/`): lines say the text
+      is invisible
+- [ ] `restricted-permissions.pdf`: lines say the file doesn't allow changes; after unlocking
+      with `owner-secret` (Password), they can be edited
+- [ ] `signed.pdf`: the first edit warns that it will show as a change after signing; the
+      signature panel says the file was changed after signing once it's saved and reopened
+- [ ] **?** next to Edit text explains what can and can't be edited
+- [ ] A rotated page (rotate it first): its lines can still be edited, and the text box is
+      turned the same way
+- [ ] **Phone:** tapping a line opens the text box; the on-screen keyboard's Enter applies it
 
 ## Problems found
 

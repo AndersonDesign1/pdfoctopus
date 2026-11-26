@@ -47,6 +47,15 @@ const files: [string, () => Uint8Array][] = [
   ["a file from Chromium", () => fixture("contract-chromium.pdf")],
   ["a file that already has updates", () => fixture("incremental-updates.pdf")],
   ["a signed file", () => fixture("signed.pdf")],
+  [
+    "a file with cross-reference streams",
+    () =>
+      new Uint8Array(
+        readFileSync(
+          join(generated, "..", "third-party", "py-pdf", "001-trivial_minimal-document.pdf"),
+        ),
+      ),
+  ],
 ];
 
 describe("saving more than once", () => {

@@ -34,6 +34,7 @@ import {
   type SearchHit,
   type SignatureFieldInfo,
   type StampKind,
+  type TextLineInfo,
   ZIP_TYPE,
 } from "@pdfoctopus/core";
 import { Footer } from "@pdfoctopus/ui";
@@ -86,6 +87,9 @@ import {
   SignaturesDialog,
   type SignaturesState,
 } from "./signatures/SignaturesPanel";
+import { TextEditConfirm, TextEditHelp } from "./textedit/TextEditDialogs";
+import { type TextDraft, TextEditLayer } from "./textedit/TextEditLayer";
+import { editWarnings } from "./textedit/warnings";
 import {
   type ChosenPdf,
   InsertPdfDialog,
@@ -343,6 +347,22 @@ export function App() {
   const [lineWidth, setLineWidth] = useState(2);
   /** True while the Select tool is picked: clicking an annotation then selects it. */
   const [selecting, setSelecting] = useState(false);
+  /** True while the Edit text tool is picked: clicking a line of text then edits it. */
+  const [editingText, setEditingText] = useState(false);
+  /**
+   * The line being edited and the text typed so far, with its page, which stays loaded until
+   * the edit is applied or cancelled (scrolling it away would otherwise lose the text).
+   */
+  const [textDraft, setTextDraft] = useState<(TextDraft & { page: number }) | null>(null);
+  /** True while "Editing text" (what can and can't be edited) is open. */
+  const [textHelp, setTextHelp] = useState(false);
+  /** Warnings before a line of text is changed, waiting for the user's answer. */
+  const [textConfirm, setTextConfirm] = useState<{
+    warnings: string[];
+    answer(apply: boolean): void;
+  } | null>(null);
+  /** Whether the user has been told, for this file, that editing text shows on its signatures. */
+  const signedWarned = useRef(false);
   /** The selected annotation and its page, if any. */
   const [selectedAnnot, setSelectedAnnot] = useState<{
     page: number;
@@ -448,6 +468,11 @@ export function App() {
     setTool(undefined);
     setSelecting(false);
     setSelectedAnnot(null);
+    setEditingText(false);
+    setTextDraft(null);
+    setTextHelp(false);
+    setTextConfirm(null);
+    signedWarned.current = false;
   }, []);
 
   /** Start a fresh worker and begin loading MuPDF in the background. */
@@ -681,6 +706,8 @@ export function App() {
     // A selected annotation may have moved or gone (undo, page edits): let go of it, unless it's
     // the selection's own change, after which its layer reports where it is now.
     if (!keepAnnotation) setSelectedAnnot(null);
+    // A line being edited may have moved or changed; its layer starts afresh anyway.
+    setTextDraft(null);
     const renderer = new PageRenderer(getClient());
     current.renderer.dispose();
     const next = { ...current, info: result.info, renderer };
@@ -791,6 +818,7 @@ export function App() {
     setTool(undefined); // Placing a stamp and drawing don't mix.
     setFormTool(undefined);
     setSelecting(false);
+    setEditingText(false);
     setSelectedAnnot(null);
     setPending({ kind, image, text, textStamp, page, rect });
     setStatus(
@@ -1038,6 +1066,7 @@ export function App() {
     setSelecting(false);
     setSelectedAnnot(null);
     setFormTool(undefined);
+    setEditingText(false);
     setTool(id);
     setStatus(`${toolById(id).hint}. Press Escape when you're done.`);
   }
@@ -1052,8 +1081,68 @@ export function App() {
     }
     setTool(undefined);
     setFormTool(undefined);
+    setEditingText(false);
     setSelecting(true);
     setStatus("Click an annotation to select it. Press Escape when you're done.");
+  }
+
+  // ---- Editing text ----
+
+  // Putting the tool down (any way: another tool, Escape) drops the line being edited.
+  useEffect(() => {
+    if (!editingText) setTextDraft(null);
+  }, [editingText]);
+
+  /** Pick the Edit text tool, or put it down. */
+  function pickEditText() {
+    if (editingText) {
+      setEditingText(false);
+      setStatus("");
+      return;
+    }
+    setTool(undefined);
+    setSelecting(false);
+    setSelectedAnnot(null);
+    setFormTool(undefined);
+    setEditingText(true);
+    setStatus(
+      "Click a line of text to change it. Grey dashed lines can't be edited: click one to see why. Press Escape when you're done.",
+    );
+  }
+
+  /**
+   * Change a line of text: check it first, show any warnings (a stand-in font, too long, a
+   * signed file), then make the change. Resolves true once it's made.
+   */
+  async function editText(page: number, line: TextLineInfo, text: string, signed: boolean) {
+    if (workingRef.current) return false;
+    let check: Awaited<ReturnType<PdfWorkerClient["checkTextEdit"]>>;
+    try {
+      check = await getClient().checkTextEdit(page, line.id, line.text, text);
+    } catch (err) {
+      reportError("change the text", err);
+      return false;
+    }
+    const warnings = editWarnings(check, signed && !signedWarned.current, line.font);
+    if (warnings.length > 0) {
+      const apply = await new Promise<boolean>((answer) => setTextConfirm({ warnings, answer }));
+      setTextConfirm(null);
+      if (!apply) return false;
+      if (signed) signedWarned.current = true;
+    }
+    let done = false;
+    await runTask("change the text", async (pdf) => {
+      const result = await pdf.editTextLine(page, line.id, line.text, text);
+      done = true;
+      const { fallback } = result.check;
+      const font = !fallback
+        ? ""
+        : result.check.font === fallback
+          ? ` It's in ${fallback}.`
+          : ` Some of it is in ${fallback}.`;
+      applyEdit(result, `Changed the line.${font} Undo with Ctrl+Z.`);
+    });
+    return done;
   }
 
   function selectAnnotation(page: number, annotation: AnnotationInfo | null) {
@@ -1395,6 +1484,7 @@ export function App() {
     setTool(undefined);
     setSelecting(false);
     setSelectedAnnot(null);
+    setEditingText(false);
     setFormTool(id);
     setStatus(
       id === "edit"
@@ -1719,7 +1809,9 @@ export function App() {
         stampDialog ||
         redactDialog ||
         flattenDialog ||
-        fieldDialog
+        fieldDialog ||
+        textHelp ||
+        textConfirm
       ) {
         return;
       }
@@ -1730,7 +1822,7 @@ export function App() {
       }
       if (!doc) return;
       if (
-        (tool || selecting || formTool) &&
+        (tool || selecting || formTool || editingText) &&
         !drafting &&
         e.key === "Escape" &&
         !typingInField(e.target)
@@ -1741,6 +1833,7 @@ export function App() {
           setTool(undefined);
           setSelecting(false);
           setFormTool(undefined);
+          setEditingText(false);
         }
         setStatus("");
         return;
@@ -2355,6 +2448,28 @@ export function App() {
             <span className="toolbar-label">Annotate</span>
             <button
               type="button"
+              className="tool"
+              disabled={locked}
+              aria-pressed={editingText}
+              title="Change a line of text in the document"
+              onClick={pickEditText}
+            >
+              Edit text
+            </button>
+            {editingText && (
+              <button
+                type="button"
+                className="tool icon"
+                onClick={() => setTextHelp(true)}
+                aria-label="What can and can't be edited"
+                title="What can and can't be edited"
+              >
+                <span aria-hidden="true">?</span>
+              </button>
+            )}
+            <span className="divider" />
+            <button
+              type="button"
               className="tool icon"
               disabled={locked}
               aria-pressed={selecting}
@@ -2549,7 +2664,7 @@ export function App() {
               currentHit={currentHit}
               onPageClick={pending && !busy ? movePendingTo : undefined}
               // A draft, or the selection (so it stays up to date), keeps its page loaded.
-              keepPage={draftPage ?? formDraftPage ?? selectedAnnot?.page}
+              keepPage={draftPage ?? formDraftPage ?? selectedAnnot?.page ?? textDraft?.page}
               renderPageOverlay={(index, viewScale) => {
                 const size = doc.info.pages[index] ?? { width: 1, height: 1 };
                 if (pending) {
@@ -2566,6 +2681,22 @@ export function App() {
                       onCancel={cancelPending}
                     />
                   ) : null;
+                }
+                if (editingText) {
+                  return (
+                    <TextEditLayer
+                      key={`${editVersion}:${index}`}
+                      scale={viewScale}
+                      busy={busy}
+                      list={() => getClient().listTextLines(index)}
+                      editing={textDraft?.page === index ? textDraft : null}
+                      onEditingChange={(draft) =>
+                        setTextDraft(draft ? { ...draft, page: index } : null)
+                      }
+                      onEdit={(line, text, signed) => editText(index, line, text, signed)}
+                      onExplain={(line) => setStatus(line.reason ?? "This line can't be edited.")}
+                    />
+                  );
                 }
                 if (selecting) {
                   return (
@@ -2782,6 +2913,14 @@ export function App() {
           marks={doc.info.redactionMarks}
           onApply={applyRedactionsNow}
           onCancel={() => setRedactDialog(false)}
+        />
+      )}
+      {textHelp && <TextEditHelp onClose={() => setTextHelp(false)} />}
+      {textConfirm && (
+        <TextEditConfirm
+          warnings={textConfirm.warnings}
+          onApply={() => textConfirm.answer(true)}
+          onCancel={() => textConfirm.answer(false)}
         />
       )}
       {fieldDialog?.mode === "add" && doc && (
