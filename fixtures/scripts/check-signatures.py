@@ -7,8 +7,9 @@
 #
 # The files named signed-by-pdfoctopus*.pdf were signed by PDFoctopus's own signing code
 # (fixtures/scripts/sign-with-pdfoctopus.ts); they're also checked against the PAdES baseline
-# B-B profile. With a folder, freshly signed copies of those files in it are checked too: CI
-# signs them with the code being tested first.
+# B-B profile, and the timestamped one against B-T (its timestamp, from the test timestamp
+# server, must be intact, trusted and for this signature). With a folder, freshly signed
+# copies of those files in it are checked too: CI signs them with the code being tested first.
 #
 # PDFoctopus's own validator is tested against the same expectations in
 # packages/sign/src/verify.test.ts; keep the two in step.
@@ -39,8 +40,10 @@ TEST_ROOT = load_root("pdfoctopus-test-root-ca.pem")
 DIGICERT_ROOT = load_root("digicert-assured-id-root-ca.pem")
 # Issued the test IDs in fixtures/test-ids, which PDFoctopus's own signing code is tested with.
 TEST_SIGNING_ROOT = load_root("pdfoctopus-test-signing-ca.pem")
+# Issued the test timestamp server (packages/sign/src/testTsa.ts, fixtures/test-ids/test-tsa.p12).
+TEST_TSA_ROOT = load_root("pdfoctopus-test-tsa-ca.pem")
 
-# file -> (trust root, [per signature: (intact, trusted, modified after signing)])
+# file -> (trust root or roots, [per signature: (intact, trusted, modified after signing)])
 # "modified" is False when nothing was changed after that signature, otherwise the kind of
 # change pyhanko reports (e.g. "FORM_FILLING", "ANNOTATIONS").
 EXPECTED = {
@@ -55,7 +58,8 @@ EXPECTED = {
     "public-domain/gpo-public-law-118-1-signed.pdf": (DIGICERT_ROOT, [(True, True, False)]),
 }
 
-# Signed by PDFoctopus. Each signature must also follow PAdES B-B (see check_pades_bb).
+# Signed by PDFoctopus. Each signature must also follow PAdES B-B (see check_pades_bb), and
+# those in TIMESTAMPED B-T as well (see check_pades_bt).
 OURS = {
     "signed-by-pdfoctopus.pdf": (TEST_SIGNING_ROOT, [(True, True, False)]),
     # The second signature was added later; the first stays valid.
@@ -63,7 +67,13 @@ OURS = {
         TEST_SIGNING_ROOT,
         [(True, True, "FORM_FILLING"), (True, True, False)],
     ),
+    # PAdES B-T: timestamped by the test timestamp server.
+    "signed-by-pdfoctopus-timestamped.pdf": (
+        [TEST_SIGNING_ROOT, TEST_TSA_ROOT],
+        [(True, True, False)],
+    ),
 }
+TIMESTAMPED = {"signed-by-pdfoctopus-timestamped.pdf"}
 EXPECTED.update({f"generated/{name}": expected for name, expected in OURS.items()})
 
 
@@ -94,6 +104,33 @@ def check_pades_bb(name: str, sig) -> list[str]:
     return errors
 
 
+def check_pades_bt(name: str, sig, status) -> list[str]:
+    """
+    PAdES baseline B-T (ETSI EN 319 142-1, 6.3): B-B plus a signature timestamp, an RFC 3161
+    token over the signature value, as the unsigned attribute signature_time_stamp_token.
+    pyhanko checks the token's own signature, that it is for this signature value, and the
+    timestamp server's certificate chain.
+    """
+    errors = []
+    unsigned = sig.signer_info["unsigned_attrs"]
+    types = [a["type"].native for a in unsigned] if unsigned.native else []
+    if "signature_time_stamp_token" not in types:
+        errors.append(f"{name}: no signature_time_stamp_token unsigned attribute")
+        return errors
+    ts = status.timestamp_validity
+    if ts is None:
+        errors.append(f"{name}: pyhanko found no signature timestamp")
+    else:
+        if not ts.intact or not ts.valid:
+            errors.append(f"{name}: the timestamp isn't intact and valid")
+        if not ts.trusted:
+            errors.append(f"{name}: the timestamp server isn't trusted")
+        claimed = sig.self_reported_timestamp
+        if claimed and ts.timestamp < claimed:
+            errors.append(f"{name}: the timestamp ({ts.timestamp}) is before /M ({claimed})")
+    return errors
+
+
 def check(path: str, root, expected, folder: Path = FIXTURES) -> list[str]:
     errors = []
     with open(folder / path, "rb") as f:
@@ -103,8 +140,9 @@ def check(path: str, root, expected, folder: Path = FIXTURES) -> list[str]:
         for sig, (intact, trusted, modified) in zip(sigs, expected):
             errors_before = len(errors)
             # Validate at a fixed time so the check doesn't start failing when certificates expire.
+            roots = root if isinstance(root, list) else [root]
             context = ValidationContext(
-                trust_roots=[root], allow_fetching=False, moment=sig.self_reported_timestamp
+                trust_roots=roots, allow_fetching=False, moment=sig.self_reported_timestamp
             )
             status = validate_pdf_signature(
                 sig, context, key_usage_settings=KeyUsageConstraints(key_usage={"digital_signature"})
@@ -123,6 +161,8 @@ def check(path: str, root, expected, folder: Path = FIXTURES) -> list[str]:
                     errors.append(f"{name}: modified after signing={actual}, expected {modified}")
             if Path(path).name in OURS:
                 errors.extend(check_pades_bb(name, sig))
+            if Path(path).name in TIMESTAMPED:
+                errors.extend(check_pades_bt(name, sig, status))
             if len(errors) == errors_before:
                 print(f"ok  {name}")
     return errors

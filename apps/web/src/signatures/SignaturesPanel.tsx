@@ -12,6 +12,7 @@ import {
   signerName,
   statusOf,
   type Tone,
+  timestampOf,
 } from "./summary";
 
 /** The signatures of the open file: being checked, checked, or failed to check. */
@@ -68,6 +69,7 @@ function SignatureItem({ s, index }: { s: CheckedSignature; index: number }) {
   const cert = s.check.signer;
   const rows: [string, string | undefined][] = [
     ["Signed", formatTime(s.check.signingTime ?? s.time)],
+    ["Timestamp", timestampOf(s, (ms) => formatTime(ms) ?? "")],
     ["Reason", s.reason],
     ["Location", s.location],
     ["Contact", s.contactInfo],
@@ -90,9 +92,6 @@ function SignatureItem({ s, index }: { s: CheckedSignature; index: number }) {
       : []),
     ...(s.status === "broken" ? [...s.problems, ...s.check.problems].slice(1) : []),
     ...s.check.warnings,
-    ...(s.check.timestamped
-      ? ["It has a timestamp from a timestamp server (not checked yet)."]
-      : []),
   ];
   return (
     <li className="sig-item">

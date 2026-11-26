@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import { describe, expect, test } from "vitest";
-import { bannerFor, type CheckedSignature, coverageOf, statusOf } from "./summary";
+import { bannerFor, type CheckedSignature, coverageOf, statusOf, timestampOf } from "./summary";
 
 function signature(over: Partial<CheckedSignature> = {}): CheckedSignature {
   return {
@@ -108,5 +108,44 @@ describe("signature summaries", () => {
     expect(bannerFor([signature({ check, name: "Bob" })])?.text).toContain("Signed by Bob.");
     expect(bannerFor([signature({ check })])?.text).toContain("Signed by an unknown signer.");
     expect(bannerFor([])).toBeNull();
+  });
+});
+
+describe("timestampOf", () => {
+  const format = (ms: number) => new Date(ms).toISOString();
+  const timestamp = {
+    time: Date.UTC(2026, 10, 20, 9),
+    authority: "DigiCert Timestamp Responder",
+    valid: true,
+    trusted: true,
+    problems: [],
+    chain: [],
+  };
+
+  test("a timestamp that checks out, from a known server", () => {
+    const s = signature({ check: { ...signature().check, timestamped: true, timestamp } });
+    expect(timestampOf(s, format)).toBe(
+      "Timestamped by DigiCert Timestamp Responder at 2026-11-20T09:00:00.000Z.",
+    );
+  });
+
+  test("from an unknown server: present, but not verified", () => {
+    const unknown = { ...timestamp, trusted: false };
+    const s = signature({ check: { ...signature().check, timestamped: true, timestamp: unknown } });
+    expect(timestampOf(s, format)).toBe(
+      "A timestamp from DigiCert Timestamp Responder at 2026-11-20T09:00:00.000Z is present, but not verified against a trust list.",
+    );
+  });
+
+  test("one that doesn't, and none", () => {
+    const bad = {
+      ...timestamp,
+      valid: false,
+      trusted: false,
+      problems: ["It's for a different signature."],
+    };
+    const s = signature({ check: { ...signature().check, timestamped: true, timestamp: bad } });
+    expect(timestampOf(s, format)).toMatch(/but the timestamp doesn't check out\.$/);
+    expect(timestampOf(signature(), format)).toBeUndefined();
   });
 });
