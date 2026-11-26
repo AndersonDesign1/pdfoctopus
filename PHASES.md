@@ -701,9 +701,71 @@ what can and can't be edited. It's one undoable step, and saving stays increment
   lines each edited and undone with a render compared before and after.
 - **Checked:** in Chromium at 1280 × 900: the invoice edited, a line with "Ü" and "ö" (warning,
   then Helvetica), Escape, the help, saved, reopened with the new text; the CJK file refused.
-- **Not covered yet:** paragraphs (text doesn't flow to the next line), multi-column, RTL and
-  CJK (steps 2 and 3), text in form XObjects, and adding glyphs to subset fonts (a standard
+- **Not covered yet:** paragraphs (done in item 20), multi-column, RTL and CJK (step 3), text in
+  form XObjects, and adding glyphs to subset fonts (a standard
   font is used instead). Not yet checked in Acrobat; see TESTING.md.
+
+### 20. Phase 6: paragraph reflow (2026-11-26)
+
+With **Edit text** on, click a line that's part of a paragraph and **Edit paragraph** appears
+above it. It opens a box over the whole paragraph; the new text flows from line to line inside
+the paragraph's box, in its font, from its left edge, on its baselines, lined up as it was
+(left, right, centred or justified). A line break typed starts a new line. **Ctrl+Enter** or
+**Apply** applies it, **Esc** cancels. Nothing else on the page moves. One undoable step.
+
+- **Engine:** `paragraphs.ts` (finding paragraphs, planning the edit), `checkParagraphEdit` and
+  `editParagraph` in `engine.ts`; `listTextLines` now also lists the page's paragraphs.
+  `textEdit.ts` was split up so a paragraph reuses the line edit's pieces (`prepareLine`,
+  `pickFonts`, `lineReplacements`, `finishEdits`), and now keeps where other shapes, lines and
+  images are drawn.
+- **Finding paragraphs:** lines one above the other, in the same font and size, with nothing
+  drawn between them (a table's rules keep its rows apart), evenly spaced, and lined up the
+  same way. The first line may be indented or hanging (a list item). A line that starts with a
+  list number or bullet starts a new paragraph, and so does one whose first word would have
+  fitted on the line before. Justified: every line but the last reaches the right edge (three
+  lines or more, or stretched spaces). A word broken with a hyphen is joined up in the text.
+  Bounded: 5,000 lines a page, a window of 200 lines below each, a budget for shapes.
+- **Editing:** the text is broken into lines with the paragraph's own widths (Tc, Tw and Tz
+  included). Each old line is rewritten exactly as a line edit would be, so it keeps its own
+  place, font, colour and spacing; justified lines get a move after each space, lines on the
+  right or centre a move before the text. Leftover lines are emptied (the space stays blank).
+  Extra lines are drawn under the last one by its own operator, which then moves the text
+  position back exactly where it was (`Td` back, then a `TJ` move), so later text in the same
+  text object stays put. A character the paragraph's font lacks uses a standard font for that
+  character only (a line edit uses it for the whole line), with a warning first.
+- **Fitting:** the room is down to the next text or shape under the paragraph, or the bottom
+  margin. More lines than fit: a warning saying the last lines will overlap what's below, with
+  **Apply anyway**. Text that would run off the page, or into a clipping edge, is refused.
+- **Checked after every edit:** every glyph outside the paragraph must be drawn exactly where
+  it was (worked out from the new content streams, not MuPDF's text), and every character
+  MuPDF reads away from the new text must still be there. If not, the edit is undone and
+  refused.
+- **Refused as a paragraph, with the reason:** paragraphs in more than one font or size (a bold
+  word); their lines can still be edited one at a time. A line that can't be edited makes its
+  paragraph not editable, with that line's reason.
+- **Tests:** `paragraphs.test.ts`: paragraphs found on both contracts, the invoice (table cells,
+  headings and the page number left out) and two TeX files (columns kept apart, indented first
+  lines); shorter and longer text in a justified paragraph (LibreOffice and Chromium) and a
+  left-aligned one: line count, left edges, baselines, justified right edges, every other line
+  unchanged, pixels unchanged outside the paragraph, incremental save that reopens unrepaired,
+  undo restoring the exact bytes; text that doesn't fit (flagged, applied anyway), off the
+  page (refused); a bold word; made-up pages for lines added under a paragraph (text after it
+  in the same text object stays put) and right and centred paragraphs; the post-edit check
+  catching a glyph moved by 0.3 pt. `textRegression.test.ts`: on the first two pages of every
+  fixture with text that can be edited (66 pages of 49 files, about 10 s), a line and a
+  paragraph each edited and undone: pixels change only around the edit, and after undo the
+  content is byte for byte the same and the page renders the same.
+- **Checked:** in Chromium at 1280 × 900: a paragraph of the LibreOffice contract shortened
+  (two lines, justified; a straight apostrophe the font lacks, so a warning and Times for that
+  character), another made twice as long (the "doesn't fit" warning, **Apply anyway**, it runs
+  over the next heading), the help, saved, reopened with the new text. The toolbar still fits.
+- **Found on the way:** the regression sweep showed two things that aren't paragraph bugs. A
+  glyph that lands exactly on a sub-pixel step after an edit in the same operator can be drawn
+  a step over (two TeX files, 37 pixels; the test allows 64). And a file whose annotations
+  have no appearance streams (`024-annotations`) gets them drawn afresh by MuPDF after any
+  change to the page's content, slightly differently; the content itself is restored exactly.
+- **Not covered yet:** text flowing from one column or page to the next, tables, keeping a bold
+  word bold when a paragraph is reflowed, hyphenating new text, and RTL and CJK (step 3).
 
 ### Where things are
 
@@ -1016,9 +1078,9 @@ what can and can't be edited. It's one undoable step, and saving stays increment
 
 ### Step 2: paragraph reflow
 
-- [ ] Detect paragraphs and their bounding boxes
-- [ ] Reflow text inside the paragraph's box without shifting anything else on the page
-- [ ] Warn when edited text no longer fits
+- [x] Detect paragraphs and their bounding boxes
+- [x] Reflow text inside the paragraph's box without shifting anything else on the page
+- [x] Warn when edited text no longer fits
 
 ### Step 3: complex layouts
 
@@ -1027,8 +1089,9 @@ what can and can't be edited. It's one undoable step, and saving stays increment
 
 ### Quality
 
-- [ ] Regression tests against every fixture (render before/after and compare) (started: eight
-      fixtures in `textEdit.test.ts`, and every fixture's lines listed)
+- [x] Regression tests against every fixture (render before/after and compare)
+      (`textRegression.test.ts`: a line and a paragraph edited and undone on the first two pages
+      of every fixture with text that can be edited)
 - [x] Clear in-app explanation of what can and can't be edited
 
 ### Exit criteria

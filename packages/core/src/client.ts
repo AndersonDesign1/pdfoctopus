@@ -258,6 +258,22 @@ export class PdfWorkerClient {
     return this.call<"editTextLine">({ type: "editTextLine", page, line, expected, text });
   }
 
+  /** What replacing a paragraph's text would do (lines, fit, font), without doing it. */
+  checkParagraphEdit(page: number, paragraph: number, expected: string, text: string) {
+    return this.call<"checkParagraphEdit">({
+      type: "checkParagraphEdit",
+      page,
+      paragraph,
+      expected,
+      text,
+    });
+  }
+
+  /** Replace a paragraph's text, flowing it over its lines, as one undoable step. */
+  editParagraph(page: number, paragraph: number, expected: string, text: string) {
+    return this.call<"editParagraph">({ type: "editParagraph", page, paragraph, expected, text });
+  }
+
   /** Add a highlight, drawing, shape, note, text box or white-out, as one undoable step. */
   addAnnotation(spec: AnnotationSpec) {
     return this.call<"addAnnotation">({ type: "addAnnotation", spec });

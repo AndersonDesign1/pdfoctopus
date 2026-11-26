@@ -174,6 +174,18 @@ async function handle(req: WorkerRequest): Promise<WorkerSuccess> {
         "editTextLine",
         engine.editTextLine(req.page, req.line, req.expected, req.text),
       );
+    case "checkParagraphEdit":
+      return success(
+        req.id,
+        "checkParagraphEdit",
+        engine.checkParagraphEdit(req.page, req.paragraph, req.expected, req.text),
+      );
+    case "editParagraph":
+      return success(
+        req.id,
+        "editParagraph",
+        engine.editParagraph(req.page, req.paragraph, req.expected, req.text),
+      );
     case "undo":
       return success(req.id, "undo", engine.undo());
     case "redo":

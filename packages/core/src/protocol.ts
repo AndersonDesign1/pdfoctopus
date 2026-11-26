@@ -17,6 +17,7 @@ import type {
   PagePoint,
   PageSize,
   PageText,
+  ParagraphEditResult,
   PdfSource,
   PreparedSignature,
   RedactionResult,
@@ -31,6 +32,7 @@ import type {
 import type { PdfErrorCode } from "./errors";
 import type { ExportOptions } from "./exportFiles";
 import type { FieldChanges, NewField } from "./formBuild";
+import type { ParagraphEditCheck } from "./paragraphs";
 import type { PasswordSpec } from "./security";
 import type { SignatureInspection } from "./signatureCheck";
 import type { SignatureFieldInfo } from "./signatureField";
@@ -92,6 +94,22 @@ export type WorkerRequest =
       text: string;
     }
   | { id: number; type: "editTextLine"; page: number; line: number; expected: string; text: string }
+  | {
+      id: number;
+      type: "checkParagraphEdit";
+      page: number;
+      paragraph: number;
+      expected: string;
+      text: string;
+    }
+  | {
+      id: number;
+      type: "editParagraph";
+      page: number;
+      paragraph: number;
+      expected: string;
+      text: string;
+    }
   | { id: number; type: "undo" }
   | { id: number; type: "redo" }
   | { id: number; type: "close" };
@@ -141,6 +159,8 @@ export interface WorkerResults {
   listTextLines: PageText;
   checkTextEdit: TextEditCheck;
   editTextLine: TextEditResult;
+  checkParagraphEdit: ParagraphEditCheck;
+  editParagraph: ParagraphEditResult;
   undo: EditResult | null;
   redo: EditResult | null;
   close: null;

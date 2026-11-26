@@ -68,6 +68,13 @@ import {
   simplifyLabelTree,
 } from "./pageLabels";
 import {
+  type ParagraphEditCheck,
+  type ParagraphInfo,
+  paragraphEditLooksRight,
+  paragraphsOf,
+  planParagraphEdit,
+} from "./paragraphs";
+import {
   ALL_PERMISSIONS,
   checkPasswordSpec,
   encryptOptions,
@@ -96,7 +103,9 @@ import { checkStampText, MAX_STAMP_DETAIL, MAX_STAMP_TEXT, stampName } from "./s
 import {
   analysePage,
   contentLines,
+  drawnGlyphs,
   editLooksRight,
+  type MadeEdit,
   makeEdit,
   type PageAnalysis,
   planLineEdit,
@@ -391,6 +400,8 @@ export interface SignedResult {
 /** The lines of text on a page, for the Edit text tool. */
 export interface PageText {
   lines: TextLineInfo[];
+  /** Paragraphs: two or more of the lines that flow as one block of text. */
+  paragraphs: ParagraphInfo[];
   /** The file has signatures: editing text will show as a change made after signing. */
   signed: boolean;
 }
@@ -398,6 +409,11 @@ export interface PageText {
 /** A line edited: the document as it is now, and what the edit did (a fallback font, say). */
 export interface TextEditResult extends EditResult {
   check: TextEditCheck;
+}
+
+/** A paragraph edited: the document as it is now, and what the edit did. */
+export interface ParagraphEditResult extends EditResult {
+  check: ParagraphEditCheck;
 }
 
 /** One undoable step. Each step knows how to reverse itself, so no copies are kept. */
@@ -2540,10 +2556,14 @@ export class PdfEngine {
     const pdf = this.requirePdf();
     const [index] = this.checkPages([pageIndex]) as [number];
     const blocker = this.textEditBlocker();
-    const lines = this.lineAnalysis(index).infos.map((line) =>
+    const analysis = this.lineAnalysis(index);
+    const lines = analysis.infos.map((line) =>
       blocker && line.editable ? { ...line, editable: false, reason: blocker } : line,
     );
-    return { lines, signed: signedFields(pdf).length > 0 };
+    const paragraphs = paragraphsOf(analysis).map(({ info }) =>
+      blocker && info.editable ? { ...info, editable: false, reason: blocker } : info,
+    );
+    return { lines, paragraphs, signed: signedFields(pdf).length > 0 };
   }
 
   /**
@@ -2567,6 +2587,68 @@ export class PdfEngine {
     const plan = planLineEdit(analysis, id, text);
     if (text === expected) return { ...this.editResult(), check: plan.check };
     const made = makeEdit(pdf, index, analysis, plan);
+    const result = this.applyTextEdit(
+      index,
+      made,
+      (page) => editLooksRight(analysis, id, contentLines(page), text),
+      "This line couldn't be changed without affecting other text, so it was left as it was.",
+    );
+    return { ...result, check: plan.check };
+  }
+
+  /**
+   * What replacing a paragraph's text would do (how many lines it takes, whether they fit, the
+   * font used), without doing it. `expected` is the paragraph's text as listed.
+   */
+  checkParagraphEdit(
+    pageIndex: number,
+    id: number,
+    expected: string,
+    text: string,
+  ): ParagraphEditCheck {
+    const [index] = this.checkPages([pageIndex]) as [number];
+    const analysis = this.editableParagraph(index, id, expected);
+    return planParagraphEdit(analysis, id, text).check;
+  }
+
+  /**
+   * Replace a paragraph's text, flowing it over the paragraph's lines (and more under it if
+   * needed), as one undoable step. Only the operators that draw its lines change; undo puts
+   * the page's original content streams back, byte for byte.
+   */
+  editParagraph(
+    pageIndex: number,
+    id: number,
+    expected: string,
+    text: string,
+  ): ParagraphEditResult {
+    const pdf = this.requirePdf();
+    const [index] = this.checkPages([pageIndex]) as [number];
+    const analysis = this.editableParagraph(index, id, expected);
+    const plan = planParagraphEdit(analysis, id, text);
+    if (text === expected) return { ...this.editResult(), check: plan.check };
+    const made = makeEdit(pdf, index, analysis, plan);
+    const result = this.applyTextEdit(
+      index,
+      made,
+      (page) =>
+        paragraphEditLooksRight(analysis, id, plan, drawnGlyphs(pdf, index), contentLines(page)),
+      "This paragraph couldn't be changed without affecting other text, so it was left as it was.",
+    );
+    return { ...result, check: plan.check };
+  }
+
+  /**
+   * Put new content streams (and resources) on a page, check the result, and keep it as one
+   * undoable step, or put everything back and refuse.
+   */
+  private applyTextEdit(
+    index: number,
+    made: MadeEdit,
+    looksRight: (page: mupdf.PDFPage) => boolean,
+    refusal: string,
+  ): EditResult {
+    const pdf = this.requirePdf();
     const page = pdf.findPage(index);
     const oldContents = page.get("Contents");
     const oldResources = page.get("Resources");
@@ -2581,13 +2663,13 @@ export class PdfEngine {
         else page.put("Resources", oldResources);
       }
     };
-    // Make the change and check it before keeping it: every other line must be where it was.
+    // Make the change and check it before keeping it: everything else must be where it was.
     apply();
     let right = false;
     try {
       const loaded = pdf.loadPage(index);
       try {
-        right = editLooksRight(analysis, id, contentLines(loaded), text);
+        right = looksRight(loaded);
       } finally {
         loaded.destroy();
       }
@@ -2597,13 +2679,9 @@ export class PdfEngine {
         for (const object of made.created) pdf.deleteObject(object);
       }
     }
-    if (!right) {
-      throw new Error(
-        "This line couldn't be changed without affecting other text, so it was left as it was.",
-      );
-    }
+    if (!right) throw new Error(refusal);
     let applied = true;
-    const result = this.run({
+    return this.run({
       label: "Edit text",
       redo: () => {
         if (applied) return;
@@ -2615,7 +2693,6 @@ export class PdfEngine {
         applied = false;
       },
     });
-    return { ...result, check: plan.check };
   }
 
   /** Why no text in the file can be edited, or null. */
@@ -2640,6 +2717,18 @@ export class PdfEngine {
       }
       this.lineCache.set(index, analysis);
     }
+    return analysis;
+  }
+
+  private editableParagraph(index: number, id: number, expected: string): PageAnalysis {
+    const blocker = this.textEditBlocker();
+    if (blocker) throw new Error(blocker);
+    const analysis = this.lineAnalysis(index);
+    const para = Number.isInteger(id) ? paragraphsOf(analysis)[id] : undefined;
+    if (!para || para.info.text !== expected) {
+      throw new Error("The page has changed since its text was read. Try again.");
+    }
+    if (!para.info.editable) throw new Error(para.info.reason ?? "This paragraph can't be edited.");
     return analysis;
   }
 

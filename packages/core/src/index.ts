@@ -19,6 +19,7 @@ export type {
   PagePoint,
   PageSize,
   PageText,
+  ParagraphEditResult,
   PdfSource,
   PreparedSignature,
   RedactionResult,
@@ -58,6 +59,7 @@ export {
 export type { FieldChanges, NewField, NewFieldKind } from "./formBuild";
 export type { FieldKind } from "./forms";
 export { describePages, parsePageRanges, splitEvery, splitSingle } from "./pageRanges";
+export type { ParagraphEditCheck, ParagraphInfo } from "./paragraphs";
 export type {
   LoadProgress,
   WorkerEvent,
@@ -85,5 +87,5 @@ export {
   stampName,
 } from "./stampRules";
 export type { TextEditCheck, TextLineInfo } from "./textEdit";
-export { MAX_LINE_TEXT } from "./textLimits";
+export { MAX_LINE_TEXT, MAX_PARAGRAPH_TEXT } from "./textLimits";
 export { crc32 } from "./zip";
