@@ -87,7 +87,7 @@ import {
   type SignaturesState,
 } from "./signatures/SignaturesPanel";
 import { TextEditConfirm, TextEditHelp } from "./textedit/TextEditDialogs";
-import { TextEditLayer } from "./textedit/TextEditLayer";
+import { type TextDraft, TextEditLayer } from "./textedit/TextEditLayer";
 import { editWarnings } from "./textedit/warnings";
 import {
   type ChosenPdf,
@@ -348,6 +348,11 @@ export function App() {
   const [selecting, setSelecting] = useState(false);
   /** True while the Edit text tool is picked: clicking a line of text then edits it. */
   const [editingText, setEditingText] = useState(false);
+  /**
+   * The line being edited and the text typed so far, with its page, which stays loaded until
+   * the edit is applied or cancelled (scrolling it away would otherwise lose the text).
+   */
+  const [textDraft, setTextDraft] = useState<(TextDraft & { page: number }) | null>(null);
   /** True while "Editing text" (what can and can't be edited) is open. */
   const [textHelp, setTextHelp] = useState(false);
   /** Warnings before a line of text is changed, waiting for the user's answer. */
@@ -463,6 +468,7 @@ export function App() {
     setSelecting(false);
     setSelectedAnnot(null);
     setEditingText(false);
+    setTextDraft(null);
     setTextHelp(false);
     setTextConfirm(null);
     signedWarned.current = false;
@@ -699,6 +705,8 @@ export function App() {
     // A selected annotation may have moved or gone (undo, page edits): let go of it, unless it's
     // the selection's own change, after which its layer reports where it is now.
     if (!keepAnnotation) setSelectedAnnot(null);
+    // A line being edited may have moved or changed; its layer starts afresh anyway.
+    setTextDraft(null);
     const renderer = new PageRenderer(getClient());
     current.renderer.dispose();
     const next = { ...current, info: result.info, renderer };
@@ -1053,6 +1061,11 @@ export function App() {
   }
 
   // ---- Editing text ----
+
+  // Putting the tool down (any way: another tool, Escape) drops the line being edited.
+  useEffect(() => {
+    if (!editingText) setTextDraft(null);
+  }, [editingText]);
 
   /** Pick the Edit text tool, or put it down. */
   function pickEditText() {
@@ -2625,7 +2638,7 @@ export function App() {
               currentHit={currentHit}
               onPageClick={pending && !busy ? movePendingTo : undefined}
               // A draft, or the selection (so it stays up to date), keeps its page loaded.
-              keepPage={draftPage ?? formDraftPage ?? selectedAnnot?.page}
+              keepPage={draftPage ?? formDraftPage ?? selectedAnnot?.page ?? textDraft?.page}
               renderPageOverlay={(index, viewScale) => {
                 const size = doc.info.pages[index] ?? { width: 1, height: 1 };
                 if (pending) {
@@ -2650,6 +2663,10 @@ export function App() {
                       scale={viewScale}
                       busy={busy}
                       list={() => getClient().listTextLines(index)}
+                      editing={textDraft?.page === index ? textDraft : null}
+                      onEditingChange={(draft) =>
+                        setTextDraft(draft ? { ...draft, page: index } : null)
+                      }
                       onEdit={(line, text, signed) => editText(index, line, text, signed)}
                       onExplain={(line) => setStatus(line.reason ?? "This line can't be edited.")}
                     />

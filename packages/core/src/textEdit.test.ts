@@ -10,7 +10,7 @@ import { join } from "node:path";
 import * as mupdf from "mupdf";
 import { afterEach, describe, expect, it } from "vitest";
 import { PdfEngine, type TextEditResult } from "./engine";
-import type { TextLineInfo } from "./textEdit";
+import { contentLines, type TextLineInfo, uprightRectangle } from "./textEdit";
 
 const fixtures = join(import.meta.dirname, "..", "..", "..", "fixtures");
 const fixture = (name: string) => new Uint8Array(readFileSync(join(fixtures, name)));
@@ -323,6 +323,26 @@ function makePdf({ content, rotate = 0 }: PageSpec): Uint8Array {
     const fonts = pdf.newDictionary();
     fonts.put("F1", pdf.addObject(helv));
 
+    // F2: a simple font that only has a space and the letters A to H (not embedded).
+    const small = pdf.newDictionary();
+    small.put("Type", pdf.newName("Font"));
+    small.put("Subtype", pdf.newName("TrueType"));
+    small.put("BaseFont", pdf.newName("SmallTestFont"));
+    small.put("FirstChar", 32);
+    small.put("LastChar", 72);
+    const smallWidths = pdf.newArray();
+    for (let code = 32; code <= 72; code++) smallWidths.push(code === 32 ? 250 : 600);
+    small.put("Widths", smallWidths);
+    const smallEncoding = pdf.newDictionary();
+    const smallDiff = pdf.newArray();
+    smallDiff.push(32);
+    smallDiff.push(pdf.newName("space"));
+    smallDiff.push(65);
+    for (const name of ["A", "B", "C", "D", "E", "F", "G", "H"]) smallDiff.push(pdf.newName(name));
+    smallEncoding.put("Differences", smallDiff);
+    small.put("Encoding", smallEncoding);
+    fonts.put("F2", pdf.addObject(small));
+
     const glyph = pdf.addStream("1000 0 0 0 750 750 d1 0 0 750 750 re f", pdf.newDictionary());
     const procs = pdf.newDictionary();
     procs.put("a", glyph);
@@ -452,6 +472,65 @@ describe("what can't be edited, and why", () => {
   });
 });
 
+describe("clipping shapes", () => {
+  it("knows an upright rectangle from other shapes", () => {
+    const square: [number, number][] = [
+      [0, 0],
+      [10, 0],
+      [10, 5],
+      [0, 5],
+    ];
+    expect(uprightRectangle(square)).toBe(true);
+    expect(uprightRectangle([...square, [0, 0]])).toBe(true);
+    expect(uprightRectangle(square.slice(0, 3))).toBe(false);
+    expect(
+      uprightRectangle([
+        [0, 0],
+        [10, 2],
+        [8, 12],
+        [-2, 10],
+      ]),
+    ).toBe(false);
+    expect(
+      uprightRectangle([
+        [0, 0],
+        [10, 0],
+        [0, 5],
+        [10, 5],
+      ]),
+    ).toBe(false);
+  });
+
+  const triangle = (text: string) =>
+    `q 0 0 m 400 0 l 400 400 l h W n BT /F1 12 Tf 250 100 Td (${text}) Tj ET Q`;
+  const curve = (text: string) =>
+    `q 200 0 m 400 0 400 200 400 200 c 400 400 200 400 200 400 c 0 400 0 200 0 200 c 0 0 200 0 200 0 c h W n BT /F1 12 Tf 150 200 Td (${text}) Tj ET Q`;
+
+  it.each([
+    ["a diagonal clip", triangle],
+    ["a curved clip", curve],
+  ])("under %s, allows the same length or shorter but refuses longer text", (_name, make) => {
+    const engine = open(makePdf({ content: make("Clipped") }));
+    const line = lineWith(engine, "Clipped");
+    expect(line.editable).toBe(true);
+    expect(() => engine.editTextLine(0, line.id, line.text, "Clipped and much longer")).toThrow(
+      /can't be longer than the old/,
+    );
+    edit(engine, "Clipped", "Clips");
+    expect(lineWith(engine, "Clips").editable).toBe(true);
+  });
+
+  it("lets text grow under an upright rectangle drawn with lines, as with re", () => {
+    const engine = open(
+      makePdf({
+        content: "q 0 0 m 400 0 l 400 400 l 0 400 l h W n BT /F1 12 Tf 50 300 Td (Boxed) Tj ET Q",
+      }),
+    );
+    edit(engine, "Boxed", "Boxed in, and longer");
+    expect(lineWith(engine, "Boxed in, and longer").editable).toBe(true);
+  });
+});
+
 describe("how lines are rewritten", () => {
   it("keeps later text in the same text object where it was", () => {
     const engine = open(
@@ -554,6 +633,29 @@ describe("how lines are rewritten", () => {
       makePdf({ content: "BT /F1 12 Tf 0 1 -1 0 200 50 Tm (Up the side) Tj ET" }),
     );
     expect(lineWith(sideways, "Up the side")).toMatchObject({ editable: true, rotation: 270 });
+  });
+
+  it("keeps the line's word spacing when a standard font stands in", () => {
+    const engine = open(makePdf({ content: "BT /F2 12 Tf 4 Tw 50 300 Td (ABC DEF) Tj ET" }));
+    const line = lineWith(engine, "ABC DEF");
+    // "x" isn't in the font, so the whole line is written in Helvetica.
+    const check = engine.checkTextEdit(0, line.id, line.text, "ABC Dex");
+    expect(check.fallback).toBe("Helvetica");
+    // Helvetica: A 667, B 667, C 722, space 278, D 722, e 556, x 500; plus 4 for the space.
+    const helvetica = ((667 + 667 + 722 + 278 + 722 + 556 + 500) * 12) / 1000;
+    expect(check.width).toBeCloseTo(helvetica + 4, 2);
+    engine.editTextLine(0, line.id, line.text, "ABC Dex");
+    const doc = mupdf.Document.openDocument(engine.save(), "application/pdf");
+    try {
+      const page = (doc.asPDF() as mupdf.PDFDocument).loadPage(0);
+      const chars = contentLines(page).flatMap((l) => l.chars);
+      page.destroy();
+      const d = chars.find((c) => c.c === "D");
+      // "ABC " is 28.008 pt in Helvetica at 12 pt, and the space gets the 4 pt of Tw.
+      expect(d?.x).toBeCloseTo(50 + 28.008 + 4, 2);
+    } finally {
+      doc.destroy();
+    }
   });
 
   it("writes word spacing and character spacing as the line had them", () => {

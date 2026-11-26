@@ -36,6 +36,7 @@ import {
   standardFontInfo,
   standardFontObject,
 } from "./textFonts";
+import { MAX_LINE_TEXT } from "./textLimits";
 
 export type Matrix6 = [number, number, number, number, number, number];
 export type Rect4 = [number, number, number, number];
@@ -88,7 +89,6 @@ const MAX_TOTAL_BYTES = 32 * 1024 * 1024;
 const MAX_GLYPHS = 400_000;
 const MAX_LINES = 20_000;
 const MAX_STATE_DEPTH = 256;
-export const MAX_LINE_TEXT = 1000;
 
 // ---------------------------------------------------------------------------------------------
 // Matrices
@@ -131,6 +131,33 @@ export function readingRotation(m: Matrix6): 0 | 90 | 180 | 270 | null {
     if (b < 0 && c < 0) return 270;
   }
   return null;
+}
+
+/**
+ * Whether a path's points (in order) are an upright rectangle as shown: four corners (a fifth
+ * back at the start is allowed), each side straight across or straight down.
+ */
+export function uprightRectangle(points: readonly (readonly [number, number])[]): boolean {
+  const eps = 1e-3;
+  const pts = [...points];
+  const [fx, fy] = pts[0] ?? [0, 0];
+  const last = pts[pts.length - 1];
+  if (pts.length === 5 && last && Math.abs(last[0] - fx) < eps && Math.abs(last[1] - fy) < eps) {
+    pts.pop();
+  }
+  if (pts.length !== 4) return false;
+  for (let i = 0; i < 4; i++) {
+    const [ax, ay] = pts[i] as [number, number];
+    const [bx, by] = pts[(i + 1) % 4] as [number, number];
+    const across = Math.abs(ay - by) < eps && Math.abs(ax - bx) >= eps;
+    const down = Math.abs(ax - bx) < eps && Math.abs(ay - by) >= eps;
+    if (!across && !down) return false;
+    // Sides alternate: across, down, across, down (or the other way).
+    const cy = (pts[(i + 2) % 4] as [number, number])[1];
+    const nextAcross = Math.abs(by - cy) < eps;
+    if (across === nextAcross) return false;
+  }
+  return true;
 }
 
 /** A point in a frame where x runs along the text and y across it, for a reading rotation. */
@@ -326,6 +353,8 @@ interface ShowOp extends Place {
   /** What it shows, in order: glyphs (with their code's bytes) and TJ moves. */
   items: Item[];
   clip: Rect4 | null;
+  /** Clipped by a shape that isn't an upright rectangle (`clip` is only its bounding box). */
+  clipShaped: boolean;
   textClip: boolean;
   marked: Marked[];
   /** False when where it draws isn't known (an unreadable font, an unknown position). */
@@ -335,6 +364,8 @@ interface ShowOp extends Place {
 interface State {
   ctm: Matrix6;
   clip: Rect4 | null;
+  /** Clipped by a shape that isn't an upright rectangle (`clip` is only its bounding box). */
+  clipShaped: boolean;
   textClip: boolean;
   font: FontInfo | null;
   fontResource: string | null;
@@ -479,6 +510,7 @@ class Walk {
   private state: State = {
     ctm: IDENTITY,
     clip: null,
+    clipShaped: false,
     textClip: false,
     font: null,
     fontResource: null,
@@ -499,6 +531,10 @@ class Walk {
   private clipInText = false;
   private path: Rect4 | null = null;
   private pathBroken = false;
+  /** The current path's points in page space, while it could still be an upright rectangle. */
+  private pathPoints: [number, number][] = [];
+  /** False once the path has a curve, a second part, or more points than a rectangle. */
+  private pathRect = true;
   private pendingClip = false;
   private marked: Marked[] = [];
   private fonts = new Map<string, FontInfo | null>();
@@ -596,14 +632,20 @@ class Walk {
         this.show(op, stream);
         break;
       case "m":
+        // A second part (subpath) means the clip isn't one rectangle.
+        if (this.path) this.pathRect = false;
+        this.addPoints(op, 2, true);
+        break;
       case "l":
-        this.addPoints(op, 2);
+        this.addPoints(op, 2, true);
         break;
       case "c":
+        this.pathRect = false;
         this.addPoints(op, 6);
         break;
       case "v":
       case "y":
+        this.pathRect = false;
         this.addPoints(op, 4);
         break;
       case "re": {
@@ -612,10 +654,12 @@ class Walk {
           break;
         }
         const [x, y, w, h] = op.operands.map(num) as [number, number, number, number];
-        this.addPoint(x, y);
-        this.addPoint(x + w, y + h);
-        this.addPoint(x + w, y);
-        this.addPoint(x, y + h);
+        if (this.path) this.pathRect = false;
+        // Corners in order round the rectangle.
+        this.addPoint(x, y, true);
+        this.addPoint(x + w, y, true);
+        this.addPoint(x + w, y + h, true);
+        this.addPoint(x, y + h, true);
         break;
       }
       case "h":
@@ -637,9 +681,14 @@ class Walk {
         if (this.pendingClip) {
           // An unreadable path clips to who knows what: nothing under it is edited.
           s.clip = this.pathBroken || !this.path ? [0, 0, 0, 0] : intersect(s.clip, this.path);
+          // Any other shape (a curve, a slanted or rotated rectangle, several parts) is only
+          // known by its bounding box, which may show more than the shape does.
+          if (!this.pathRect || !uprightRectangle(this.pathPoints)) s.clipShaped = true;
         }
         this.path = null;
         this.pathBroken = false;
+        this.pathPoints = [];
+        this.pathRect = true;
         this.pendingClip = false;
         break;
       case "BMC":
@@ -671,17 +720,21 @@ class Walk {
     this.tmKnown = true;
   }
 
-  private addPoints(op: Operation, count: number): void {
+  private addPoints(op: Operation, count: number, corner = false): void {
     if (op.operands.length !== count || !op.operands.every((o) => o.kind === "number")) {
       this.pathBroken = true;
       return;
     }
     const v = op.operands.map(num);
-    for (let i = 0; i < count; i += 2) this.addPoint(v[i] as number, v[i + 1] as number);
+    for (let i = 0; i < count; i += 2) this.addPoint(v[i] as number, v[i + 1] as number, corner);
   }
 
-  private addPoint(x: number, y: number): void {
+  private addPoint(x: number, y: number, corner = false): void {
     const [px, py] = apply(this.device(), x, y);
+    if (corner && this.pathRect) {
+      if (this.pathPoints.length < 5) this.pathPoints.push([px, py]);
+      else this.pathRect = false;
+    }
     if (!this.path) this.path = [px, py, px, py];
     else {
       this.path = [
@@ -799,6 +852,7 @@ class Walk {
       glyphs: [],
       items: [],
       clip: s.clip,
+      clipShaped: s.clipShaped,
       textClip: s.textClip,
       marked: [...this.marked],
       known,
@@ -1203,13 +1257,13 @@ export function planLineEdit(analysis: PageAnalysis, id: number, newText: string
   // like it: all of the line if the standard font has every character, else only the
   // characters the line's font lacks.
   const spaceGap = estimateSpace(line, ops, id);
-  const own = encode(text, [[0, font]], first, spaceGap);
+  const own = encode(text, [[0, font]], first, spaceGap, font.twoByte);
   let encoded = own;
   let fallback: StandardFont | null = null;
   if (own.missing.length > 0) {
     fallback = pickStandardFont(font, line, ops, id);
     const standard = standardFontInfo(fallback);
-    encoded = encode(text, [[1, standard]], first, spaceGap);
+    encoded = encode(text, [[1, standard]], first, spaceGap, font.twoByte);
     if (encoded.missing.length > 0)
       encoded = encode(
         text,
@@ -1219,6 +1273,7 @@ export function planLineEdit(analysis: PageAnalysis, id: number, newText: string
         ],
         first,
         spaceGap,
+        font.twoByte,
       );
     if (encoded.missing.length > 0) {
       throw new Error(
@@ -1245,6 +1300,13 @@ export function planLineEdit(analysis: PageAnalysis, id: number, newText: string
   const room = Math.max(0, limit - start - 1);
   const oldWidth = lineBox[2] - start;
   const tooWide = width > room && width > oldWidth + 0.5;
+  // Under a clipping shape that isn't an upright rectangle, only its bounding box is known, and
+  // longer text could go where the shape hides it: refused.
+  if (ops.some((op) => op.clipShaped) && width > oldWidth + 0.5) {
+    throw new Error(
+      "This line is inside a shaped area that hides what's outside it, so the new text can't be longer than the old.",
+    );
+  }
   // Past the edge of a clipping area, the end of the text would be cut off: refused.
   if (first.clip) {
     const edge = rectToFrame(rotation, first.clip)[2];
@@ -1387,14 +1449,18 @@ function showPieces(pieces: Piece[], twoByte: boolean): string {
 /**
  * The new text in fonts: each character in the first font that has it. A space no font can
  * draw (common in TeX fonts, which leave gaps instead) becomes a gap of `spaceGap` thousandths
- * of the font size. Fonts come with their number in Piece (0 own, 1 standard); word spacing
- * is off while the standard font is used.
+ * of the font size. Fonts come with their number in Piece (0 own, 1 standard).
+ *
+ * Word spacing (Tw) applies to one-byte spaces. The standard font keeps the line's word
+ * spacing when the line's own font showed it (a simple font); when the line's font is a
+ * two-byte one, where Tw never applied, it's turned off for the standard font (drawRuns).
  */
 function encode(
   text: string,
   fonts: [number, FontInfo][],
   op: Pick<ShowOp, "fs" | "tc" | "tw" | "th">,
   spaceGap: number,
+  ownTwoByte: boolean,
 ): Encoded {
   const pieces: Piece[] = [];
   const missing: string[] = [];
@@ -1427,7 +1493,7 @@ function encode(
     if (last && "codes" in last && last.font === font) last.codes.push(code);
     else pieces.push({ font, codes: [code] });
     // Word spacing: only for a one-byte space, and not while a standard font stands in.
-    const tw = !info.twoByte && code === 32 && font === 0 ? op.tw : 0;
+    const tw = !info.twoByte && code === 32 && !(font === 1 && ownTwoByte) ? op.tw : 0;
     advance += ((info.width(code) / 1000) * op.fs + op.tc + tw) * op.th;
   }
   return { pieces, advance, missing, usesOwn };
@@ -1451,15 +1517,17 @@ function drawRuns(
     if (run.length > 0) parts.push(`[${showPieces(run, current === 0 && own.twoByte)}] TJ`);
     run = [];
   };
+  // Word spacing never applied to the two-byte font's spaces, so it's off for the standard one.
+  const resetTw = own.twoByte && op.tw !== 0;
   const switchTo = (font: number) => {
     flush();
     if (font === current || !standardName) return;
     if (font === 1) {
-      if (op.tw !== 0) parts.push("0 Tw");
+      if (resetTw) parts.push("0 Tw");
       parts.push(`${formatName(standardName)} ${size} Tf`);
     } else {
       parts.push(`${formatName(op.fontResource as string)} ${size} Tf`);
-      if (op.tw !== 0) parts.push(`${formatNumber(op.tw)} Tw`);
+      if (resetTw) parts.push(`${formatNumber(op.tw)} Tw`);
     }
     current = font;
   };

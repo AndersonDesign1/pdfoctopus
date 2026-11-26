@@ -615,13 +615,18 @@ what can and can't be edited. It's one undoable step, and saving stays increment
   it was, and the new text there; if not, the edit is undone and refused.
 - **Warnings** (before applying): a stand-in font, text longer than the room before the next
   thing on the line or the page edge (allowed), a line that had several fonts, and a signed
-  file (once per file). Text that would run past a clipping edge (a table cell) is refused.
+  file (once per file). Text that would run past a clipping edge (a table cell) is refused, and
+  under a clipping shape that isn't an upright rectangle (a curve, a slant) the new text can't
+  be longer than the old. A stand-in font keeps the line's word spacing.
 - **Refused, with the reason:** Chinese, Japanese and Korean text, right-to-left and vertical
   text, slanted or mirrored text, partly hidden (clipped) text, invisible text (scans' OCR
   layers), clipping text, Type 3 fonts, text in form XObjects, fonts with other encodings, text
   mixed in with other lines in one operator, and pages whose content can't be read (or past the
   limits: 32 MB of content, a million operators). Files whose permissions don't allow changes
   are refused until unlocked.
+- **The page doesn't load MuPDF:** limits the app uses are in `textLimits.ts`, and
+  `index.test.ts` checks nothing the package index reaches at run time imports MuPDF. Text
+  being typed is kept by the app with its page held loaded, so scrolling away doesn't lose it.
 - **Also fixed:** a second save of a file that uses cross-reference streams pointed its /Prev
   at a section that isn't there, so it needed repair or didn't open (`fixUpdatePrev`).
 - **Tests:** `contentStream.test.ts` (strings, escapes, hex, nested brackets, TJ arrays,

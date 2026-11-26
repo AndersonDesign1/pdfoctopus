@@ -2,11 +2,18 @@
 //
 // The Edit text tool's layer over a page: every line of text outlined (purple if it can be
 // edited, grey and dashed if not, with the reason), and a text box over the line being edited.
-// Enter applies, Escape cancels.
+// Enter applies, Escape cancels. The text being typed is kept by the app (see TextDraft), so it
+// survives the page being scrolled away and its layer removed.
 
 import type { PageText, TextLineInfo } from "@pdfoctopus/core";
 import { MAX_LINE_TEXT } from "@pdfoctopus/core";
 import { type CSSProperties, useEffect, useRef, useState } from "react";
+
+/** A line being edited and the text typed so far. */
+export interface TextDraft {
+  line: TextLineInfo;
+  text: string;
+}
 
 /** Room around a line's box, in points, so small text is easy to click. */
 const PAD = 1.5;
@@ -15,6 +22,8 @@ export function TextEditLayer({
   scale,
   busy,
   list,
+  editing,
+  onEditingChange,
   onEdit,
   onExplain,
 }: {
@@ -23,13 +32,17 @@ export function TextEditLayer({
   busy: boolean;
   /** Reads this page's lines; called once each time the layer appears. */
   list(): Promise<PageText>;
+  /** The line being edited on this page, if any, and what's been typed. */
+  editing: TextDraft | null;
+  /** A line picked, the text changed, or the edit finished or cancelled (null). */
+  onEditingChange(draft: TextDraft | null): void;
   /** Apply new text to a line. Resolves true once it's done (or false to keep editing). */
   onEdit(line: TextLineInfo, text: string, signed: boolean): Promise<boolean>;
   /** Say why a line can't be edited. */
   onExplain(line: TextLineInfo): void;
 }) {
   const [page, setPage] = useState<PageText | null>(null);
-  const [editing, setEditing] = useState<{ line: TextLineInfo; text: string } | null>(null);
+  const setEditing = onEditingChange;
   const listRef = useRef(list);
   listRef.current = list;
   const input = useRef<HTMLInputElement>(null);
@@ -49,13 +62,18 @@ export function TextEditLayer({
     };
   }, []);
 
-  // Focus the text box (all of it selected) when a line is picked, not on every keystroke.
+  // Focus the text box when a line is picked or the layer comes back (after scrolling), not on
+  // every keystroke. Text not changed yet is selected, so typing replaces it.
   const editingId = editing?.line.id;
+  const loaded = page !== null;
+  const fresh = editing ? editing.text === editing.line.text : false;
+  const freshRef = useRef(fresh);
+  freshRef.current = fresh;
   useEffect(() => {
-    if (editingId === undefined) return;
+    if (editingId === undefined || !loaded) return;
     input.current?.focus();
-    input.current?.select();
-  }, [editingId]);
+    if (freshRef.current) input.current?.select();
+  }, [editingId, loaded]);
 
   if (!page) return null;
 

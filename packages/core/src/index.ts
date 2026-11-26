@@ -84,5 +84,6 @@ export {
   type StampLayout,
   stampName,
 } from "./stampRules";
-export { MAX_LINE_TEXT, type TextEditCheck, type TextLineInfo } from "./textEdit";
+export type { TextEditCheck, TextLineInfo } from "./textEdit";
+export { MAX_LINE_TEXT } from "./textLimits";
 export { crc32 } from "./zip";
