@@ -16,7 +16,7 @@ tasks needed to finish it and the **exit criteria** that must be true before we 
 ## Next up
 
 Start here if you're picking the project up. Do these in order, and update this list in the
-same PR that changes it. Last updated: 2026-11-26, after single-line text edits.
+same PR that changes it. Last updated: 2026-11-27, after columns, right-to-left and CJK text.
 
 ### 0. Keep `main` green (2026-11-18)
 
@@ -771,6 +771,62 @@ the paragraph's box, in its font, from its left edge, on its baselines, lined up
 - **Not covered yet:** text flowing from one column or page to the next, tables, keeping a bold
   word bold when a paragraph is reflowed, hyphenating new text, and RTL and CJK (step 3).
 
+### 21. Phase 6: columns, right-to-left and CJK text (2026-11-27)
+
+Step 3 of Phase 6. Text in columns, in Hebrew and Arabic, and in Chinese, Japanese and Korean
+can now be edited a line or a paragraph at a time, with every earlier check kept (nothing
+else may move, exact undo, clips, bounded work).
+
+- **Columns:** paragraphs were already found one column at a time; now tested on a TeX
+  two-column file and a new three-column page: paragraphs never take lines from another
+  column, the new text is as wide as the column, and the room below stops at that column's own
+  next text or shape. Text running on from one column or page to the next is still edited as
+  two separate paragraphs.
+- **Right to left** (`scripts.ts`, `readRightToLeft` in `textEdit.ts`): the glyphs of a line
+  are put in visual order by position (not MuPDF's order, which garbles mixed lines) and turned
+  into reading order with a small part of the Unicode bidirectional algorithm (right-to-left
+  runs with numbers and Latin words inside, brackets mirrored). Drawing the result again must
+  give the same glyphs, or the line is refused, as are lines that are mostly left to right,
+  lines with vowel marks, and lines drawn right to left. The box shows the reading order
+  (`direction: "rtl"`); new text is written in visual order in the line's font, ending at the
+  line's right edge (room and clips measured to the left). Paragraphs read right to left
+  reflow lined up on the right (justified ones too, last line on the right). Right-to-left
+  text can't be typed into a left-to-right line.
+- **Arabic:** letters take their isolated, initial, medial or final form, and lam-alef is one
+  glyph (`shapeArabic`, Presentation Forms-A and -B). Only fonts whose ToUnicode map names the
+  joined forms can be edited, and only where shaping the line's own text gives exactly the
+  forms drawn; otherwise "This font's Arabic letters can't be reshaped here". A form the font
+  lacks is refused (no standard font has Arabic).
+- **Chinese, Japanese and Korean:** lines in Type0 Identity-H fonts can be edited when the
+  font has each character: in its ToUnicode map, with a width, and (new) with an outline in the
+  embedded TrueType program (`trueTypeGlyphs`: subsets keep glyph numbers but empty unused
+  glyphs). Missing characters are refused with the reason (no standard CJK font). Paragraphs
+  break between any two CJK characters, with simple kinsoku (no line starts with 、。，．）」』
+  and the like, or ends with （「『), join lines without spaces, and justify by spacing
+  characters. Identity-V is still refused, and so is vertical writing drawn a character at a
+  time (stacked one-character lines, as Chromium writes it).
+- **App:** the edit boxes take `dir="rtl"` and grow to the left for right-to-left lines; the
+  **?** help says what's newly editable.
+- **Fixtures** (`fixtures/scripts/generate-text-scripts.mjs`, DejaVu Sans subsets):
+  `hebrew-text.pdf`, `arabic-text.pdf` (page 1 names the joined forms, page 2 maps them to
+  plain letters) and `three-columns.pdf`.
+- **Tests:** `scripts.test.ts`: reading order, Arabic forms, kinsoku; columns (three-column
+  page and TeX: detection, reflow width, room below, nothing else moves, exact undo); Hebrew
+  (line and paragraph edited, read back in reading order, right edge kept, pixels unchanged
+  outside, incremental save reopens, exact undo; missing letters refused); Arabic (edited and
+  read back; missing form and unnamed forms refused); CJK (line and paragraph, kinsoku,
+  missing glyph refused, a glyph in ToUnicode but empty in the subset refused, Identity-V
+  refused). `textRegression.test.ts` now covers 70 pages of 53 fixtures, the new ones
+  included (CJK paragraphs are shortened by characters).
+- **Checked:** in Chromium at 1280 × 900: a Hebrew line edited (reading order in the box, same
+  right edge), a Chinese paragraph reflowed (a missing character refused first), the help,
+  both saved and reopened with the new text. The toolbar still fits.
+- **Phase 6:** both Quality items and every task are ticked. The exit criteria need checks by
+  hand in Acrobat and other readers (TESTING.md), so they stay unticked.
+- **Not covered yet:** text flowing between columns or pages, vowel marks, Arabic whose forms
+  the font doesn't name, mixed-direction lines that aren't clearly right to left, vertical
+  writing, and adding glyphs to subset fonts.
+
 ### Where things are
 
 - **Engine:** `packages/core` (MuPDF in a Web Worker, plus a promise-based client). Tests:
@@ -1088,8 +1144,8 @@ the paragraph's box, in its font, from its left edge, on its baselines, lined up
 
 ### Step 3: complex layouts
 
-- [ ] Multi-column text
-- [ ] Right-to-left and CJK text
+- [x] Multi-column text
+- [x] Right-to-left and CJK text
 
 ### Quality
 
