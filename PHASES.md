@@ -859,10 +859,13 @@ budget, without runaway memory, and the engine must still handle good files afte
     WebAssembly stack and killed the engine (1 KB files). Pages whose drawings nest more than
     20 deep, or contain themselves, are now refused with a message before MuPDF draws them,
     shows their text or redacts them (`drawingDepth.ts`; it reads which resources each content
-    stream names, so shared resource dictionaries aren't counted).
+    stream names, so shared resource dictionaries aren't counted; a page too big to check fully
+    is refused rather than passed half-checked).
   - About 190 nested arrays or dictionaries in one object silently corrupted MuPDF's memory,
     and a later, good file then crashed. Files nesting more than 64 deep are refused before
-    MuPDF reads them, object streams included, and so are files being inserted (`nesting.ts`).
+    MuPDF reads them, and so are files being inserted (`nesting.ts`). The file is read token
+    by token, so a name like /stream can't hide anything. Object streams are checked too,
+    decompressed within limits (256 KB each, one filter): a file past them is refused.
   - Inserting a page into a damaged page tree (an unreadable page and a /Parent loop) never
     returned: the app would hang. Adding, removing and moving pages is now refused in a tree
     with a missing page or a looping /Parent chain (`pageTree.ts`); the pages still show.

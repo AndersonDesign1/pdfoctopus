@@ -20,11 +20,11 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { Worker } from "node:worker_threads";
 import { PdfEngine } from "../engine";
-import { FIXTURES_DIR, loadSeeds, makeVariant } from "./corpus";
+import { FIXTURES_DIR } from "./corpus";
 import { craftedPdfs } from "./crafted";
 import { driveDocument, type Problem } from "./drive";
-import { variantSeed } from "./random";
-import type { RunnerInput, RunnerMessage } from "./runner";
+import type { RunnerInput } from "./runner";
+import { type Failure, supervise } from "./supervise";
 
 const env = process.env;
 
@@ -72,82 +72,50 @@ if (env.FUZZ_FILE) {
   process.exit(result.problems.length ? 1 : 0);
 }
 
-const seeds = loadSeeds(maxSeedBytes);
 let found = 0;
 
-/** Save a failing variant (it's rebuilt from its number: the same seed gives the same bytes). */
-function save(index: number, problems: Problem[]) {
+/** Save a failing variant: its bytes as the thread sent them (nothing is made again here). */
+function save({ index, bytes, label, problems }: Failure) {
   found++;
   mkdirSync(outDir, { recursive: true });
-  const variant = makeVariant(seeds, variantSeed(runSeed, index));
   const name = `${runSeed}-${index}-${problems[0]?.kind ?? "problem"}`;
   const pdf = join(outDir, `${name}.pdf`);
-  writeFileSync(pdf, variant.bytes);
+  if (bytes) writeFileSync(pdf, bytes);
+  const again = `FUZZ_SEED=${runSeed} FUZZ_FROM=${index} FUZZ_ITERATIONS=1 bun run fuzz`;
   writeFileSync(
     join(outDir, `${name}.txt`),
-    `Seed ${runSeed}, variant ${index}: ${variant.seed.name} with ${variant.steps.join(" + ") || "no mutations"}\n` +
-      `${describe(problems)}\n\nRun it again:\n  FUZZ_FILE=${pdf} bun run fuzz\n` +
-      `or as part of the run (in a fresh engine):\n  FUZZ_SEED=${runSeed} FUZZ_FROM=${index} FUZZ_ITERATIONS=1 bun run fuzz\n`,
+    `Seed ${runSeed}, variant ${index}: ${label}\n${describe(problems)}\n\nRun it again:\n` +
+      (bytes
+        ? `  FUZZ_FILE=${pdf} bun run fuzz\nor as part of the run (in a fresh engine):\n`
+        : "") +
+      `  ${again}\n`,
   );
-  console.log(`\nvariant ${index} (${variant.seed.name}, ${variant.steps.join("+")}):`);
+  console.log(`\nvariant ${index} (${label}):`);
   console.log(describe(problems));
-  console.log(`  saved ${pdf}`);
+  console.log(`  saved ${bytes ? pdf : join(outDir, `${name}.txt`)}`);
 }
 
 /** Run variants from..to in one thread; resolves to where to carry on (to when done). */
 function runThread(from: number, to: number): Promise<number> {
-  return new Promise((done) => {
-    const input: RunnerInput = { runSeed, from, to, budgetMs, maxSeedBytes, healthCheck };
-    const worker = new Worker(new URL("./runner.ts", import.meta.url), { workerData: input });
-    let current = from;
-    let started = false;
-    let finished = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const finish = (next: number) => {
-      if (finished) return;
-      finished = true;
-      clearTimeout(timer);
-      void worker.terminate();
-      done(next);
-    };
+  return supervise({
+    from,
+    start: (first) => {
+      const input: RunnerInput = { runSeed, from: first, to, budgetMs, maxSeedBytes, healthCheck };
+      return new Worker(new URL("./runner.ts", import.meta.url), { workerData: input });
+    },
     // A variant that takes three budgets has hung. Starting a thread (loading MuPDF and the
-    // files) doesn't count, so the clock starts with the first variant.
-    const watch = (ms: number) => {
-      clearTimeout(timer);
-      timer = setTimeout(() => {
-        save(current, [
-          { kind: "too-slow", op: "variant", message: `no answer in ${ms} ms (hung)` },
-        ]);
-        finish(current + 1);
-      }, ms);
-    };
-    watch(Math.max(120_000, budgetMs * 3));
-    worker.on("message", (msg: RunnerMessage) => {
-      // Messages still queued from a thread that was given up on.
-      if (finished) return;
-      watch(budgetMs * 3);
-      if (msg.type === "start") {
-        started = true;
-        current = msg.index;
-      } else if (msg.type === "done") {
-        if (msg.problems.length) save(msg.index, msg.problems);
-        if (msg.index % 50 === 49) process.stdout.write(`${msg.index + 1} `);
-        current = msg.index + 1;
-      } else {
-        finish(current);
-      }
-    });
-    worker.on("error", (err) => {
-      if (finished) return;
-      if (!started) {
-        // Not a variant's fault: the fuzzer itself is broken.
-        console.error(`\nThe fuzzing thread failed to start: ${err.stack ?? err.message}`);
-        process.exit(2);
-      }
-      save(current, [{ kind: "crash", op: "variant", message: `the thread died: ${err.message}` }]);
-      finish(current + 1);
-    });
-    worker.on("exit", () => finish(current + 1));
+    // files) doesn't count, so a new thread gets longer.
+    hangMs: budgetMs * 3,
+    startupMs: Math.max(120_000, budgetMs * 3),
+    onDone: (msg, label, bytes) => {
+      if (msg.problems.length) save({ index: msg.index, bytes, label, problems: msg.problems });
+      if (msg.index % 50 === 49) process.stdout.write(`${msg.index + 1} `);
+    },
+    onFailure: save,
+    onBroken: (err) => {
+      console.error(`\nThe fuzzing thread failed to start: ${err.stack ?? err.message}`);
+      process.exit(2);
+    },
   });
 }
 

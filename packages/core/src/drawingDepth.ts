@@ -41,6 +41,17 @@ interface Drawing {
 
 class Stop extends Error {}
 
+/** Most streams of one kind (content, appearances, glyph procedures) checked for one drawing. */
+export const MAX_STREAMS = 10_000;
+
+/**
+ * Past a limit, the page is refused rather than passed half-checked: whatever wasn't looked
+ * at could be what overflows MuPDF's stack.
+ */
+function tooMany(count: number): void {
+  if (count > MAX_STREAMS) throw new Stop(TOO_COMPLEX);
+}
+
 class Checker {
   private nodes = 0;
   private scanned = 0;
@@ -113,8 +124,9 @@ class Checker {
       const charProcs = font.get("CharProcs");
       if (charProcs.isDictionary()) {
         charProcs.forEach((proc) => {
-          if (proc.isStream() && procs.length < 10_000) procs.push(proc);
+          if (proc.isStream()) procs.push(proc);
         });
+        tooMany(procs.length);
       }
       out.push(drawingOf(font, procs, "f"));
     });
@@ -153,8 +165,8 @@ class Checker {
         buffer.destroy();
       }
     } catch {
-      // A stream MuPDF can't decode draws nothing.
-      return new Set();
+      // Not readable here (MuPDF may still draw part of it): every resource counts as used.
+      return null;
     }
   }
 }
@@ -199,7 +211,8 @@ function contentStreams(page: mupdf.PDFObject): mupdf.PDFObject[] {
   if (contents.isStream()) return [contents];
   const out: mupdf.PDFObject[] = [];
   if (contents.isArray()) {
-    for (let i = 0; i < contents.length && i < 10_000; i++) {
+    tooMany(contents.length);
+    for (let i = 0; i < contents.length; i++) {
       const item = contents.get(i);
       if (item.isStream()) out.push(item);
     }
@@ -212,7 +225,7 @@ function appearances(page: mupdf.PDFObject): mupdf.PDFObject[] {
   const annots = page.get("Annots");
   const out: mupdf.PDFObject[] = [];
   if (!annots.isArray()) return out;
-  for (let i = 0; i < annots.length && out.length < 10_000; i++) {
+  for (let i = 0; i < annots.length; i++) {
     const ap = annots.get(i).get("AP");
     if (!ap.isDictionary()) continue;
     for (const kind of ["N", "R", "D"]) {
@@ -220,10 +233,11 @@ function appearances(page: mupdf.PDFObject): mupdf.PDFObject[] {
       if (entry.isStream()) out.push(entry);
       else if (entry.isDictionary()) {
         entry.forEach((state) => {
-          if (state.isStream() && out.length < 10_000) out.push(state);
+          if (state.isStream()) out.push(state);
         });
       }
     }
+    tooMany(out.length);
   }
   return out;
 }

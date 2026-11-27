@@ -6,11 +6,17 @@
 
 import * as mupdf from "mupdf";
 import { describe, expect, it } from "vitest";
-import { namesIn } from "./drawingDepth";
+import { MAX_STREAMS, namesIn } from "./drawingDepth";
 import { createBlankPdf, engineTroubles, onEngineTrouble, PdfEngine } from "./engine";
 import { errorMessage } from "./errors";
 import { onePage, type RawObject, rawPdf, stream } from "./fuzz/rawPdf";
-import { MAX_OBJECT_NESTING, objectNesting, TOO_DEEP_MESSAGE } from "./nesting";
+import {
+  MAX_OBJECT_NESTING,
+  MAX_OBJECT_STREAM_BYTES,
+  objectNesting,
+  TOO_COMPLEX_MESSAGE,
+  TOO_DEEP_MESSAGE,
+} from "./nesting";
 import { DAMAGED_PAGE_TREE } from "./pageTree";
 
 const CATALOG = "<</Type /Catalog /Pages 2 0 R>>";
@@ -162,6 +168,21 @@ describe("drawings nested too deeply for MuPDF", () => {
     engine.close();
   });
 
+  // From review: only the first 10,000 content streams were checked, so a deep pattern drawn
+  // by the next one went unseen and the page passed.
+  it("refuses a page with more content streams than it can check", () => {
+    const deep = nestedDrawings("pattern", 40);
+    const text = new TextDecoder("latin1").decode(deep);
+    // Many references to nothing (harmless, MuPDF skips them), then the stream with the chain.
+    const harmless = `${"9999 0 R ".repeat(MAX_STREAMS)}4 0 R`;
+    const patched = text.replace("/Contents 4 0 R", `/Contents [${harmless}]`);
+    const engine = new PdfEngine();
+    engine.open(Uint8Array.from(patched, (c) => c.charCodeAt(0)));
+    expect(() => engine.renderPage(0, 1)).toThrow(/too complex to check/);
+    engine.close();
+    stillWorks(engine);
+  });
+
   it("reads names with escapes", () => {
     const bytes = new TextEncoder().encode("/A#20B Do (/notaname) /Pattern cs /P1 scn");
     expect([...namesIn(bytes)]).toEqual(["A B", "notaname", "Pattern", "P1"]);
@@ -223,6 +244,44 @@ describe("objects nested too deeply for MuPDF", () => {
     const text =
       "1 0 obj [ [ ([[[[) ] <5b5b> ] % [[[[\nendobj 2 0 obj <</Length 4>>stream\n[[[[\nendstream endobj";
     expect(objectNesting(new TextEncoder().encode(text))).toBe(2);
+  });
+
+  // From review: names were read as keywords, so /stream skipped ahead and /endobj reset the
+  // count, and nesting after them went unchecked.
+  it.each([
+    ["/stream null", `${"[".repeat(40)} /stream`],
+    ["/endobj in an array", `${"[".repeat(40)} /endobj`],
+    ["an escaped bracket in a string", `${"[".repeat(40)} (a\\) /stream b) /stream`],
+  ])("isn't fooled by %s", (_what, prefix) => {
+    const deep = `${"[".repeat(40)}1${"]".repeat(40)}`;
+    const bytes = rawPdf(onePage("BT ET", `/Junk ${prefix} ${deep}`));
+    expect(objectNesting(bytes)).toBeGreaterThan(MAX_OBJECT_NESTING);
+    expect(() => new PdfEngine().open(bytes)).toThrow(TOO_DEEP_MESSAGE);
+  });
+
+  it("keeps checking after a stream with no endstream", () => {
+    const deep = `${"<</A ".repeat(100)}1${">>".repeat(100)}`;
+    const text = `1 0 obj <</Length 3>>stream\nabc\nendobj 2 0 obj ${deep} endobj`;
+    expect(objectNesting(new TextEncoder().encode(text))).toBeGreaterThan(MAX_OBJECT_NESTING);
+  });
+
+  // From review: every object stream was decompressed in full on opening, however big.
+  it("refuses object streams too large or unusual to decompress safely", () => {
+    const objstm = (dict: string, size: number) =>
+      rawPdf([
+        ...onePage("BT ET"),
+        stream(`/Type /ObjStm /N 1 /First 4 ${dict}`, "0 0 ".padEnd(size, " ")),
+      ]);
+    const engine = new PdfEngine();
+    // A chain of filters multiplies how much a small stream can expand.
+    expect(() => engine.open(objstm("/Filter [/FlateDecode /FlateDecode]", 10))).toThrow(
+      TOO_COMPLEX_MESSAGE,
+    );
+    expect(() => engine.open(objstm("/Filter 9 0 R", 10))).toThrow(TOO_COMPLEX_MESSAGE);
+    expect(() => engine.open(objstm("", MAX_OBJECT_STREAM_BYTES + 1))).toThrow(TOO_COMPLEX_MESSAGE);
+    // An ordinary one is fine.
+    expect(engine.open(objstm("", 100)).needsPassword).toBe(false);
+    engine.close();
   });
 });
 

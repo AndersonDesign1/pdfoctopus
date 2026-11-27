@@ -172,7 +172,7 @@ export const corruptLength: Mutator = (bytes, rng) =>
 
 export const swapObjectNumbers: Mutator = (bytes, rng) => {
   const text = toText(bytes);
-  const headers = matches(text, /(\d+) (\d+) obj/g);
+  const headers = matches(text, /(?<!\d)(\d{1,10}) (\d{1,5}) obj/g);
   if (headers.length < 2) return flipBytes(bytes, rng);
   const a = rng.pick(headers);
   const b = rng.pick(headers);
@@ -190,8 +190,8 @@ export const swapObjectNumbers: Mutator = (bytes, rng) => {
 /** Point a reference at another object (often making a loop) or at none. */
 export const redirectReference: Mutator = (bytes, rng) => {
   const text = toText(bytes);
-  const objects = matches(text, /(\d+) 0 obj/g).map((m) => Number(m[1]));
-  return replaceOne(bytes, rng, /(\d+) (\d+) R/g, () => {
+  const objects = matches(text, /(?<!\d)(\d{1,10}) 0 obj/g).map((m) => Number(m[1]));
+  return replaceOne(bytes, rng, /(?<!\d)(\d{1,10}) (\d{1,5}) R/g, () => {
     const target =
       objects.length && rng.chance(0.8) ? rng.pick(objects) : rng.pick([0, 999999, 2147483647]);
     return `${target} 0 R`;
@@ -201,7 +201,7 @@ export const redirectReference: Mutator = (bytes, rng) => {
 /** Point a /Parent, /Kids, /First, /Next … at its own object, to make a loop. */
 export const makeLoop: Mutator = (bytes, rng) => {
   const text = toText(bytes);
-  const headers = matches(text, /(\d+) 0 obj/g);
+  const headers = matches(text, /(?<!\d)(\d{1,10}) 0 obj/g);
   if (headers.length === 0) return flipBytes(bytes, rng);
   const header = rng.pick(headers);
   const end = text.indexOf("endobj", header.index);
