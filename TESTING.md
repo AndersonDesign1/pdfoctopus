@@ -562,16 +562,19 @@ The engine is fuzzed in CI (`packages/core/src/fuzz.test.ts`: every hand-made ho
 the app in a browser. Make the hand-made files with
 `FUZZ_EXPORT=hostile bun run fuzz` (a `hostile/` folder; don't commit it), then in Chromium:
 
-- [ ] `patterns-nested-40.pdf` and `forms-nested-40.pdf`: the page shows "This page couldn't be
+- [x] `patterns-nested-40.pdf` and `forms-nested-40.pdf`: the page shows "This page couldn't be
       displayed", and the app keeps working (zoom, thumbnails, open another file)
-- [ ] `objects-nested-200-arrays.pdf`: the status line says the file can't be opened safely;
+- [x] `objects-nested-200-arrays.pdf`: the status line says the file can't be opened safely;
       open a good file straight after: it opens normally
-- [ ] `page-tree-unreadable-page-parent-loop.pdf`: **Insert blank page** says the list of pages
+- [x] `page-tree-unreadable-page-parent-loop.pdf`: **Insert blank page** says the list of pages
       is damaged (and doesn't hang); the page itself still shows
-- [ ] Open any hostile file (`xref-prev-loop.pdf`, say), then a good fixture: "Loading the PDF
+- [x] Open any hostile file (`xref-prev-loop.pdf`, say), then a good fixture: "Loading the PDF
       engine…" shows for a moment (a fresh engine after a damaged file), then the good file opens
-- [ ] Open three or four hostile files in a row: each gets a message or opens, nothing freezes,
+- [x] Open three or four hostile files in a row: each gets a message or opens, nothing freezes,
       and the app never needs a reload
+
+  _Checked 2026-11-27 in Chromium (headless, 1280 × 900) on the PR branch: all five as described;
+  the good file opened normally after each hostile one, with no page errors and no reload._
 
 To fuzz longer than CI does: `bun run fuzz` (1000 variants; `FUZZ_ITERATIONS=10000` for more,
 `FUZZ_SEED=…` to repeat a run, which prints its seed). Inputs that crash, hang or break the
