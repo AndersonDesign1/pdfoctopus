@@ -2587,10 +2587,19 @@ export class PdfEngine {
     const plan = planLineEdit(analysis, id, text);
     if (text === expected) return { ...this.editResult(), check: plan.check };
     const made = makeEdit(pdf, index, analysis, plan);
+    // Text read right to left is checked in reading order, as the page is read again here.
+    const rtl = analysis.infos[id]?.direction === "rtl";
     const result = this.applyTextEdit(
       index,
       made,
-      (page) => editLooksRight(analysis, id, contentLines(page), text),
+      (page) =>
+        editLooksRight(
+          analysis,
+          id,
+          contentLines(page),
+          text,
+          rtl ? analysePage(pdf, index).infos.map((l) => l.text) : undefined,
+        ),
       "This line couldn't be changed without affecting other text, so it was left as it was.",
     );
     return { ...result, check: plan.check };

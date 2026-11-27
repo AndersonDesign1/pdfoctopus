@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // Text editing against every fixture (Phase 6 quality): on each of the first two pages of every
-// file that have text that can be edited, a line and a paragraph are each edited and undone. Before undo,
+// file that have text that can be edited, a line and a paragraph are each edited and undone.
+// That includes the files in other scripts and layouts (Hebrew, Arabic, CJK, three columns). Before undo,
 // pixels change only around what was edited; after undo, the page renders exactly as before.
 //
 // Text after an edit in the same operator is moved back by a computed amount, so its position
@@ -149,6 +150,7 @@ describe("text editing on every fixture", () => {
       lines: 0,
       paragraphs: 0,
       refused: [] as string[],
+      edited: [] as string[],
       subpixel: [] as string[],
     };
     for (const path of allFixtures(fixtures)) {
@@ -223,6 +225,7 @@ describe("text editing on every fixture", () => {
               engine.undo();
               undone("line");
               summary.lines++;
+              summary.edited.push(`${name} line`);
             } catch (err) {
               if (!EXPECTED.test((err as Error).message)) throw err;
               summary.refused.push(`${name} line: ${(err as Error).message}`);
@@ -232,8 +235,14 @@ describe("text editing on every fixture", () => {
           // A paragraph: the first that can be edited, with about half its words.
           const paragraph = text.paragraphs.find((p) => p.editable);
           if (paragraph) {
+            // About half its words, or half its characters where there are no spaces
+            // (Chinese, Japanese).
             const words = paragraph.text.split(" ");
-            const replacement = words.slice(0, Math.max(1, Math.ceil(words.length / 2))).join(" ");
+            const chars = [...paragraph.text];
+            const replacement =
+              words.length > 1
+                ? words.slice(0, Math.max(1, Math.ceil(words.length / 2))).join(" ")
+                : chars.slice(0, Math.ceil(chars.length / 2)).join("");
             try {
               engine.editParagraph(page, paragraph.id, paragraph.text, replacement);
               const diff = changedOutside(content, renderContent(engine, page), paragraph.rect);
@@ -264,6 +273,7 @@ describe("text editing on every fixture", () => {
               engine.undo();
               undone("paragraph");
               summary.paragraphs++;
+              summary.edited.push(`${name} paragraph`);
             } catch (err) {
               if (!EXPECTED.test((err as Error).message)) throw err;
               summary.refused.push(`${name} paragraph: ${(err as Error).message}`);
@@ -286,5 +296,12 @@ describe("text editing on every fixture", () => {
     expect(summary.files).toBeGreaterThan(40);
     expect(summary.lines).toBeGreaterThan(summary.pages * 0.8);
     expect(summary.paragraphs).toBeGreaterThan(30);
+    // The files for step 3 are among them.
+    for (const name of ["hebrew-text", "arabic-text", "cjk-text", "three-columns"]) {
+      expect(
+        summary.edited.some((e) => e.includes(name)),
+        name,
+      ).toBe(true);
+    }
   }, 240_000);
 });

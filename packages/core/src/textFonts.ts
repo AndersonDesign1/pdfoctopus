@@ -11,6 +11,7 @@ import {
   parseToUnicode,
   simpleEncoding,
   standardTable,
+  trueTypeGlyphs,
   type UnicodeMap,
   winAnsiTable,
 } from "./fontEncoding";
@@ -39,6 +40,8 @@ export interface FontInfo {
   encode(ch: string): number | null;
   style: FontStyle;
   embedded: boolean;
+  /** Whether its ToUnicode map gives joined Arabic letter forms (Presentation Forms). */
+  arabicForms?: boolean;
 }
 
 const SUBSET = /^[A-Z]{6}\+/;
@@ -355,6 +358,7 @@ function loadSimple(font: mupdf.PDFObject, baseFont: string): FontInfo {
     encode,
     style: styleOf(baseFont, descriptor),
     embedded,
+    arabicForms: toUnicode?.arabicForms ?? false,
   };
 }
 
@@ -409,6 +413,12 @@ function loadType0(font: mupdf.PDFObject, baseFont: string): FontInfo {
     return dw;
   };
   const toUnicode = readToUnicode(font);
+  // Whether the embedded program has a glyph for a code, read when first needed.
+  let present: ((code: number) => boolean) | null | undefined;
+  const hasGlyph = (code: number) => {
+    if (present === undefined) present = cidGlyphs(cid, descriptor);
+    return present === null || present(code);
+  };
   return {
     baseFont,
     problem: null,
@@ -419,11 +429,63 @@ function loadType0(font: mupdf.PDFObject, baseFont: string): FontInfo {
     encode: (ch) => {
       const hit = toUnicode?.find(ch);
       if (hit?.bytes !== 2) return null;
-      return width(hit.code) > 0 || ch === " " ? hit.code : null;
+      if (!(width(hit.code) > 0 || ch === " ")) return null;
+      return ch === " " || hasGlyph(hit.code) ? hit.code : null;
     },
     style: styleOf(baseFont, descriptor),
     embedded: isEmbedded(descriptor),
+    arabicForms: toUnicode?.arabicForms ?? false,
   };
+}
+
+/**
+ * For a CIDFont with an embedded TrueType program, whether each code (CID) has a glyph with an
+ * outline: subsets often keep every glyph number but leave the unused ones empty. Null when it
+ * can't be told (another kind of program, or one that can't be read), so only ToUnicode and the
+ * widths are trusted.
+ */
+const MAX_CID_MAP = 2 * 65536;
+function cidGlyphs(
+  cid: mupdf.PDFObject,
+  descriptor: mupdf.PDFObject,
+): ((code: number) => boolean) | null {
+  if (!descriptor.isDictionary()) return null;
+  const file = descriptor.get("FontFile2");
+  if (!file.isStream()) return null;
+  try {
+    const map = cid.get("CIDToGIDMap");
+    let toGid: (code: number) => number = (code) => code;
+    if (map.isStream()) {
+      const buffer = map.readStream();
+      let bytes: Uint8Array;
+      try {
+        bytes = buffer.asUint8Array().slice(0, MAX_CID_MAP);
+      } finally {
+        buffer.destroy();
+      }
+      toGid = (code) =>
+        2 * code + 1 < bytes.length
+          ? ((bytes[2 * code] as number) << 8) | (bytes[2 * code + 1] as number)
+          : 0;
+    } else if (!(map.isNull() || (map.isName() && map.asName() === "Identity"))) {
+      return null;
+    }
+    const buffer = file.readStream();
+    let program: Uint8Array;
+    try {
+      program = buffer.asUint8Array().slice();
+    } finally {
+      buffer.destroy();
+    }
+    const glyphs = trueTypeGlyphs(program);
+    if (!glyphs) return null;
+    return (code) => {
+      const gid = toGid(code);
+      return gid > 0 && glyphs(gid);
+    };
+  } catch {
+    return null;
+  }
 }
 
 // ---------------------------------------------------------------------------------------------

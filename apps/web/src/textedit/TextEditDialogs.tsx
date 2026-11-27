@@ -50,6 +50,13 @@ export function TextEditHelp({ onClose }: { onClose(): void }) {
         asked first, as the extra lines would overlap what's below. Nothing else on the page moves.
       </p>
       <p>
+        <strong>Other writing:</strong> Hebrew and Arabic are typed in reading order and keep the
+        line's right edge. Arabic can be edited only where the file says which joined form each
+        letter is. Chinese, Japanese and Korean can be edited, and a paragraph may break between any
+        two characters, but only with characters the file's font already has (there's no standard
+        font to stand in). In columns, a paragraph flows within its own column.
+      </p>
+      <p>
         <strong>Lines with a purple box</strong> can be edited. Lines with a grey dashed box can't;
         hover over one, or click it, to see why.
       </p>
@@ -57,9 +64,12 @@ export function TextEditHelp({ onClose }: { onClose(): void }) {
       <ul className="pdfo-help-list">
         <li>
           A paragraph in more than one font or size (a bold word, say) as a whole: edit it a line at
-          a time. Text flowing from one column to the next, and tables.
+          a time. Text flowing from one column or page to the next, and tables.
         </li>
-        <li>Chinese, Japanese and Korean text, right-to-left text, and vertical text.</li>
+        <li>
+          Vertical text, Hebrew or Arabic with vowel marks, Arabic whose joined letter forms the
+          file doesn't name, and lines mixing directions in a way that isn't clear.
+        </li>
         <li>Slanted or mirrored text, and text that's partly hidden.</li>
         <li>
           Text inside a graphic placed on the page (a form XObject), or in a drawn (Type 3) font.

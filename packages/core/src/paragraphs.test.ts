@@ -469,7 +469,10 @@ describe("what can't be edited as a paragraph", () => {
     const target = paragraph(engine, "The Provider will deliver");
     expect(() => engine.editParagraph(0, target.id, "Something else", "x")).toThrow(/has changed/);
     expect(() => engine.checkParagraphEdit(0, target.id, target.text, "東京")).toThrow(
-      /Chinese, Japanese and Korean/,
+      /no standard font for Chinese, Japanese or Korean/,
+    );
+    expect(() => engine.checkParagraphEdit(0, target.id, target.text, "שלום")).toThrow(
+      /only be written in a line that already reads right to left/,
     );
     expect(() => engine.checkParagraphEdit(0, target.id, target.text, "a\u0007b")).toThrow(
       /can't be written/,
@@ -490,6 +493,7 @@ describe("what can't be edited as a paragraph", () => {
     const plan = {
       check: { overflow: false, oldLines: 3 },
       newLines: [],
+      drawnLines: [],
       region: [0, 0, 0, 0],
       // biome-ignore lint/suspicious/noExplicitAny: only the fields the check reads.
     } as any;

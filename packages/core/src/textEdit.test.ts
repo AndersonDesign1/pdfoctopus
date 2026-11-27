@@ -194,7 +194,13 @@ describe("editing a line on the invoice", () => {
     expect(() => engine.editTextLine(0, line.id, line.text, "Жук")).toThrow(/can't be written/);
     expect(() => engine.editTextLine(0, line.id, line.text, "two\nlines")).toThrow(/one line/);
     expect(() => engine.editTextLine(0, line.id, line.text, "東京")).toThrow(
-      /Chinese, Japanese and Korean/,
+      /no standard font for Chinese, Japanese or Korean/,
+    );
+    expect(() => engine.editTextLine(0, line.id, line.text, "שלום")).toThrow(
+      /only be written in a line that already reads right to left/,
+    );
+    expect(() => engine.editTextLine(0, line.id, line.text, "a\u202eb")).toThrow(
+      /direction of text/,
     );
     expect(engine.history().canUndo).toBe(false);
   });
@@ -272,12 +278,14 @@ describe("editing other producers' files", () => {
     expect(contentBytes(engine.save(), page)).toBe(contentBytes(original, page));
   });
 
-  it("refuses CJK text, scanned text layers and signed-file edits need no special path", () => {
+  it("refuses vertical CJK text and scanned text layers; signed files need no special path", () => {
+    // Horizontal CJK lines can be edited (scripts.test.ts); the vertical block can't.
     const cjk = open(fixture("generated/cjk-text.pdf")).listTextLines(0);
-    expect(cjk.lines.length).toBeGreaterThan(0);
-    expect(
-      cjk.lines.every((l) => !l.editable && /Chinese, Japanese and Korean/.test(l.reason ?? "")),
-    ).toBe(true);
+    const vertical = cjk.lines.filter((l) => l.rect[1] > 480);
+    expect(vertical.length).toBeGreaterThan(50);
+    expect(vertical.every((l) => !l.editable && /vertical writing/.test(l.reason ?? ""))).toBe(
+      true,
+    );
 
     const scan = open(
       fixture("third-party/internet-archive/scan-typed-business-letter-1902.pdf"),
