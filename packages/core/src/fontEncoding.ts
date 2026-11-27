@@ -257,7 +257,11 @@ export interface UnicodeMap {
   lookup(code: number, bytes: number): string | undefined;
   /** A code (and its length in bytes) that maps to exactly this text, or null. */
   find(text: string): { code: number; bytes: number } | null;
+  /** Whether it maps any code to an Arabic Presentation Forms character (a joined letter form). */
+  arabicForms: boolean;
 }
+
+const ARABIC_FORM = /[ﭐ-﷿ﹰ-ﻼ]/;
 
 const MAX_CMAP_ENTRIES = 100_000;
 
@@ -314,7 +318,16 @@ export function parseToUnicode(data: Uint8Array): UnicodeMap | null {
     }
   }
   let reverse: Map<string, { code: number; bytes: number }> | undefined;
+  const arabicForms =
+    [...single.values()].some((t) => ARABIC_FORM.test(t)) ||
+    ranges.some((r) => {
+      if (r.list) return r.list.some((t) => ARABIC_FORM.test(t));
+      const start = r.start as number[];
+      const first = start[0] as number;
+      return start.length === 1 && first <= 0xfefc && first + (r.hi - r.lo) >= 0xfb50;
+    });
   return {
+    arabicForms,
     lookup(code, bytes) {
       const s = single.get(`${bytes}:${code}`);
       if (s !== undefined) return s;
@@ -376,4 +389,40 @@ function textUnits(text: string): number[] {
 function utf16(bytes: Uint8Array): string {
   if (bytes.length === 1) return String.fromCharCode(bytes[0] as number);
   return String.fromCharCode(...units(bytes));
+}
+
+// ---------------------------------------------------------------------------------------------
+// TrueType glyphs
+
+/**
+ * Which glyphs a TrueType font program really has: those with an outline (fonts embedded as
+ * subsets often keep every glyph number but leave the unused ones empty). Null if the program
+ * can't be read as TrueType.
+ */
+export function trueTypeGlyphs(data: Uint8Array): ((gid: number) => boolean) | null {
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  try {
+    const version = view.getUint32(0);
+    if (version !== 0x00010000 && version !== 0x74727565) return null;
+    const tables = new Map<string, number>();
+    const count = Math.min(view.getUint16(4), 200);
+    for (let i = 0; i < count; i++) {
+      const at = 12 + i * 16;
+      const tag = String.fromCharCode(...data.subarray(at, at + 4));
+      tables.set(tag, view.getUint32(at + 8));
+    }
+    const head = tables.get("head");
+    const maxp = tables.get("maxp");
+    const loca = tables.get("loca");
+    if (head === undefined || maxp === undefined || loca === undefined) return null;
+    const long = view.getUint16(head + 50) === 1;
+    const glyphs = view.getUint16(maxp + 4);
+    if (loca + (glyphs + 1) * (long ? 4 : 2) > data.length) return null;
+    const offset = (gid: number) =>
+      long ? view.getUint32(loca + gid * 4) : view.getUint16(loca + gid * 2) * 2;
+    return (gid) =>
+      Number.isInteger(gid) && gid >= 0 && gid < glyphs && offset(gid + 1) > offset(gid);
+  } catch {
+    return null; // It ran off the end: not a font program that can be read.
+  }
 }

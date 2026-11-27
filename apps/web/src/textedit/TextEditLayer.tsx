@@ -10,6 +10,7 @@
 import type { PageText, ParagraphInfo, TextLineInfo } from "@pdfoctopus/core";
 import { MAX_LINE_TEXT, MAX_PARAGRAPH_TEXT } from "@pdfoctopus/core";
 import { type CSSProperties, type KeyboardEvent, useEffect, useRef, useState } from "react";
+import { lineKey, paragraphKey } from "./keys";
 
 /** A line (or the paragraph it's in) being edited, and the text typed so far. */
 export interface TextDraft {
@@ -59,6 +60,16 @@ export function TextEditLayer({
   listRef.current = list;
   const input = useRef<HTMLInputElement>(null);
   const area = useRef<HTMLTextAreaElement>(null);
+  // While an input method is choosing characters, Enter and Escape are its (see keys.ts).
+  const imeActive = useRef(false);
+  const ime = {
+    onCompositionStart: () => {
+      imeActive.current = true;
+    },
+    onCompositionEnd: () => {
+      imeActive.current = false;
+    },
+  };
 
   useEffect(() => {
     let live = true;
@@ -157,16 +168,22 @@ export function TextEditLayer({
           className="pdfo-text-input"
           style={inputStyle(editing.line, scale)}
           value={editing.text}
+          dir={editing.line.direction}
           maxLength={MAX_LINE_TEXT}
           spellCheck={false}
           aria-label="New text for the line. Enter applies, Escape cancels."
           disabled={busy}
           onChange={(e) => setEditing({ line: editing.line, text: e.target.value })}
+          {...ime}
           onKeyDown={(e) => {
-            if (e.key === "Enter") {
+            const action = lineKey(
+              { key: e.key, isComposing: e.nativeEvent.isComposing, keyCode: e.keyCode },
+              imeActive.current,
+            );
+            if (action === "apply") {
               e.preventDefault();
               void commit();
-            } else if (e.key === "Escape") {
+            } else if (action === "cancel") {
               cancelKey(e);
             }
           }}
@@ -205,16 +222,28 @@ export function TextEditLayer({
             className="pdfo-paragraph-input"
             style={areaTextStyle(paragraph, editing.line, scale)}
             value={editing.text}
+            dir={paragraph.direction}
             maxLength={MAX_PARAGRAPH_TEXT}
             spellCheck={false}
             aria-label="New text for the paragraph. Ctrl+Enter applies, Escape cancels."
             disabled={busy}
             onChange={(e) => setEditing({ ...editing, text: e.target.value })}
+            {...ime}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+              const action = paragraphKey(
+                {
+                  key: e.key,
+                  ctrlKey: e.ctrlKey,
+                  metaKey: e.metaKey,
+                  isComposing: e.nativeEvent.isComposing,
+                  keyCode: e.keyCode,
+                },
+                imeActive.current,
+              );
+              if (action === "apply") {
                 e.preventDefault();
                 void commit();
-              } else if (e.key === "Escape") {
+              } else if (action === "cancel") {
                 cancelKey(e);
               }
             }}
@@ -268,12 +297,15 @@ function inputStyle(line: TextLineInfo, scale: number): CSSProperties {
   const along = line.rotation === 90 || line.rotation === 270 ? y1 - y0 : x1 - x0;
   const across = line.rotation === 90 || line.rotation === 270 ? x1 - x0 : y1 - y0;
   const [left, top] = origin(line.rect, line.rotation);
+  // Room to type more than was there; the engine says if it no longer fits.
+  const width = Math.max((along + 2 * PAD) * scale + 40, 120);
+  // A line read right to left keeps its right edge, so its box grows to the left.
+  const rtl = line.direction === "rtl" && line.rotation === 0;
   return {
     ...fontStyle(line, scale),
-    left: (left - PAD) * scale,
+    left: rtl ? (x1 + PAD) * scale - width : (left - PAD) * scale,
     top: (top - PAD) * scale,
-    // Room to type more than was there; the engine says if it no longer fits.
-    width: Math.max((along + 2 * PAD) * scale + 40, 120),
+    width,
     height: (across + 2 * PAD) * scale,
     transform: line.rotation ? `rotate(${line.rotation}deg)` : undefined,
     transformOrigin: "0 0",

@@ -37,6 +37,11 @@ Decided (no action needed):
   apply anyway (the extra lines overlap what's below), never to move other content. Lines
   that would run off the page are refused. A paragraph with a bold word can only be edited a
   line at a time for now.
+- (2026-11-27) **Joining CJK lines of a paragraph**: Chinese and Japanese lines are joined
+  without a space; Korean lines are joined with one (Korean puts spaces between words), so a
+  Korean line Chromium broke inside a word gains a space the user can take out. Korean text is
+  reflowed at its spaces. Arabic whose font doesn't name its joined forms stays refused rather
+  than guessed.
 - (2026-11-26) **Stand-in font for edited text**: when a line's embedded font lacks a
   character, the standard Helvetica, Times or Courier is used, not embedded (every PDF reader
   has them, and the file stays small). A PDF/A file edited that way is no longer strictly PDF/A;
@@ -518,6 +523,37 @@ row).
       the right stays lined up on the right when edited
 - [ ] **?** next to Edit text explains paragraphs too
 - [ ] **Phone:** tapping a line, then **Edit paragraph**, opens the box; **Apply** applies it
+
+## Phase 6: columns, right-to-left and CJK text
+
+Turn on **Edit text** (start of the Annotate row) for each file.
+
+- [ ] `fixtures/generated/three-columns.pdf`: each paragraph is offered on its own, never with
+      lines from the next column; shorten one in the middle column: it stays in that column,
+      justified to its width, and nothing in the other columns moves; make it twice as long:
+      the warning counts only the room above that column's next heading
+- [ ] `fixtures/generated/hebrew-text.pdf`: click "לכבוד חברת דוגמה בע״מ": the box shows the
+      words in reading order, typed right to left; change it and press **Enter**: the line
+      still ends at the same right edge, and nothing else moves
+- [ ] The invoice-number line: type `מספר הזמנה: PO-77 (בדיקה)`: a warning says Helvetica is used
+      for the brackets and Latin letters; after applying, the number and brackets read the right
+      way round
+- [ ] The three-line paragraph: **Edit paragraph**, shorten it: it reflows lined up on the right
+- [ ] `fixtures/generated/arabic-text.pdf` page 1: "شكرا لكم على طلبكم" changed to "شكرا لكم":
+      the letters stay joined, at the same right edge; page 2: every line is grey, and the reason
+      says the font's Arabic letters can't be reshaped
+- [ ] `fixtures/generated/cjk-text.pdf`: edit a Chinese line, then **Edit paragraph** on the
+      Simplified Chinese paragraph and change a few characters: lines break between characters,
+      and no line starts with "。" or "，"; typing a character the page doesn't use (鳥) is
+      refused with a reason; the vertical block at the bottom is grey ("vertical writing")
+- [ ] Undo and redo each edit; save, reopen: the new text is there, and **Adobe Acrobat Reader**,
+      **Chrome/Edge** and **Firefox** show the same; searching or copying the new Hebrew, Arabic
+      and Chinese text gives it in reading order
+- [ ] `fixtures/generated/korean-text.pdf`: **Edit paragraph** shows the words with their
+      spaces; a shorter text reflows at spaces
+- [ ] With a Chinese or Japanese input method: pressing Enter to pick characters doesn't apply
+      the edit, and Escape while choosing doesn't cancel it
+- [ ] **?** next to Edit text says what's newly editable
 
 ## Problems found
 

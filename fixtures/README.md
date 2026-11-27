@@ -36,42 +36,48 @@ PDFs used for regression and crash testing. Every PDF in this folder is opened b
 ## generated/ (CC0-1.0)
 
 Made by [`scripts/generate.mjs`](./scripts/generate.mjs) from the HTML in
-[`scripts/sources/`](./scripts/sources). All names, companies and numbers are made up.
+[`scripts/sources/`](./scripts/sources). The Hebrew, Arabic, Korean and three-column files are made by
+[`scripts/generate-text-scripts.mjs`](./scripts/generate-text-scripts.mjs) (Chromium and MuPDF).
+All names, companies and numbers are made up.
 
 CC0 covers the content we wrote. Some files embed subsets of free fonts, which keep their own
 licences; all of them allow embedding in documents:
 
-| Font              | Embedded in                                            | Licence                                                                              |
-| ----------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------ |
-| DejaVu Sans       | invoice, report and the files derived from the invoice | [DejaVu Fonts licence](https://dejavu-fonts.github.io/License.html) (Bitstream Vera) |
-| Liberation Serif  | both contracts and the annotated contract              | [SIL OFL 1.1](https://openfontlicense.org)                                           |
-| Inter             | `contract-libreoffice.pdf` (headings)                  | [SIL OFL 1.1](https://openfontlicense.org)                                           |
-| WenQuanYi Zen Hei | `cjk-text.pdf`                                         | GPL-2.0 with a font embedding exception                                              |
+| Font              | Embedded in                                                                           | Licence                                                                              |
+| ----------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| DejaVu Sans       | invoice, report and the files derived from the invoice; Hebrew, Arabic, three columns | [DejaVu Fonts licence](https://dejavu-fonts.github.io/License.html) (Bitstream Vera) |
+| Liberation Serif  | both contracts and the annotated contract                                             | [SIL OFL 1.1](https://openfontlicense.org)                                           |
+| Inter             | `contract-libreoffice.pdf` (headings)                                                 | [SIL OFL 1.1](https://openfontlicense.org)                                           |
+| WenQuanYi Zen Hei | `cjk-text.pdf`, `korean-text.pdf`                                                     | GPL-2.0 with a font embedding exception                                              |
 
-| File                               | Category    | Notes                                                                                       |
-| ---------------------------------- | ----------- | ------------------------------------------------------------------------------------------- |
-| `invoice.pdf`                      | Invoice     | One page, table, embedded fonts (Chromium/Skia)                                             |
-| `contract-chromium.pdf`            | Contract    | Two-page services agreement, serif, justified text (Chromium/Skia)                          |
-| `contract-libreoffice.pdf`         | Contract    | Same contract through LibreOffice, a different PDF producer                                 |
-| `cjk-text.pdf`                     | CJK         | Japanese, Simplified and Traditional Chinese, Korean, and vertical Japanese text            |
-| `report-500-pages.pdf`             | Very large  | 500 pages of text and tables, for scrolling and performance tests                           |
-| `scanned-invoice.pdf`              | Scan        | The invoice as a slightly rotated, noisy greyscale JPEG with no text layer (simulated scan) |
-| `annotated-contract.pdf`           | Annotations | Highlight, sticky note, ink, rectangle, free text, strikeout                                |
-| `incremental-updates.pdf`          | Revisions   | Invoice with three incremental updates appended                                             |
-| `encrypted-aes256.pdf`             | Encrypted   | AES-256, needs a password to open                                                           |
-| `encrypted-rc4-40.pdf`             | Encrypted   | Legacy 40-bit RC4, needs a password to open                                                 |
-| `restricted-permissions.pdf`       | Encrypted   | Opens without a password; printing, copying, editing and annotating not permitted           |
-| `signed.pdf`                       | Signed      | One PAdES signature from the PDFoctopus test CA (see [Signatures](#signatures))             |
-| `signed-then-annotated.pdf`        | Signed      | A note added after signing (MuPDF incremental save); the signature stays intact             |
-| `signed-tampered.pdf`              | Signed      | One byte changed inside the signed range, so the signature no longer verifies               |
-| `signed-twice.pdf`                 | Signed      | Two signatures; the second was added incrementally and the first stays valid                |
-| `signed-by-pdfoctopus.pdf`         | Signed      | The invoice signed by PDFoctopus's own signing code (PAdES B-B, RSA test ID)                |
-| `signed-by-pdfoctopus-twice.pdf`   | Signed      | That file signed again by PDFoctopus (elliptic-curve test ID); the first stays valid        |
-| `malformed-truncated.pdf`          | Malformed   | Invoice cut off at 60% (no xref or trailer)                                                 |
-| `malformed-bad-startxref.pdf`      | Malformed   | `startxref` points to the wrong offset; needs repair                                        |
-| `malformed-junk-before-header.pdf` | Malformed   | 1 KB of junk before `%PDF-`                                                                 |
-| `malformed-html-named-pdf.pdf`     | Malformed   | An HTML error page saved with a `.pdf` name (common with failed downloads)                  |
-| `malformed-empty.pdf`              | Malformed   | Zero bytes                                                                                  |
+| File                               | Category    | Notes                                                                                                                        |
+| ---------------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `invoice.pdf`                      | Invoice     | One page, table, embedded fonts (Chromium/Skia)                                                                              |
+| `contract-chromium.pdf`            | Contract    | Two-page services agreement, serif, justified text (Chromium/Skia)                                                           |
+| `contract-libreoffice.pdf`         | Contract    | Same contract through LibreOffice, a different PDF producer                                                                  |
+| `cjk-text.pdf`                     | CJK         | Japanese, Simplified and Traditional Chinese, Korean, and vertical Japanese text                                             |
+| `hebrew-text.pdf`                  | RTL         | Hebrew read right to left, some lines with numbers and Latin, and a paragraph (DejaVu subset)                                |
+| `arabic-text.pdf`                  | RTL         | Arabic. Page 1's ToUnicode names each joined letter form (and has a paragraph); page 2's maps every form to its plain letter |
+| `three-columns.pdf`                | Columns     | A landscape newsletter page in three justified columns                                                                       |
+| `korean-text.pdf`                  | CJK         | A Korean paragraph whose lines break at spaces (WenQuanYi Zen Hei subset)                                                    |
+| `report-500-pages.pdf`             | Very large  | 500 pages of text and tables, for scrolling and performance tests                                                            |
+| `scanned-invoice.pdf`              | Scan        | The invoice as a slightly rotated, noisy greyscale JPEG with no text layer (simulated scan)                                  |
+| `annotated-contract.pdf`           | Annotations | Highlight, sticky note, ink, rectangle, free text, strikeout                                                                 |
+| `incremental-updates.pdf`          | Revisions   | Invoice with three incremental updates appended                                                                              |
+| `encrypted-aes256.pdf`             | Encrypted   | AES-256, needs a password to open                                                                                            |
+| `encrypted-rc4-40.pdf`             | Encrypted   | Legacy 40-bit RC4, needs a password to open                                                                                  |
+| `restricted-permissions.pdf`       | Encrypted   | Opens without a password; printing, copying, editing and annotating not permitted                                            |
+| `signed.pdf`                       | Signed      | One PAdES signature from the PDFoctopus test CA (see [Signatures](#signatures))                                              |
+| `signed-then-annotated.pdf`        | Signed      | A note added after signing (MuPDF incremental save); the signature stays intact                                              |
+| `signed-tampered.pdf`              | Signed      | One byte changed inside the signed range, so the signature no longer verifies                                                |
+| `signed-twice.pdf`                 | Signed      | Two signatures; the second was added incrementally and the first stays valid                                                 |
+| `signed-by-pdfoctopus.pdf`         | Signed      | The invoice signed by PDFoctopus's own signing code (PAdES B-B, RSA test ID)                                                 |
+| `signed-by-pdfoctopus-twice.pdf`   | Signed      | That file signed again by PDFoctopus (elliptic-curve test ID); the first stays valid                                         |
+| `malformed-truncated.pdf`          | Malformed   | Invoice cut off at 60% (no xref or trailer)                                                                                  |
+| `malformed-bad-startxref.pdf`      | Malformed   | `startxref` points to the wrong offset; needs repair                                                                         |
+| `malformed-junk-before-header.pdf` | Malformed   | 1 KB of junk before `%PDF-`                                                                                                  |
+| `malformed-html-named-pdf.pdf`     | Malformed   | An HTML error page saved with a `.pdf` name (common with failed downloads)                                                   |
+| `malformed-empty.pdf`              | Malformed   | Zero bytes                                                                                                                   |
 
 ## public-domain/
 

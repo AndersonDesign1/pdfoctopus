@@ -27,6 +27,20 @@ import {
   parseContentStreams,
 } from "./contentStream";
 import {
+  ARABIC,
+  BIDI_CONTROL,
+  CJK,
+  isArabicForm,
+  isolatedForm,
+  isolatedLetter,
+  needsShaping,
+  RTL,
+  shapeArabic,
+  toLogical,
+  toVisual,
+  unshapeArabic,
+} from "./scripts";
+import {
   type FontInfo,
   type FontStyle,
   loadFont,
@@ -60,6 +74,8 @@ export interface TextLineInfo {
   mono: boolean;
   /** Text colour as red, green and blue from 0 to 1. */
   color: [number, number, number];
+  /** "rtl" for a line read right to left (Hebrew, Arabic): `text` is then in reading order. */
+  direction: "ltr" | "rtl";
   /** Whether it can be edited, and if not, why not (in plain words). */
   editable: boolean;
   reason: string | null;
@@ -219,6 +235,8 @@ export interface PageLine {
   style: FontStyle;
   color: [number, number, number];
   rtl: boolean;
+  /** For a line read right to left: its text in reading order (worked out when it's judged). */
+  logical?: string;
 }
 
 /** The lines of text in a page's own content (not annotations or form fields). */
@@ -480,11 +498,12 @@ export function analysePage(pdf: mupdf.PDFDocument, index: number): PageAnalysis
       analysis.marksFull = walk.marksFull;
     }
     const lines = analysis.lines;
+    const stacked = verticalStacks(lines);
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i] as PageLine;
       const verdict = analysis.problem
         ? { reason: analysis.problem, ops: [] }
-        : judgeLine(walk as Walk, lines, i);
+        : judgeLine(walk as Walk, lines, i, stacked);
       if (verdict.reason === null) analysis.lineOps.set(i, verdict.ops);
       analysis.infos.push(describeLine(line, i, bounds, verdict.reason, verdict.ops));
     }
@@ -1150,21 +1169,45 @@ function mergeLines(raw: PageLine[], ops: ShowOp[]): { lines: PageLine[]; groupO
   return { lines, groupOf };
 }
 
-export const CJK =
-  /[\u1100-\u11ff\u2e80-\u9fff\ua960-\ua97f\uac00-\ud7ff\uf900-\ufaff\uff00-\uffef]|[\u{20000}-\u{3ffff}]/u;
-export const RTL = /[\u0590-\u08ff\ufb1d-\ufdff\ufe70-\ufeff]/;
+/**
+ * Lines of one Chinese, Japanese or Korean character stacked one under the other: vertical
+ * writing drawn a character at a time (as browsers write it), which reads down the page.
+ */
+function verticalStacks(lines: PageLine[]): Set<number> {
+  const single: number[] = [];
+  lines.forEach((l, i) => {
+    if (single.length < 5000 && [...l.text.trim()].length === 1 && CJK.test(l.text)) single.push(i);
+  });
+  const out = new Set<number>();
+  for (const i of single) {
+    const a = (lines[i] as PageLine).bbox;
+    for (const j of single) {
+      if (i === j) continue;
+      const b = (lines[j] as PageLine).bbox;
+      const size = Math.max(a[3] - a[1], b[3] - b[1]);
+      const centres = Math.abs((a[1] + a[3]) / 2 - (b[1] + b[3]) / 2);
+      if (a[0] < b[2] && b[0] < a[2] && centres <= 1.6 * size) out.add(i);
+    }
+  }
+  return out;
+}
+
+export const VERTICAL_REASON =
+  "This text runs down the page (vertical writing), which can't be edited yet.";
 
 /** Whether a line can be edited: null and its ops, or the reason it can't. */
 function judgeLine(
   walk: Walk,
   lines: PageLine[],
   index: number,
+  stacked: Set<number>,
 ): { reason: string | null; ops: ShowOp[] } {
   const line = lines[index] as PageLine;
   const no = (reason: string) => ({ reason, ops: [] });
   if (line.wmode !== 0) return no("Vertical text can't be edited yet.");
-  if (CJK.test(line.text)) return no("Chinese, Japanese and Korean text can't be edited yet.");
-  if (line.rtl || RTL.test(line.text)) return no("Right-to-left text can't be edited yet.");
+  if (stacked.has(index)) {
+    return no(VERTICAL_REASON);
+  }
 
   const glyphs = walk.glyphs.filter((g) => g.line === index);
   const inForm = () => walk.forms.some((f) => overlaps(f, line.bbox));
@@ -1227,7 +1270,72 @@ function judgeLine(
       return no("Part of this text is hidden (clipped), so it can't be edited safely.");
     }
   }
+  if (isRightToLeft(line)) {
+    const reason = readRightToLeft(line, glyphs, rotation ?? 0);
+    if (reason) return no(reason);
+  }
   return { reason: null, ops };
+}
+
+/** Whether a line reads right to left (Hebrew, Arabic). */
+export function isRightToLeft(line: PageLine): boolean {
+  return line.rtl || RTL.test(line.text);
+}
+
+const MARKS = /[֑-ׇؐ-ًؚ-ٰٟۖ-ۭ]/;
+export const RESHAPE_REASON =
+  "This font's Arabic letters can't be reshaped here: the file doesn't say which joined form each glyph is, so this line can't be edited.";
+
+/**
+ * Read a line drawn right to left: its glyphs must be drawn left to right (visual order), and
+ * its reading order must be clear. Sets `line.logical`, or returns why it can't be edited.
+ */
+function readRightToLeft(line: PageLine, glyphs: Glyph[], rotation: number): string | null {
+  if (MARKS.test(line.text) || glyphs.some((g) => MARKS.test(g.text))) {
+    return "This line has vowel marks, which can't be edited yet.";
+  }
+  const along = (x: number, y: number) => toFrame(rotation, x, y)[0];
+  // Within each operator, the line's glyphs left to right, as they're seen.
+  const byOp = new Map<ShowOp, Glyph[]>();
+  for (const g of glyphs) byOp.set(g.op, [...(byOp.get(g.op) ?? []), g]);
+  for (const list of byOp.values()) {
+    for (let i = 1; i < list.length; i++) {
+      const a = list[i - 1] as Glyph;
+      const b = list[i] as Glyph;
+      if (along(b.x, b.y) < along(a.x, a.y) - 0.01) {
+        return "This right-to-left line is drawn in an order that can't be edited yet.";
+      }
+    }
+  }
+  const arabic = ARABIC.test(line.text) || glyphs.some((g) => ARABIC.test(g.text));
+  if (glyphs.some((g) => g.text === "")) {
+    return arabic
+      ? RESHAPE_REASON
+      : "Some of this line's letters can't be read from its font, so it can't be edited.";
+  }
+  // The glyphs left to right, with the spaces MuPDF found between words that aren't drawn.
+  const items = glyphs.map((g) => ({ x: along(g.x, g.y), text: g.text }));
+  for (const ch of line.chars) {
+    if (ch.c !== " ") continue;
+    if (glyphs.some((g) => Math.hypot(g.x - ch.x, g.y - ch.y) <= MATCH_TOLERANCE)) continue;
+    items.push({ x: along(ch.x, ch.y), text: " " });
+  }
+  items.sort((a, b) => a.x - b.x);
+  const visual = items.map((i) => i.text).join("");
+  const logical = toLogical(visual);
+  if (logical === null) {
+    return "This line mixes right-to-left and left-to-right text in a way that can't be worked out safely, so it can't be edited yet.";
+  }
+  if (arabic) {
+    // Arabic can only be written again where the font says which joined form each glyph is.
+    // A plain letter is its isolated form (as a font draws it on its own); the forms must be
+    // just the ones shaping the letters here gives, so new text comes out the same way.
+    if (glyphs.some((g) => !g.op.font?.arabicForms)) return RESHAPE_REASON;
+    const asDrawn = [...logical].map((c) => (needsShaping(c) ? isolatedForm(c) : c)).join("");
+    if (shapeArabic(unshapeArabic(logical)) !== asDrawn) return RESHAPE_REASON;
+  }
+  line.logical = unshapeArabic(logical);
+  return null;
 }
 
 function describeLine(
@@ -1244,7 +1352,7 @@ function describeLine(
   const style = font ? mergeStyle(font.style, line.style) : line.style;
   return {
     id,
-    text: line.text,
+    text: line.logical ?? line.text,
     rect: [line.bbox[0] - x0, line.bbox[1] - y0, line.bbox[2] - x0, line.bbox[3] - y0],
     rotation,
     size: line.size,
@@ -1254,6 +1362,7 @@ function describeLine(
     serif: style.serif,
     mono: style.mono,
     color: line.color,
+    direction: isRightToLeft(line) ? "rtl" : "ltr",
     editable: reason === null,
     reason,
   };
@@ -1302,9 +1411,41 @@ export function checkNewText(text: string): string {
     throw new Error("The new text has a character that can't be written.");
   if ([...text].length > MAX_LINE_TEXT)
     throw new Error(`The new text is too long (${MAX_LINE_TEXT} characters at most).`);
-  if (CJK.test(text)) throw new Error("Chinese, Japanese and Korean text can't be written yet.");
-  if (RTL.test(text)) throw new Error("Right-to-left text can't be written yet.");
+  if (BIDI_CONTROL.test(text))
+    throw new Error(
+      "The new text has a character that sets the direction of text, which can't be written.",
+    );
   return text;
+}
+
+/** Refuse text a line can't take for its direction: right-to-left text in a left-to-right line,
+ * and vowel marks (which would need placing over their letters). */
+export function checkDirection(setup: Pick<LineSetup, "rtl">, text: string): void {
+  if (MARKS.test(text)) throw new Error("Vowel marks can't be written yet.");
+  if (!setup.rtl && RTL.test(text)) {
+    throw new Error(
+      "Right-to-left text can only be written in a line that already reads right to left.",
+    );
+  }
+}
+
+/**
+ * New text in the order its glyphs are drawn: for a line read right to left, with Arabic
+ * letters in their joined forms, left to right as it's seen.
+ */
+export function drawnOrder(rtl: boolean, text: string, font?: FontInfo): string {
+  if (!rtl) return text;
+  let shaped = shapeArabic(text);
+  if (font?.arabicForms) {
+    // A font that maps joined forms gives a letter's isolated form as the plain letter.
+    shaped = [...shaped]
+      .map((c) => {
+        const letter = isolatedLetter(c);
+        return letter && font.encode(c) === null && font.encode(letter) !== null ? letter : c;
+      })
+      .join("");
+  }
+  return toVisual(shaped);
 }
 
 /**
@@ -1314,25 +1455,36 @@ export function checkNewText(text: string): string {
 export function planLineEdit(analysis: PageAnalysis, id: number, newText: string): EditPlan {
   const text = checkNewText(newText);
   const setup = prepareLine(analysis, id);
+  checkDirection(setup, text);
   const { ops, first, line, rotation, start } = setup;
-  const fonts = pickFonts(setup, text);
-  const encoded = encode(text, fonts.fonts, first, setup.spaceGap, setup.font.twoByte);
+  const drawn = drawnOrder(setup.rtl, text, setup.font);
+  const fonts = pickFonts(setup, drawn);
+  let encoded = encode(drawn, fonts.fonts, first, setup.spaceGap, setup.font.twoByte);
 
-  // Width and room, along the line in page space.
+  // Width and room, along the line in page space. A line read right to left keeps its right
+  // edge and grows to the left.
   const width = Math.abs(encoded.advance * setup.unit);
   const lineBox = rectToFrame(rotation, line.bbox);
-  let limit = rectToFrame(rotation, analysis.bounds)[2];
+  const page = rectToFrame(rotation, analysis.bounds);
+  let limit = setup.rtl ? page[0] : page[2];
   for (let i = 0; i < analysis.lines.length; i++) {
     if (i === id) continue;
     const other = rectToFrame(rotation, (analysis.lines[i] as PageLine).bbox);
     const overlap = Math.min(other[3], lineBox[3]) - Math.max(other[1], lineBox[1]);
     const smaller = Math.min(other[3] - other[1], lineBox[3] - lineBox[1]);
-    if (overlap > smaller / 2 && other[0] >= lineBox[2] - 1) limit = Math.min(limit, other[0]);
+    if (overlap <= smaller / 2) continue;
+    if (!setup.rtl && other[0] >= lineBox[2] - 1) limit = Math.min(limit, other[0]);
+    if (setup.rtl && other[2] <= lineBox[0] + 1) limit = Math.max(limit, other[2]);
   }
-  const room = Math.max(0, limit - start - 1);
-  const oldWidth = lineBox[2] - start;
+  const room = Math.max(0, setup.rtl ? setup.end - limit - 1 : limit - start - 1);
+  const oldWidth = (setup.rtl ? setup.end : lineBox[2]) - start;
   const tooWide = width > room && width > oldWidth + 0.5;
   checkClips(setup, width, oldWidth);
+  if (setup.rtl) {
+    // Moved along so it ends where the line did.
+    const lead = ((oldWidth - width) * 1000) / (setup.unit * first.fs * first.th);
+    encoded = encode(drawn, fonts.fonts, first, setup.spaceGap, setup.font.twoByte, { lead });
+  }
 
   const keys = new Set(ops.map((op) => `${op.fontResource}@${op.fs}`));
   const check: TextEditCheck = {
@@ -1377,8 +1529,11 @@ export interface LineSetup {
   spaceGap: number;
   /** Page units per unit of text space along the line, at the first op. */
   unit: number;
-  /** Where the line starts, along it (x in the line's frame). */
+  /** Where the line starts, along it (x in the line's frame): its left end as it's seen. */
   start: number;
+  /** Whether it reads right to left, and (for such a line) where its glyphs end on the right. */
+  rtl: boolean;
+  end: number;
 }
 
 /** Everything needed to rewrite an editable line. Throws (in plain words) if it can't be. */
@@ -1388,7 +1543,14 @@ export function prepareLine(analysis: PageAnalysis, id: number): LineSetup {
   if (!info || !ops || ops.length === 0)
     throw new Error(info?.reason ?? "That line isn't on the page");
   const line = analysis.lines[id] as PageLine;
-  const first = firstGlyphOf(line, ops, id).op;
+  const rtl = isRightToLeft(line);
+  const glyphs = ops.flatMap((op) => op.glyphs.filter((g) => g.line === id));
+  const along = (g: Glyph, end = false) =>
+    toFrame(readingRotation(g.op.trm as Matrix6) ?? 0, end ? g.ex : g.x, end ? g.ey : g.y)[0];
+  // Text read right to left is drawn left to right: the new text starts at its left end.
+  const first = (
+    rtl ? glyphs.reduce((a, b) => (along(b) < along(a) ? b : a)) : firstGlyphOf(line, ops, id)
+  ).op;
   const trm = first.trm as Matrix6;
   const rotation = readingRotation(trm) ?? 0;
   const ranges = new Map<ShowOp, [number, number]>();
@@ -1418,6 +1580,8 @@ export function prepareLine(analysis: PageAnalysis, id: number): LineSetup {
     spaceGap: estimateSpace(line, ops, id),
     unit: Math.hypot(trm[0], trm[1]) / (first.fs * first.th),
     start: toFrame(rotation, startItem.glyph.x, startItem.glyph.y)[0],
+    rtl,
+    end: Math.max(...glyphs.map((g) => along(g, true))),
   };
 }
 
@@ -1459,14 +1623,36 @@ export function pickFonts(
     ];
     encoded = encode(text, fonts, first, spaceGap, font.twoByte);
   }
-  if (encoded.missing.length > 0) {
-    throw new Error(
-      `${quoteList(encoded.missing)} can't be written in ${where}: neither its font nor the standard fonts have ${
-        encoded.missing.length === 1 ? "it" : "them"
-      }.`,
+  if (encoded.missing.length > 0) throw missingError(encoded.missing, where);
+  return { fonts, fallback, missing: own.missing };
+}
+
+/** Why characters can't be written, in plain words (by the kind of writing they are). */
+export function missingError(missing: string[], where: string): Error {
+  const them = (list: string[]) => (list.length === 1 ? "it" : "them");
+  const cjk = missing.filter((c) => CJK.test(c));
+  if (cjk.length > 0) {
+    return new Error(
+      `${quoteList(cjk)} can't be written in ${where}: its font doesn't have ${them(cjk)} (fonts are often embedded with only the characters used), and there's no standard font for Chinese, Japanese or Korean to use instead.`,
     );
   }
-  return { fonts, fallback, missing: own.missing };
+  const arabic = [
+    ...new Set(missing.filter((c) => isArabicForm(c) || ARABIC.test(c)).map(unshapeArabic)),
+  ];
+  if (arabic.length > 0) {
+    return new Error(
+      `${quoteList(arabic)} can't be written in ${where}: its font doesn't have ${them(arabic)} in the joined form needed here, and there's no standard font for Arabic to use instead.`,
+    );
+  }
+  const rtl = missing.filter((c) => RTL.test(c));
+  if (rtl.length > 0) {
+    return new Error(
+      `${quoteList(rtl)} can't be written in ${where}: its font doesn't have ${them(rtl)}, and there's no standard font for Hebrew to use instead.`,
+    );
+  }
+  return new Error(
+    `${quoteList(missing)} can't be written in ${where}: neither its font nor the standard fonts have ${them(missing)}.`,
+  );
 }
 
 /** Refuse new text that would be cut off by a clipping area. */
@@ -1478,10 +1664,14 @@ export function checkClips(setup: LineSetup, width: number, oldWidth: number): v
       "This line is inside a shaped area that hides what's outside it, so the new text can't be longer than the old.",
     );
   }
-  // Past the edge of a clipping area, the end of the text would be cut off: refused.
+  // Past the edge of a clipping area, the end of the text would be cut off: refused. (Text read
+  // right to left grows to the left, from where it ends.)
   if (setup.first.clip) {
-    const edge = rectToFrame(setup.rotation, setup.first.clip)[2];
-    if (setup.start + width > edge + 0.5 && width > oldWidth + 0.5) {
+    const clip = rectToFrame(setup.rotation, setup.first.clip);
+    const past = setup.rtl
+      ? setup.end - width < clip[0] - 0.5
+      : setup.start + width > clip[2] + 0.5;
+    if (past && width > oldWidth + 0.5) {
       throw new Error(
         "The new text is too long for the space this line is in: its end would be hidden. Try something shorter.",
       );
@@ -1636,14 +1826,14 @@ export function encode(
   op: Pick<ShowOp, "fs" | "tc" | "tw" | "th">,
   spaceGap: number,
   ownTwoByte: boolean,
-  extra: { lead?: number; space?: number } = {},
+  extra: { lead?: number; space?: number; letter?: number } = {},
 ): Encoded {
   const pieces: Piece[] = [];
   const missing: string[] = [];
   let advance = 0;
   let usesOwn = false;
-  // A move before the text (to align it) and after each space (to justify it), in thousandths
-  // of the font size.
+  // A move before the text (to align it) and after each space or each character (to justify
+  // it), in thousandths of the font size.
   const gap = (value: number) => {
     if (Math.abs(value) < 1e-3) return;
     const last = pieces[pieces.length - 1];
@@ -1652,11 +1842,13 @@ export function encode(
     advance += (value / 1000) * op.fs * op.th;
   };
   gap(extra.lead ?? 0);
-  for (const ch of text) {
+  const chars = [...text];
+  chars.forEach((ch, i) => {
     const normal = ch === "\u00a0" ? " " : ch;
     encodeChar(ch, normal);
     if (normal === " " && extra.space) gap(extra.space);
-  }
+    if (extra.letter && i < chars.length - 1) gap(extra.letter);
+  });
   return { pieces, advance, missing, usesOwn };
 
   function encodeChar(ch: string, normal: string): void {
@@ -1897,6 +2089,8 @@ export function editLooksRight(
   id: number,
   after: PageLine[],
   newText: string,
+  /** The lines' text in reading order, when that isn't MuPDF's (right-to-left text). */
+  afterTexts: string[] = after.map((l) => l.text),
 ): boolean {
   const squash = (s: string) => s.replace(/\s+/g, "");
   for (let i = 0; i < before.raw.length; i++) {
@@ -1910,5 +2104,5 @@ export function editLooksRight(
     if (!found) return false;
   }
   const wanted = squash(newText);
-  return !wanted || after.some((l) => squash(l.text).includes(wanted));
+  return !wanted || afterTexts.some((t) => squash(t).includes(wanted));
 }

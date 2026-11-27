@@ -16,9 +16,11 @@
 // exactly where it was, so nothing after it moves. Every other byte of the page is unchanged.
 
 import { formatNumber } from "./contentStream";
+import { BIDI_CONTROL, breakUnits, CJK, joinsWithoutSpace } from "./scripts";
 import {
-  CJK,
   checkClips,
+  checkDirection,
+  drawnOrder,
   drawRuns,
   type EditMap,
   type EditPlan,
@@ -28,15 +30,16 @@ import {
   type Glyph,
   type LineSetup,
   lineReplacements,
+  missingError,
   mul,
   type PageAnalysis,
   type PageLine,
   pickFonts,
   prepareLine,
   type Rect4,
-  RTL,
   rectToFrame,
   toFrame,
+  VERTICAL_REASON,
 } from "./textEdit";
 import { readableFontName } from "./textFonts";
 import { MAX_PARAGRAPH_TEXT } from "./textLimits";
@@ -53,6 +56,8 @@ export interface ParagraphInfo {
   rect: Rect4;
   /** How its lines are lined up. */
   align: "left" | "right" | "centre" | "justify";
+  /** "rtl" for a paragraph read right to left: `text` is then in reading order. */
+  direction: "ltr" | "rtl";
   /** Whether it can be edited as a whole, and if not, why not (in plain words). */
   editable: boolean;
   reason: string | null;
@@ -80,8 +85,10 @@ export interface ParagraphEditCheck {
 
 export interface ParagraphPlan extends Omit<EditPlan, "check"> {
   check: ParagraphEditCheck;
-  /** The new lines' text, top to bottom. */
+  /** The new lines' text, top to bottom, and as drawn (for text read right to left, in visual
+   * order with Arabic letters joined). */
   newLines: string[];
+  drawnLines: string[];
   /** Where the new lines go (page space), for checking the result. */
   region: Rect4;
 }
@@ -114,10 +121,13 @@ interface ParaLine {
   text: string;
   editable: boolean;
   reason: string | null;
-  /** Width of its first word. */
+  /** Width of its first word (or, in Chinese, Japanese or Korean, of the first characters a
+   * line may break after). */
   firstWord: number;
   /** Whether its spaces are stretched (as in justified text). */
   stretched: boolean;
+  /** Whether it reads right to left (its text is then in reading order). */
+  rtl: boolean;
 }
 
 /** A paragraph found on a page. */
@@ -130,6 +140,10 @@ export interface ParagraphData {
   left: number;
   right: number;
   spacing: number;
+  /** Read right to left: lines start on the right, and the first one's right edge (it may be
+   * indented from that side). */
+  rtl: boolean;
+  firstRight: number;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -194,7 +208,7 @@ function findParagraphs(analysis: PageAnalysis): ParagraphData[] {
     const a = lines[i] as ParaLine;
     const b = down[i];
     if (!b || up.get(b) !== a) continue;
-    if (Math.abs(a.size - b.size) > 0.1 || a.font !== b.font) continue;
+    if (Math.abs(a.size - b.size) > 0.1 || a.font !== b.font || a.rtl !== b.rtl) continue;
     if (marks.between(a, b)) continue;
     below.set(a, b);
     above.set(b, a);
@@ -231,7 +245,9 @@ const LIST_ITEM = /^\s*(\(?(\d{1,3}|[a-zA-Z]|[ivxIVX]{1,5})[.)]|[•‣◦▪●
 function describe(analysis: PageAnalysis, id: number, glyphs: Glyph[]): ParaLine | null {
   const line = analysis.lines[id] as PageLine;
   const info = analysis.infos[id];
-  if (!info || line.wmode !== 0 || !line.text.trim()) return null;
+  // Vertical writing drawn a character at a time isn't lines of a paragraph.
+  if (!info || line.wmode !== 0 || !line.text.trim() || info.reason === VERTICAL_REASON)
+    return null;
   const rotation = info.rotation;
   const box = rectToFrame(rotation, line.bbox);
   const first = line.chars.find((c) => !/\s/.test(c.c)) ?? line.chars[0];
@@ -268,14 +284,23 @@ function describe(analysis: PageAnalysis, id: number, glyphs: Glyph[]): ParaLine
     const spaces = (line.text.trim().match(/\s+/g) ?? []).length;
     stretched = spaces > 0 && right - left > natural + spaces * 0.4 * line.size + 0.5;
   }
-  const text = line.text;
-  // The first word ends at the first space after it starts.
-  let firstWord = right - left;
+  // In reading order (for a line read right to left, worked out when it was judged).
+  const text = info.text;
+  const rtl = info.direction === "rtl";
+  // The first word ends at the first space after it starts; in Chinese, Japanese or Korean, a
+  // line may break after its first character or so. (Not worked out for text read right to
+  // left, whose characters MuPDF lists in its own order; it isn't needed there.)
+  let firstWord = rtl ? 0 : right - left;
   const from = line.chars.indexOf(first);
-  const gap = line.chars.findIndex((c, i) => i > from && /\s/.test(c.c));
-  if (gap > from) {
-    const g = line.chars[gap] as { x: number; y: number };
-    firstWord = toFrame(rotation, g.x, g.y)[0] - toFrame(rotation, first.x, first.y)[0];
+  let wordEnd = line.chars.findIndex((c, i) => i > from && /\s/.test(c.c));
+  if (wordEnd < 0) wordEnd = line.chars.length;
+  const word = line.chars
+    .slice(from, wordEnd)
+    .map((c) => c.c)
+    .join("");
+  const end = line.chars[from + [...(breakUnits(word)[0] ?? word)].length];
+  if (!rtl && end) {
+    firstWord = toFrame(rotation, end.x, end.y)[0] - toFrame(rotation, first.x, first.y)[0];
   }
   return {
     id,
@@ -293,6 +318,7 @@ function describe(analysis: PageAnalysis, id: number, glyphs: Glyph[]): ParaLine
     reason: info.reason,
     firstWord: Math.max(0, firstWord),
     stretched,
+    rtl,
   };
 }
 
@@ -399,8 +425,21 @@ function splitAtBreaks(lines: ParaLine[]): ParaLine[][] {
   return out;
 }
 
+/**
+ * Lines read right to left as if they were mirrored, so the paragraph's start (the right) is
+ * on the left; and an alignment worked out that way, the right way round again.
+ */
+const mirrored = (lines: ParaLine[]) =>
+  lines.map((l) => ({ ...l, left: -l.right, right: -l.left }));
+const unmirror = (align: Align): Align =>
+  align === "left" ? "right" : align === "right" ? "left" : align;
+
 /** How lines are lined up, or null if they aren't lined up one way. */
 function alignmentOf(lines: ParaLine[]): Align | null {
+  if (lines[0]?.rtl) {
+    const align = alignmentOf(mirrored(lines).map((l) => ({ ...l, rtl: false })));
+    return align && unmirror(align);
+  }
   if (lines.length < 2) return "left";
   const size = Math.max(...lines.map((l) => l.size));
   const tol = Math.max(1.5, 0.15 * size);
@@ -419,18 +458,23 @@ function alignmentOf(lines: ParaLine[]): Align | null {
 }
 
 function makeParagraph(analysis: PageAnalysis, lines: ParaLine[], id: number): ParagraphData {
-  let align = alignmentOf(lines) ?? "left";
-  const right = Math.max(...lines.map((l) => l.right));
+  const rtl = (lines[0] as ParaLine).rtl;
+  // Worked out as if lines read right to left were mirrored (see alignmentOf).
+  const start = rtl ? mirrored(lines).map((l) => ({ ...l, rtl: false })) : lines;
+  let align = alignmentOf(start) ?? "left";
+  const end = Math.max(...start.map((l) => l.right));
   const size = Math.max(...lines.map((l) => l.size));
   const tol = Math.max(1.5, 0.15 * size);
-  const body = lines.slice(0, -1);
+  const body = start.slice(0, -1);
   if (
     align === "left" &&
-    body.every((l) => l.right >= right - tol) &&
+    body.every((l) => l.right >= end - tol) &&
     (lines.length >= 3 || body.some((l) => l.stretched))
   ) {
     align = "justify";
   }
+  if (rtl) align = unmirror(align);
+  const right = Math.max(...lines.map((l) => l.right));
   const first = lines[0] as ParaLine;
   const left = (lines[1] as ParaLine).left;
   const spacing =
@@ -458,19 +502,25 @@ function makeParagraph(analysis: PageAnalysis, lines: ParaLine[], id: number): P
       text: joinLines(lines.map((l) => l.text)),
       rect,
       align,
+      direction: rtl ? "rtl" : "ltr",
       editable: reason === null,
       reason,
     },
     lines,
     rotation: first.rotation,
-    firstLeft: first.left,
-    left,
+    firstLeft: rtl ? Math.min(...lines.map((l) => l.left)) : first.left,
+    left: rtl ? Math.min(...lines.map((l) => l.left)) : left,
     right,
     spacing,
+    rtl,
+    firstRight: first.right,
   };
 }
 
-/** Lines joined into one text: with spaces, and words broken with a hyphen joined up. */
+/**
+ * Lines joined into one text: with spaces, and words broken with a hyphen joined up. Chinese,
+ * Japanese and Korean text, which breaks between characters, is joined without a space.
+ */
 export function joinLines(lines: string[]): string {
   let text = "";
   for (const raw of lines) {
@@ -478,6 +528,11 @@ export function joinLines(lines: string[]): string {
     if (!line) continue;
     if (!text) text = line;
     else if (/\p{L}-$/u.test(text) && /^\p{Ll}/u.test(line)) text = text.slice(0, -1) + line;
+    else if (
+      !/\s$/.test(raw) &&
+      joinsWithoutSpace([...text].pop() as string, [...line][0] as string)
+    )
+      text += line;
     else text += ` ${line}`;
   }
   return text;
@@ -495,8 +550,10 @@ export function checkParagraphText(text: string): string {
     throw new Error("The new text has a character that can't be written.");
   if ([...normal].length > MAX_PARAGRAPH_TEXT)
     throw new Error(`The new text is too long (${MAX_PARAGRAPH_TEXT} characters at most).`);
-  if (CJK.test(normal)) throw new Error("Chinese, Japanese and Korean text can't be written yet.");
-  if (RTL.test(normal)) throw new Error("Right-to-left text can't be written yet.");
+  if (BIDI_CONTROL.test(normal))
+    throw new Error(
+      "The new text has a character that sets the direction of text, which can't be written.",
+    );
   return normal;
 }
 
@@ -527,20 +584,28 @@ export function planParagraphEdit(
   const setups = para.lines.map((l) => prepareLine(analysis, l.id));
   const head = setups[0] as LineSetup;
   const last = setups[setups.length - 1] as LineSetup;
+  checkDirection(head, text);
+  // Text read right to left is broken into lines in reading order, and each line drawn left to
+  // right as it's seen (with Arabic letters joined up).
+  const rtl = para.rtl;
+  const drawn = (t: string) => drawnOrder(rtl, t, head.font);
   const flat = text.replace(/\n/g, " ");
-  const fonts = pickFonts(head, flat, { mixFirst: true, where: "this paragraph" });
+  const fonts = pickFonts(head, drawn(flat), { mixFirst: true, where: "this paragraph" });
   const rotation = para.rotation;
   const { align, right } = { align: para.info.align, right: para.right };
   const boxLeft = Math.min(para.firstLeft, para.left);
   const centre = para.lines.reduce((s, l) => s + (l.left + l.right) / 2, 0) / para.lines.length;
   const lastLine = para.lines[para.lines.length - 1] as ParaLine;
   const descent = Math.max(0, lastLine.bottom - lastLine.baseline);
+  // Where each line ends on the right: read right to left, the first line keeps its indent.
+  const rightOf = (i: number) => (rtl && i === 0 ? para.firstRight : right);
 
   const slot = (i: number): Slot => {
     const own = i < setups.length;
     const setup = own ? (setups[i] as LineSetup) : last;
-    const start = own ? setup.start : para.left;
-    const room = align === "left" || align === "justify" ? right - start : right - boxLeft;
+    const start = rtl ? boxLeft : own ? setup.start : para.left;
+    const room =
+      rtl || align === "left" || align === "justify" ? rightOf(i) - start : right - boxLeft;
     const baseline = own
       ? (para.lines[i] as ParaLine).baseline
       : lastLine.baseline + (i - setups.length + 1) * para.spacing;
@@ -548,49 +613,47 @@ export function planParagraphEdit(
   };
   const measure = (s: Slot, t: string) =>
     Math.abs(
-      encode(t, fonts.fonts, s.setup.first, s.setup.spaceGap, s.setup.font.twoByte).advance *
+      encode(drawn(t), fonts.fonts, s.setup.first, s.setup.spaceGap, s.setup.font.twoByte).advance *
         s.setup.unit,
     );
 
-  // Break the text into lines, a word at a time; a line break typed starts a new line. A word
-  // too wide for a line of its own is split between letters.
+  // Break the text into lines, a word at a time (Chinese, Japanese and Korean text may break
+  // between characters); a line break typed starts a new line. A word too wide for a line of
+  // its own is split between letters.
   const lines: { text: string; end: boolean }[] = [];
   let splitWords = false;
   const push = (t: string, end: boolean) => {
     lines.push({ text: t, end });
     if (lines.length > MAX_NEW_LINES) throw tooManyLines();
   };
+  const fits = (t: string) => measure(slot(lines.length), t) <= slot(lines.length).room + 0.5;
   for (const block of text.split("\n")) {
     const words = block.split(/[ \t\u00a0]+/).filter(Boolean);
     let current = "";
     for (const word of words) {
-      const candidate = current ? `${current} ${word}` : word;
-      if (measure(slot(lines.length), candidate) <= slot(lines.length).room + 0.5) {
-        current = candidate;
-        continue;
-      }
-      if (current) {
-        push(current, false);
-        current = "";
-      }
-      // The word alone: split it while it's too wide for the line it's on.
-      let rest = word;
-      while (measure(slot(lines.length), rest) > slot(lines.length).room + 0.5) {
-        const chars = [...rest];
-        let n = 1;
-        while (
-          n < chars.length &&
-          measure(slot(lines.length), chars.slice(0, n + 1).join("")) <=
-            slot(lines.length).room + 0.5
-        ) {
-          n++;
+      breakUnits(word).forEach((unit, k) => {
+        const candidate = current ? `${current}${k === 0 ? " " : ""}${unit}` : unit;
+        if (fits(candidate)) {
+          current = candidate;
+          return;
         }
-        if (n >= chars.length) break;
-        splitWords = true;
-        push(chars.slice(0, n).join(""), false);
-        rest = chars.slice(n).join("");
-      }
-      current = rest;
+        if (current) {
+          push(current, false);
+          current = "";
+        }
+        // The piece alone: split it while it's too wide for the line it's on.
+        let rest = unit;
+        while (!fits(rest)) {
+          const chars = [...rest];
+          let n = 1;
+          while (n < chars.length && fits(chars.slice(0, n + 1).join(""))) n++;
+          if (n >= chars.length) break;
+          splitWords = true;
+          push(chars.slice(0, n).join(""), false);
+          rest = chars.slice(n).join("");
+        }
+        current = rest;
+      });
     }
     push(current, true);
   }
@@ -680,22 +743,35 @@ export function planParagraphEdit(
     const { text: t, end } = lines[i] ?? { text: "", end: true };
     const op = s.setup.first;
     const toThousandths = (v: number) => (v * 1000) / (s.setup.unit * op.fs * op.th);
+    const visual = drawn(t);
     const width = measure(s, t);
+    const edge = rightOf(i);
     let start = s.start;
-    if (t && align === "right") start = right - width;
+    // Read right to left, the last line of a justified paragraph lines up on the right.
+    if (t && (align === "right" || (rtl && align === "justify" && end))) start = edge - width;
     else if (t && align === "centre") start = centre - width / 2;
+    // Justified: stretched with a move after each space or, in Chinese, Japanese or Korean
+    // without spaces, after each character.
     let space = 0;
-    const spaces = (t.match(/ /g) ?? []).length;
+    let letter = 0;
+    const spaces = (visual.match(/ /g) ?? []).length;
+    const count = [...visual].length;
     if (align === "justify" && !end && spaces > 0) {
-      space = toThousandths((right - s.start - width) / spaces);
+      space = toThousandths((edge - start - width) / spaces);
+    } else if (align === "justify" && !end && count > 1 && CJK.test(visual)) {
+      letter = toThousandths((edge - start - width) / (count - 1));
     }
-    const lead = s.own ? toThousandths(start - s.start) : 0;
-    const encoded = encode(t, fonts.fonts, op, s.setup.spaceGap, s.setup.font.twoByte, {
+    const lead = s.own ? toThousandths(start - s.setup.start) : 0;
+    const encoded = encode(visual, fonts.fonts, op, s.setup.spaceGap, s.setup.font.twoByte, {
       lead,
       space,
+      letter,
     });
+    // Each line as it's really drawn: a word split between lines takes other letter forms
+    // (Arabic) than it had whole, which the font may not have.
+    if (encoded.missing.length > 0) throw missingError(encoded.missing, "this paragraph");
     // Where it really ends: the whole advance (lead, letters, spacing and justifying moves).
-    const reach = (s.own ? s.start : start) + encoded.advance * s.setup.unit;
+    const reach = (s.own ? s.setup.start : start) + encoded.advance * s.setup.unit;
     if (t) checkBounds(s, start, reach, s.own ? oldBox(i) : null);
     return { slot: s, encoded, start, width };
   };
@@ -740,12 +816,14 @@ export function planParagraphEdit(
   for (let i = 0; i < setups.length; i++) {
     const drawn = i === setups.length - 1 ? drawnLast : encodeLine(i);
     const s = drawn.slot;
-    const oldWidth = (para.lines[i] as ParaLine).right - s.start;
-    // Measured from where the line starts, as for a line edit; text moved left (to line it up
-    // on the right or centre) mustn't go past a clipping edge either.
-    checkClips(s.setup, drawn.start + drawn.width - s.start, oldWidth);
+    const from = s.setup.start;
+    const oldWidth = (para.lines[i] as ParaLine).right - from;
+    // Measured from where the old line started, as for a line edit (left to right, whichever
+    // way it reads); text moved left (to line it up on the right or centre) mustn't go past a
+    // clipping edge either.
+    checkClips({ ...s.setup, rtl: false }, drawn.start + drawn.width - from, oldWidth);
     const clip = s.setup.first.clip ? rectToFrame(rotation, s.setup.first.clip) : null;
-    if (clip && drawn.start < Math.min(clip[0], s.start) - 0.5) {
+    if (clip && drawn.start < Math.min(clip[0], from) - 0.5) {
       throw new Error(
         "The new text is too long for the space this paragraph is in: some of it would be hidden. Try something shorter.",
       );
@@ -768,7 +846,13 @@ export function planParagraphEdit(
       Math.max(region[3], s.baseline + descent),
     ];
   }
-  const usesOwn = encode(flat, fonts.fonts, head.first, head.spaceGap, head.font.twoByte).usesOwn;
+  const usesOwn = encode(
+    drawn(flat),
+    fonts.fonts,
+    head.first,
+    head.spaceGap,
+    head.font.twoByte,
+  ).usesOwn;
   const check: ParagraphEditCheck = {
     font: readableFontName(usesOwn || !fonts.fallback ? head.font.baseFont : fonts.fallback),
     fallback: fonts.fallback ? readableFontName(fonts.fallback) : null,
@@ -784,6 +868,7 @@ export function planParagraphEdit(
     edits: finishEdits(edits, setups),
     addFont: fonts.fallback && fontName ? { name: fontName, font: fonts.fallback } : null,
     newLines: lines.map((l) => l.text),
+    drawnLines: lines.map((l) => drawn(l.text)),
     region: regionToPage(rotation, region),
   };
 }
@@ -910,7 +995,7 @@ export function paragraphEditLooksRight(
   // Every new line drawn, whether or not it runs into what's below. (By the glyphs
   // drawn rather than MuPDF's text, which mixes up lines drawn over each other.)
   const drawn = squash(fresh.map((g) => g.text).join(""));
-  for (const line of plan.newLines) {
+  for (const line of plan.drawnLines) {
     const want = squash(line);
     if (want && !drawn.includes(want)) return false;
   }
