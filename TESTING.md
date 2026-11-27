@@ -575,8 +575,9 @@ the app in a browser. Make the hand-made files with
 
 To fuzz longer than CI does: `bun run fuzz` (1000 variants; `FUZZ_ITERATIONS=10000` for more,
 `FUZZ_SEED=…` to repeat a run, which prints its seed). Inputs that crash, hang or break the
-engine are saved in `fuzz-crashes/` (gitignored) with a `.txt` saying what happened; run one
-again with `FUZZ_FILE=fuzz-crashes/<name>.pdf bun run fuzz`. The **Fuzz** workflow (Actions
+engine are saved in `fuzz-crashes/` (gitignored) with a `.txt` saying what happened and how
+to run it again (`FUZZ_FILE=fuzz-crashes/<name>.pdf bun run fuzz`, or `FUZZ_FROM` to repeat
+part of a run). The **Fuzz** workflow (Actions
 tab) does the same weekly and uploads anything it finds. A crash it finds should become a
 regression test (see `hardening.test.ts`).
 

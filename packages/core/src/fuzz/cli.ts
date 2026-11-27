@@ -3,6 +3,7 @@
 // The long fuzz run: `bun run fuzz` from the repository root.
 //
 //   FUZZ_ITERATIONS  how many variants (default 1000)
+//   FUZZ_FROM        the first variant (default 0): FUZZ_FROM=231 FUZZ_ITERATIONS=1 runs one
 //   FUZZ_SEED        the run's seed (default: a new one, printed so the run can be repeated)
 //   FUZZ_BUDGET_MS   longest one engine call may take (default 10000)
 //   FUZZ_OUT         where inputs that fail are saved (default fuzz-crashes/, gitignored)
@@ -85,7 +86,8 @@ function save(index: number, problems: Problem[]) {
   writeFileSync(
     join(outDir, `${name}.txt`),
     `Seed ${runSeed}, variant ${index}: ${variant.seed.name} with ${variant.steps.join(" + ") || "no mutations"}\n` +
-      `${describe(problems)}\n\nRun it again:\n  FUZZ_FILE=${pdf} bun run fuzz\n`,
+      `${describe(problems)}\n\nRun it again:\n  FUZZ_FILE=${pdf} bun run fuzz\n` +
+      `or as part of the run (in a fresh engine):\n  FUZZ_SEED=${runSeed} FUZZ_FROM=${index} FUZZ_ITERATIONS=1 bun run fuzz\n`,
   );
   console.log(`\nvariant ${index} (${variant.seed.name}, ${variant.steps.join("+")}):`);
   console.log(describe(problems));
@@ -149,12 +151,14 @@ function runThread(from: number, to: number): Promise<number> {
   });
 }
 
+const first = setting("FUZZ_FROM", 0);
+const end = first + iterations;
 console.log(
-  `Fuzzing ${iterations} variants, seed ${runSeed} (FUZZ_SEED=${runSeed} repeats this run)`,
+  `Fuzzing ${iterations} variants from ${first}, seed ${runSeed} (FUZZ_SEED=${runSeed} repeats this run)`,
 );
 const started = performance.now();
-let next = 0;
-while (next < iterations) next = await runThread(next, iterations);
+let next = first;
+while (next < end) next = await runThread(next, end);
 const seconds = Math.round((performance.now() - started) / 1000);
 console.log(
   `\nDone in ${seconds} s: ${found} failing variant${found === 1 ? "" : "s"}${found ? `, saved in ${outDir}` : ""}.`,

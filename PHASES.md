@@ -873,6 +873,10 @@ budget, without runaway memory, and the engine must still handle good files afte
   - A worker that stops answering for 5 minutes with requests waiting is treated as a crash
     (the app restarts the engine and says so), and anything thrown that isn't an Error gets a
     plain message.
+- **Still seen in long runs:** now and then MuPDF crashes on a damaged file in a way that
+  doesn't happen again when the same file is run alone (it seems to depend on when garbage is
+  collected), so there's nothing to fix on our side yet. The worker turns such a crash into a
+  message ("The PDF engine stopped while trying to …"), and the app starts a fresh engine.
 - **Not covered yet:** the long run measures memory only under Node (`bun run test`), as Bun
   doesn't report it reliably; nesting inside encrypted object streams can't be checked before
   the file is unlocked; MuPDF's own wording is still shown for some errors ("not a dict
