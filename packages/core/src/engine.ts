@@ -4,6 +4,7 @@
 // (see worker.ts) in the browser, and directly in Node for tests.
 
 import * as mupdf from "mupdf";
+import "./pdfNull";
 import {
   canEditText,
   canRecolor,
@@ -26,6 +27,7 @@ import {
 } from "./annotationObjects";
 import { type CompressPreset, REBUILD_OPTIONS, shrinkImages } from "./compress";
 import { exportPage } from "./convert";
+import { drawingProblem } from "./drawingDepth";
 import { IncrementalSaveError, PasswordRequiredError } from "./errors";
 import type { ExportOptions } from "./exportFiles";
 import {
@@ -59,6 +61,7 @@ import {
   restoreField,
   snapshotField,
 } from "./forms";
+import { nestingProblem } from "./nesting";
 import {
   applyLabels,
   planLabels,
@@ -67,6 +70,7 @@ import {
   restoreLabels,
   simplifyLabelTree,
 } from "./pageLabels";
+import { pageTreeProblem } from "./pageTree";
 import {
   type ParagraphEditCheck,
   type ParagraphInfo,
@@ -477,6 +481,31 @@ const STAMP_LABELS: Record<StampKind, { undo: string; contents: string }> = {
   image: { undo: "Add image", contents: "Image" },
 };
 
+// MuPDF reports trouble with a file (damage it repaired, data it couldn't decode, errors it
+// threw) through its log. Once it has, its memory is no longer trusted for the next file: the
+// fuzzer found damaged files that leave MuPDF's memory subtly corrupted, so that a later, good
+// file crashes it. The worker tells the app (onEngineTrouble), which starts a fresh engine
+// before opening another file. The messages themselves aren't printed.
+let troubles = 0;
+const troubleListeners = new Set<() => void>();
+function noteTrouble(): void {
+  if (troubles++ > 0) return;
+  for (const listener of troubleListeners) listener();
+  troubleListeners.clear();
+}
+mupdf.setLog({ error: noteTrouble, warning: noteTrouble });
+
+/** How many errors and warnings MuPDF has reported since it was loaded. */
+export function engineTroubles(): number {
+  return troubles;
+}
+
+/** Call `listener` once, when MuPDF first reports trouble (at once if it already has). */
+export function onEngineTrouble(listener: () => void): void {
+  if (troubles > 0) listener();
+  else troubleListeners.add(listener);
+}
+
 export class PdfEngine {
   private doc: mupdf.Document | null = null;
   /** MuPDF's needsPassword() stays true after a successful unlock, so track it here. */
@@ -518,6 +547,13 @@ export class PdfEngine {
   private textCache = new Map<number, mupdf.StructuredText>();
   /** Text lines of recently listed pages, for editing them; dropped whenever the document changes. */
   private lineCache = new Map<number, PageAnalysis>();
+  /**
+   * Pages checked for drawings nested too deeply for MuPDF to draw safely (drawingDepth.ts):
+   * page index → why it can't be drawn, or null. Dropped whenever the document changes.
+   */
+  private drawable = new Map<number, string | null>();
+  /** Whether the page tree was checked (pageTree.ts) since the file was opened. */
+  private pageTreeChecked = false;
 
   /**
    * Open a PDF. If it needs a password, nothing else can be read until `authenticate`
@@ -525,6 +561,9 @@ export class PdfEngine {
    */
   open(bytes: Uint8Array): OpenResult {
     this.close();
+    // Checked before MuPDF reads anything: deep nesting corrupts its memory (nesting.ts).
+    const tooDeep = nestingProblem(bytes);
+    if (tooDeep) throw new Error(tooDeep);
     this.doc = mupdf.Document.openDocument(bytes, "application/pdf");
     this.base = { length: bytes.byteLength, startxref: lastStartxref(bytes) };
     this.locked = this.doc.needsPassword();
@@ -651,6 +690,7 @@ export class PdfEngine {
           "with the permissions password first (Password).",
       );
     }
+    this.checkDrawable(index);
     const page = doc.loadPage(index);
     try {
       return exportPage(page, index, options);
@@ -920,7 +960,9 @@ export class PdfEngine {
 
   /** Render a page (0-based) to RGBA pixels on white. `scale` 1 = 72 dpi. */
   renderPage(index: number, scale = 1.5): RenderedPage {
-    const page = this.requireDoc().loadPage(index);
+    const doc = this.requireDoc();
+    this.checkDrawable(index);
+    const page = doc.loadPage(index);
     try {
       const pixmap = page.toPixmap(
         mupdf.Matrix.scale(scale, scale),
@@ -942,7 +984,9 @@ export class PdfEngine {
 
   /** Render a page to PNG (for exports and tests). */
   renderPagePng(index: number, scale = 1.5): Uint8Array {
-    const page = this.requireDoc().loadPage(index);
+    const doc = this.requireDoc();
+    this.checkDrawable(index);
+    const page = doc.loadPage(index);
     try {
       const pixmap = page.toPixmap(
         mupdf.Matrix.scale(scale, scale),
@@ -967,6 +1011,8 @@ export class PdfEngine {
     if (!query.trim()) return { hits, truncated: false };
     const pageCount = doc.countPages();
     for (let i = 0; i < pageCount; i++) {
+      // A page that can't be drawn safely can't be searched either: it's skipped.
+      if (this.drawingBlocker(i)) continue;
       const page = doc.loadPage(i);
       try {
         const [x0, y0] = page.getBounds();
@@ -1057,6 +1103,7 @@ export class PdfEngine {
     this.prepared = null;
     this.signedBytes = null;
     this.password = null;
+    this.pageTreeChecked = false;
   }
 
   // ---------------------------------------------------------------------------------------
@@ -1087,8 +1134,9 @@ export class PdfEngine {
   /** Delete pages. At least one page must be left. */
   deletePages(pages: readonly number[]): EditResult {
     const pdf = this.requirePdf();
-    simplifyLabelTree(pdf);
     const indices = this.checkPages(pages);
+    this.checkPageTree(pdf, indices);
+    simplifyLabelTree(pdf);
     if (indices.length >= pdf.countPages()) {
       throw new Error("A PDF needs at least one page, so not every page can be deleted");
     }
@@ -1111,8 +1159,9 @@ export class PdfEngine {
    */
   movePages(pages: readonly number[], to: number): EditResult {
     const pdf = this.requirePdf();
-    simplifyLabelTree(pdf);
     const indices = this.checkPages(pages);
+    this.checkPageTree(pdf, indices);
+    simplifyLabelTree(pdf);
     const maxTo = pdf.countPages() - indices.length;
     if (!Number.isInteger(to) || to < 0 || to > maxTo) {
       throw new Error(`Move target ${to} is out of range (0 to ${maxTo})`);
@@ -1146,6 +1195,7 @@ export class PdfEngine {
    */
   insertBlankPages(at: number, count = 1, size?: PageSize): EditResult {
     const pdf = this.requirePdf();
+    this.checkPageTree(pdf);
     simplifyLabelTree(pdf);
     const pageCount = pdf.countPages();
     this.checkInsertAt(at, pageCount);
@@ -1166,6 +1216,7 @@ export class PdfEngine {
   /** Insert pages from other PDFs before index `at` (pageCount appends, which is a merge). */
   insertPdfs(at: number, sources: readonly PdfSource[]): EditResult {
     const pdf = this.requirePdf();
+    this.checkPageTree(pdf);
     simplifyLabelTree(pdf);
     this.checkInsertAt(at, pdf.countPages());
     if (sources.length === 0) throw new Error("Choose at least one PDF to insert");
@@ -2330,6 +2381,7 @@ export class PdfEngine {
       if (redactionRegions(pdf.findPage(i)).length > 0) pages.push(i);
     }
     if (pages.length === 0) throw new Error("Nothing is marked for redaction");
+    for (const index of pages) this.checkDrawable(index);
 
     // A form field's value lives in the form, not only on the page: deleting its box would
     // leave the value in the file. Refuse rather than leave something behind.
@@ -2719,7 +2771,9 @@ export class PdfEngine {
   private lineAnalysis(index: number): PageAnalysis {
     let analysis = this.lineCache.get(index);
     if (!analysis) {
-      analysis = analysePage(this.requirePdf(), index);
+      const pdf = this.requirePdf();
+      this.checkDrawable(index);
+      analysis = analysePage(pdf, index);
       if (this.lineCache.size >= TEXT_CACHE_PAGES) {
         const oldest = this.lineCache.keys().next().value as number;
         this.lineCache.delete(oldest);
@@ -2852,6 +2906,42 @@ export class PdfEngine {
     for (const text of this.textCache.values()) text.destroy();
     this.textCache.clear();
     this.lineCache.clear();
+    this.drawable.clear();
+  }
+
+  /**
+   * Why page `index` can't be drawn safely (drawings nested too deeply for MuPDF, or one that
+   * contains itself; see drawingDepth.ts), or null. Checked once per page until the next change.
+   */
+  private drawingBlocker(index: number): string | null {
+    const pdf = this.doc?.asPDF();
+    if (!pdf || !Number.isInteger(index) || index < 0 || index >= pdf.countPages()) return null;
+    let problem = this.drawable.get(index);
+    if (problem === undefined) {
+      problem = drawingProblem(pdf.findPage(index));
+      this.drawable.set(index, problem);
+    }
+    return problem;
+  }
+
+  /**
+   * Refuse to add, remove or move pages in a page tree whose /Parent links loop: MuPDF would
+   * never finish (see pageTree.ts). The whole tree is checked once per file; the pages being
+   * changed (as MuPDF finds them) every time.
+   */
+  private checkPageTree(pdf: mupdf.PDFDocument, indices: readonly number[] = []): void {
+    const pages = indices.map((i) => pdf.findPage(i));
+    const problem = this.pageTreeChecked
+      ? pageTreeProblem(pdf, pages, false)
+      : pageTreeProblem(pdf, pages);
+    if (problem) throw new Error(problem);
+    this.pageTreeChecked = true;
+  }
+
+  /** Refuse to draw a page MuPDF can't draw safely (see drawingBlocker). */
+  private checkDrawable(index: number): void {
+    const problem = this.drawingBlocker(index);
+    if (problem) throw new Error(problem);
   }
 
   private pageText(index: number): mupdf.StructuredText {
@@ -2860,7 +2950,9 @@ export class PdfEngine {
       // Most recently used goes last (a Map keeps insertion order).
       this.textCache.delete(index);
     } else {
-      const page = this.requireDoc().loadPage(index);
+      const doc = this.requireDoc();
+      this.checkDrawable(index);
+      const page = doc.loadPage(index);
       try {
         text = page.toStructuredText("preserve-whitespace");
       } finally {
@@ -2955,6 +3047,8 @@ interface PageEntry {
 
 /** Open another PDF to insert from, unlocking it if needed. */
 function openSource(source: PdfSource): mupdf.Document {
+  const tooDeep = nestingProblem(source.bytes);
+  if (tooDeep) throw new Error(tooDeep.replace("This file", "The file being inserted"));
   const doc = mupdf.Document.openDocument(source.bytes, "application/pdf");
   try {
     if (!doc.asPDF()) throw new Error("The file being inserted isn't a PDF");

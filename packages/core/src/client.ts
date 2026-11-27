@@ -38,7 +38,17 @@ export interface PdfWorkerClientOptions {
    * flight. Any open document is gone at that point. Not called for `terminate()`.
    */
   onFatalError?: (error: Error) => void;
+  /**
+   * How long the worker may go without answering while requests are waiting, in ms, before
+   * it counts as stuck (a loop in MuPDF on a damaged file, say): it's then discarded like a
+   * crashed one, so the app can start a fresh engine. 0 turns this off. Default 5 minutes:
+   * far longer than any single request should take, even on a slow device.
+   */
+  stallTimeoutMs?: number;
 }
+
+/** Default for PdfWorkerClientOptions.stallTimeoutMs. */
+export const DEFAULT_STALL_TIMEOUT_MS = 5 * 60 * 1000;
 
 /** Each buffer once: transferring the same buffer twice makes postMessage throw. */
 function uniqueBuffers(arrays: Uint8Array[]): ArrayBuffer[] {
@@ -51,21 +61,31 @@ export class PdfWorkerClient {
   private readonly pending = new Map<number, Pending>();
   /** Set once the worker has crashed or been terminated; later calls fail fast. */
   private fatal: Error | null = null;
+  /** See `troubled`. */
+  private isTroubled = false;
 
   private readonly onFatalError?: (error: Error) => void;
+  private readonly stallTimeoutMs: number;
+  /** Fires when the worker has said nothing for stallTimeoutMs while requests wait. */
+  private stallTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(options: PdfWorkerClientOptions = {}) {
     this.onFatalError = options.onFatalError;
+    this.stallTimeoutMs = options.stallTimeoutMs ?? DEFAULT_STALL_TIMEOUT_MS;
     this.worker = new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });
     this.worker.onmessage = (event: MessageEvent<WorkerMessage>) => {
       const msg = event.data;
+      // Any message shows the worker is alive: the stall clock starts again.
+      this.restartStallTimer();
       if ("event" in msg) {
-        options.onLoadProgress?.(msg.progress);
+        if (msg.event === "troubled") this.isTroubled = true;
+        else options.onLoadProgress?.(msg.progress);
         return;
       }
       const p = this.pending.get(msg.id);
       if (!p) return;
       this.pending.delete(msg.id);
+      if (this.pending.size === 0) this.stopStallTimer();
       if (msg.ok) {
         p.resolve(msg.result);
         return;
@@ -97,6 +117,14 @@ export class PdfWorkerClient {
     return this.fatal !== null;
   }
 
+  /**
+   * True once MuPDF has reported trouble with a file in this worker (it was damaged, say).
+   * Its memory isn't trusted for another file then: create a new client before opening one.
+   */
+  get troubled(): boolean {
+    return this.isTroubled;
+  }
+
   /** Discard the worker after a crash or failed load, and tell the owner once. */
   private fail(error: Error) {
     const first = this.fatal === null;
@@ -110,7 +138,23 @@ export class PdfWorkerClient {
     }
   }
 
+  /** (Re)start the stall clock while requests are waiting; stop it when none are. */
+  private restartStallTimer() {
+    this.stopStallTimer();
+    if (this.fatal || this.pending.size === 0 || this.stallTimeoutMs <= 0) return;
+    this.stallTimer = setTimeout(() => {
+      this.stallTimer = null;
+      this.fail(new EngineCrashedError("The PDF engine stopped responding"));
+    }, this.stallTimeoutMs);
+  }
+
+  private stopStallTimer() {
+    if (this.stallTimer !== null) clearTimeout(this.stallTimer);
+    this.stallTimer = null;
+  }
+
   private terminateWith(error: Error) {
+    this.stopStallTimer();
     this.worker.terminate();
     this.fatal ??= error;
     for (const p of this.pending.values()) p.reject(error);
@@ -133,6 +177,8 @@ export class PdfWorkerClient {
         return;
       }
       this.pending.set(id, { resolve: resolve as (v: unknown) => void, reject });
+      // Requests are answered in order, so the clock only starts when the first one waits.
+      if (this.stallTimer === null) this.restartStallTimer();
     });
   }
 

@@ -510,10 +510,15 @@ export function App() {
     return () => client.current?.terminate();
   }, [startEngine]);
 
-  /** The current worker, replaced first if an earlier file crashed it. */
-  function getClient(): PdfWorkerClient {
+  /**
+   * The current worker, replaced first if an earlier file crashed it. `forNewFile`: about to
+   * open another file, so a worker that had trouble with a damaged file is replaced too (its
+   * memory may be corrupted without anything having failed yet; see onEngineTrouble).
+   */
+  function getClient(forNewFile = false): PdfWorkerClient {
     const current = client.current;
-    return current && !current.crashed ? current : startEngine();
+    if (current && !current.crashed && !(forNewFile && current.troubled)) return current;
+    return startEngine();
   }
 
   /** Turn an error into a message, and reset the view if the engine was lost. */
@@ -558,7 +563,6 @@ export function App() {
       return;
     }
     workingRef.current = true;
-    const pdf = getClient();
     setBusy(true);
     setStatus(`Opening ${file.name}…`);
     try {
@@ -566,6 +570,8 @@ export function App() {
       // Opening replaces the worker's document, so the previous one is gone from here on
       // even if this file fails. Stop showing it, so nothing acts on the wrong document.
       replaceDoc(undefined);
+      // A fresh worker if the last file troubled this one (after the old document is gone).
+      const pdf = getClient(true);
       const opened = await pdf.open(bytes);
       const info = opened.needsPassword
         ? await new Promise<DocumentInfo | null | "failed">((resolve) =>

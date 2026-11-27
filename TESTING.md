@@ -555,6 +555,35 @@ Turn on **Edit text** (start of the Annotate row) for each file.
       the edit, and Escape while choosing doesn't cancel it
 - [ ] **?** next to Edit text says what's newly editable
 
+## Phase 7: damaged and hostile files
+
+The engine is fuzzed in CI (`packages/core/src/fuzz.test.ts`: every hand-made hostile file and
+160 damaged copies of the fixtures, with a fixed seed). These checks are for what CI can't see:
+the app in a browser. Make the hand-made files with
+`FUZZ_EXPORT=hostile bun run fuzz` (a `hostile/` folder; don't commit it), then in Chromium:
+
+- [x] `patterns-nested-40.pdf` and `forms-nested-40.pdf`: the page shows "This page couldn't be
+      displayed", and the app keeps working (zoom, thumbnails, open another file)
+- [x] `objects-nested-200-arrays.pdf`: the status line says the file can't be opened safely;
+      open a good file straight after: it opens normally
+- [x] `page-tree-unreadable-page-parent-loop.pdf`: **Insert blank page** says the list of pages
+      is damaged (and doesn't hang); the page itself still shows
+- [x] Open any hostile file (`xref-prev-loop.pdf`, say), then a good fixture: "Loading the PDF
+      engine…" shows for a moment (a fresh engine after a damaged file), then the good file opens
+- [x] Open three or four hostile files in a row: each gets a message or opens, nothing freezes,
+      and the app never needs a reload
+
+  _Checked 2026-11-27 in Chromium (headless, 1280 × 900) on the PR branch: all five as described;
+  the good file opened normally after each hostile one, with no page errors and no reload._
+
+To fuzz longer than CI does: `bun run fuzz` (1000 variants; `FUZZ_ITERATIONS=10000` for more,
+`FUZZ_SEED=…` to repeat a run, which prints its seed). Inputs that crash, hang or break the
+engine are saved in `fuzz-crashes/` (gitignored) with a `.txt` saying what happened and how
+to run it again (`FUZZ_FILE=fuzz-crashes/<name>.pdf bun run fuzz`, or `FUZZ_FROM` to repeat
+part of a run). The **Fuzz** workflow (Actions
+tab) does the same weekly and uploads anything it finds. A crash it finds should become a
+regression test (see `hardening.test.ts`).
+
 ## Problems found
 
 _None yet._
