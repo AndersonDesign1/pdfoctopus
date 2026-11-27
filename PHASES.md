@@ -16,7 +16,7 @@ tasks needed to finish it and the **exit criteria** that must be true before we 
 ## Next up
 
 Start here if you're picking the project up. Do these in order, and update this list in the
-same PR that changes it. Last updated: 2026-11-27, after columns, right-to-left and CJK text.
+same PR that changes it. Last updated: 2026-11-27, after fuzzing the engine.
 
 ### 0. Keep `main` green (2026-11-18)
 
@@ -832,6 +832,52 @@ else may move, exact undo, clips, bounded work).
   the font doesn't name, mixed-direction lines that aren't clearly right to left, vertical
   writing, and adding glyphs to subset fonts.
 
+### 22. Phase 7: fuzzing (2026-11-27)
+
+A seeded fuzzer (`packages/core/src/fuzz/`) runs damaged and hostile PDFs through every engine
+path the app uses: open (and the password check), info and page labels, rendering, search,
+text lines and paragraphs (and a text edit), form fields, annotations, signatures (also
+checked by `packages/sign`), the outline as MuPDF reads it, export (PNG, text, HTML, SVG),
+page tools with undo and redo, compress, and saving (incremental and full) and reopening.
+Every call must work or throw an ordinary Error with a message for the user, within a time
+budget, without runaway memory, and the engine must still handle good files afterwards.
+
+- **Inputs:** every fixture, also decompressed so mutations reach inside streams, damaged by
+  22 mutations (flipped bytes, truncation, deleted and repeated ranges, broken cross-reference
+  offsets and stream lengths, swapped object numbers, references turned into loops, deep
+  nesting, huge numbers and boxes, bad filters and predictors, broken encryption, fonts and
+  images), plus 144 hand-made hostile files (`crafted.ts`: page-tree, /Parent, outline,
+  name-tree and label-tree loops, a /Count of two billion, recursive drawings, broken fonts,
+  images, filters, signatures and encryption dictionaries).
+- **In CI:** `fuzz.test.ts` runs the hand-made files and 160 damaged fixtures with a fixed
+  seed (about 20 s). **Longer:** `bun run fuzz` (see TESTING.md), and the weekly **Fuzz**
+  workflow, which uploads what it finds.
+- **Bugs found and fixed,** each with a test in `hardening.test.ts` that fails without it:
+  - A file without a catalog threw "TypeError: null is not an object": MuPDF.js's shared null
+    object threw on `get()`. It now gives null, as MuPDF's C library does (`pdfNull.ts`).
+  - A pattern that fills with itself, or about 30 nested forms or patterns, overflowed MuPDF's
+    WebAssembly stack and killed the engine (1 KB files). Pages whose drawings nest more than
+    20 deep, or contain themselves, are now refused with a message before MuPDF draws them,
+    shows their text or redacts them (`drawingDepth.ts`; it reads which resources each content
+    stream names, so shared resource dictionaries aren't counted).
+  - About 190 nested arrays or dictionaries in one object silently corrupted MuPDF's memory,
+    and a later, good file then crashed. Files nesting more than 64 deep are refused before
+    MuPDF reads them, object streams included, and so are files being inserted (`nesting.ts`).
+  - Inserting a page into a damaged page tree (an unreadable page and a /Parent loop) never
+    returned: the app would hang. Adding, removing and moving pages is now refused in a tree
+    with a missing page or a looping /Parent chain (`pageTree.ts`); the pages still show.
+  - Damaged files could leave MuPDF's memory subtly corrupted, so that a good file opened
+    after three of them crashed. MuPDF's log now tells the engine when a file troubled it; the
+    worker passes that on, and the app opens the next file in a fresh worker
+    (`onEngineTrouble`, `PdfWorkerClient.troubled`). MuPDF's messages are no longer printed.
+  - A worker that stops answering for 5 minutes with requests waiting is treated as a crash
+    (the app restarts the engine and says so), and anything thrown that isn't an Error gets a
+    plain message.
+- **Not covered yet:** the long run measures memory only under Node (`bun run test`), as Bun
+  doesn't report it reliably; nesting inside encrypted object streams can't be checked before
+  the file is unlocked; MuPDF's own wording is still shown for some errors ("not a dict
+  (null)"); and the app doesn't show bookmarks yet, so only MuPDF's reading of them is fuzzed.
+
 ### Where things are
 
 - **Engine:** `packages/core` (MuPDF in a Web Worker, plus a promise-based client). Tests:
@@ -857,7 +903,7 @@ else may move, exact undo, clips, bounded work).
 | 4   | [Conversion](#phase-4-conversion)                                 | 2–3 wks  | 🟨 In progress |
 | 5   | [Certificate signatures](#phase-5-certificate-signatures-pades)   | 2–3 wks  | 🟨 In progress |
 | 6   | [True text editing](#phase-6-true-text-editing)                   | 4–8+ wks | 🟨 In progress |
-| 7   | [Polish & launch](#phase-7-polish--launch)                        | 2–3 wks  | ⬜ Not started |
+| 7   | [Polish & launch](#phase-7-polish--launch)                        | 2–3 wks  | 🟨 In progress |
 | —   | [Later (post-launch)](#later-post-launch)                         | —        | ⬜ Not started |
 
 ---
@@ -1172,7 +1218,7 @@ else may move, exact undo, clips, bounded work).
 
 ### Quality
 
-- [ ] Fuzz the engine with malformed PDFs; no crashes reach the user
+- [x] Fuzz the engine with malformed PDFs; no crashes reach the user
 - [ ] Accessibility pass (keyboard navigation, screen readers, contrast)
 - [ ] Performance pass (startup time, large files, memory use)
 - [ ] Final check of every feature in Adobe Reader / Acrobat

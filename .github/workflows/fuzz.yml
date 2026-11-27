@@ -1,0 +1,41 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# The long fuzz run (`bun run fuzz`, see TESTING.md): weekly, and by hand from the Actions tab.
+# Inputs that crash, hang or break the engine are uploaded as the "fuzz-crashes" artifact.
+# A short fixed-seed run is part of every `bun run test` already; this one looks further.
+name: Fuzz
+
+on:
+  schedule:
+    - cron: "23 4 * * 1"
+  workflow_dispatch:
+    inputs:
+      iterations:
+        description: How many damaged files to try
+        default: "3000"
+      seed:
+        description: Seed (leave empty for a new one; the log prints it)
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun run fuzz
+        env:
+          FUZZ_ITERATIONS: ${{ inputs.iterations || '3000' }}
+          FUZZ_SEED: ${{ inputs.seed }}
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashes
+          path: fuzz-crashes/
+          if-no-files-found: ignore
+          retention-days: 30

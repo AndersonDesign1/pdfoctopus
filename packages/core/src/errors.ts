@@ -87,3 +87,14 @@ export function errorFromCode(code: PdfErrorCode, message: string): Error {
       return new Error(message);
   }
 }
+
+/**
+ * A message for an error, fit to show the user. Anything thrown that isn't an Error with a
+ * message (MuPDF throws plain strings in a few places) gets a general one instead.
+ */
+export function errorMessage(err: unknown): string {
+  if (err instanceof Error && typeof err.message === "string" && err.message.trim()) {
+    return err.message;
+  }
+  return "The PDF engine ran into an unexpected problem with this file";
+}

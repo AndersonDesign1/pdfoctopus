@@ -7,7 +7,7 @@
 // import would delay the handler and messages sent in the meantime could be lost.
 
 import type { PdfEngine } from "./engine";
-import { EngineLoadError, errorCode } from "./errors";
+import { EngineLoadError, errorCode, errorMessage } from "./errors";
 import { withWasmProgress } from "./loadProgress";
 import type {
   LoadProgress,
@@ -48,7 +48,8 @@ function getEngine(): Promise<PdfEngine> {
       scope.postMessage({ event: "load-progress", progress }, []);
     scope.fetch = withWasmProgress(originalFetch.bind(scope), report, WASM_SIZE);
     try {
-      const { PdfEngine } = await import("./engine");
+      const { onEngineTrouble, PdfEngine } = await import("./engine");
+      onEngineTrouble(() => scope.postMessage({ event: "troubled" }, []));
       return new PdfEngine();
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
@@ -225,7 +226,7 @@ scope.onmessage = (event) => {
       const res = await handle(req);
       scope.postMessage(res, transferables(res));
     } catch (err) {
-      const error = err instanceof Error ? err.message : String(err);
+      const error = errorMessage(err);
       scope.postMessage({ id: req.id, ok: false, code: errorCode(err), error }, []);
     }
   });

@@ -184,6 +184,9 @@ export interface LoadProgress {
 }
 
 /** Unsolicited messages from the worker (not answers to a request). */
-export type WorkerEvent = { event: "load-progress"; progress: LoadProgress };
+export type WorkerEvent =
+  | { event: "load-progress"; progress: LoadProgress }
+  /** MuPDF reported trouble with a file: start a fresh worker before the next file. */
+  | { event: "troubled" };
 
 export type WorkerMessage = WorkerResponse | WorkerEvent;

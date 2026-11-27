@@ -98,6 +98,48 @@ describe("PdfWorkerClient", () => {
     errors.mockRestore();
   });
 
+  it("discards a worker that stops answering, as a crash", async () => {
+    vi.useFakeTimers();
+    try {
+      const onFatalError = vi.fn();
+      const client = new PdfWorkerClient({ onFatalError, stallTimeoutMs: 1000 });
+      // Nothing is waiting: an idle worker is never stuck.
+      vi.advanceTimersByTime(5000);
+      expect(client.crashed).toBe(false);
+
+      const opening = client.init();
+      vi.advanceTimersByTime(900);
+      // Any message (load progress here) shows it's alive and starts the clock again.
+      FakeWorker.last.reply({ event: "load-progress", progress: { loaded: 1, total: 2 } });
+      vi.advanceTimersByTime(900);
+      expect(client.crashed).toBe(false);
+      const { id } = FakeWorker.last.sent[0] as WorkerRequest;
+      FakeWorker.last.reply({ id, ok: true, type: "init", result: null });
+      await expect(opening).resolves.toBeNull();
+      vi.advanceTimersByTime(5000);
+      expect(client.crashed).toBe(false);
+
+      // A request that's never answered: a loop in MuPDF, say.
+      const render = client.renderPage(0);
+      vi.advanceTimersByTime(1000);
+      await expect(render).rejects.toThrow("The PDF engine stopped responding");
+      await expect(render).rejects.toBeInstanceOf(EngineCrashedError);
+      expect(client.crashed).toBe(true);
+      expect(FakeWorker.last.terminated).toBe(true);
+      expect(onFatalError).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("says when MuPDF had trouble with a file, so the next file gets a fresh worker", () => {
+    const client = new PdfWorkerClient();
+    expect(client.troubled).toBe(false);
+    FakeWorker.last.reply({ event: "troubled" });
+    expect(client.troubled).toBe(true);
+    expect(client.crashed).toBe(false);
+  });
+
   it("treats an uncaught worker error as a crash", async () => {
     const client = new PdfWorkerClient();
     const opening = client.init();
