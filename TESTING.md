@@ -37,11 +37,11 @@ Decided (no action needed):
   apply anyway (the extra lines overlap what's below), never to move other content. Lines
   that would run off the page are refused. A paragraph with a bold word can only be edited a
   line at a time for now.
-- (2026-11-27) **Joining CJK lines of a paragraph**: lines are joined without a space when one
-  ends and the next starts with a Chinese, Japanese or Korean character. That's right for
-  Chinese and Japanese; Korean text broken at a space loses that space in the paragraph box
-  (the user can add it back). Arabic whose font doesn't name its joined forms stays refused
-  rather than guessed.
+- (2026-11-27) **Joining CJK lines of a paragraph**: Chinese and Japanese lines are joined
+  without a space; Korean lines are joined with one (Korean puts spaces between words), so a
+  Korean line Chromium broke inside a word gains a space the user can take out. Korean text is
+  reflowed at its spaces. Arabic whose font doesn't name its joined forms stays refused rather
+  than guessed.
 - (2026-11-26) **Stand-in font for edited text**: when a line's embedded font lacks a
   character, the standard Helvetica, Times or Courier is used, not embedded (every PDF reader
   has them, and the file stays small). A PDF/A file edited that way is no longer strictly PDF/A;
@@ -549,6 +549,10 @@ Turn on **Edit text** (start of the Annotate row) for each file.
 - [ ] Undo and redo each edit; save, reopen: the new text is there, and **Adobe Acrobat Reader**,
       **Chrome/Edge** and **Firefox** show the same; searching or copying the new Hebrew, Arabic
       and Chinese text gives it in reading order
+- [ ] `fixtures/generated/korean-text.pdf`: **Edit paragraph** shows the words with their
+      spaces; a shorter text reflows at spaces
+- [ ] With a Chinese or Japanese input method: pressing Enter to pick characters doesn't apply
+      the edit, and Escape while choosing doesn't cancel it
 - [ ] **?** next to Edit text says what's newly editable
 
 ## Problems found

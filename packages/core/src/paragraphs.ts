@@ -30,6 +30,7 @@ import {
   type Glyph,
   type LineSetup,
   lineReplacements,
+  missingError,
   mul,
   type PageAnalysis,
   type PageLine,
@@ -766,6 +767,9 @@ export function planParagraphEdit(
       space,
       letter,
     });
+    // Each line as it's really drawn: a word split between lines takes other letter forms
+    // (Arabic) than it had whole, which the font may not have.
+    if (encoded.missing.length > 0) throw missingError(encoded.missing, "this paragraph");
     // Where it really ends: the whole advance (lead, letters, spacing and justifying moves).
     const reach = (s.own ? s.setup.start : start) + encoded.advance * s.setup.unit;
     if (t) checkBounds(s, start, reach, s.own ? oldBox(i) : null);

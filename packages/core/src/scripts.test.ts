@@ -15,6 +15,7 @@ import type { ParagraphInfo } from "./paragraphs";
 import {
   breakUnits,
   isolatedLetter,
+  rightToLeftLevels,
   shapeArabic,
   toLogical,
   toVisual,
@@ -108,6 +109,77 @@ describe("reading order of right-to-left text", () => {
   });
 });
 
+/**
+ * Paragraphs read right to left with brackets, from the Unicode Character Database's
+ * BidiCharacterTest.txt (version 18.0.0; © Unicode, Inc., Unicode License v3): code points;
+ * paragraph direction (1, right to left); its level; each character's level; the visual order.
+ */
+const BIDI_CHARACTER_TESTS = [
+  "0028 05D0 0029 0031;1;1;1 1 1 2;3 2 1 0",
+  "0061 0028 0062 0029;1;1;2 2 2 2;0 1 2 3",
+  "0028 05D0 0029 0061;1;1;1 1 1 2;3 2 1 0",
+  "0028 0061 05D0 0029 0062;1;1;1 2 1 1 2;4 3 2 1 0",
+  "05D0 0028 05D1 0029 0061;1;1;1 1 1 1 2;4 3 2 1 0",
+  "0028 0061 05D0 0062 0029 05D1;1;1;1 2 1 2 1 1;5 4 3 2 1 0",
+  "0028 0029 0028 0029;1;1;1 1 1 1;3 2 1 0",
+  "0028 0029 0028 0029 05D0;1;1;1 1 1 1 1;4 3 2 1 0",
+  "0028 0029 0028 0061 0029 0062;1;1;1 1 1 2 1 2;5 4 3 2 1 0",
+  "0028 0029 0061 0028 05D0 0029;1;1;1 1 2 1 1 1;5 4 3 2 1 0",
+  "0028 05D0 0029 0028 0061 0029;1;1;1 1 1 1 2 1;5 4 3 2 1 0",
+  "05D0 0028 0029 0028 0029 05D1;1;1;1 1 1 1 1 1;5 4 3 2 1 0",
+  "0061 0028 0029 0062 0028 0063 0029;1;1;2 2 2 2 2 2 2;0 1 2 3 4 5 6",
+  "0061 0028 0062 0029 0028 0029 05D0;1;1;2 2 2 2 1 1 1;6 5 4 0 1 2 3",
+  "0028 0061 0029 0028 0062 0029 05D0;1;1;1 2 1 1 2 1 1;6 5 4 3 2 1 0",
+  "0061 0028 0029 0028 05D0 0062 0029;1;1;2 1 1 1 1 2 1;6 5 4 3 2 1 0",
+  "0028 0061 0029 0028 05D0 0029 0062;1;1;1 2 1 1 1 1 2;6 5 4 3 2 1 0",
+  "0061 0028 05D0 0029 0028 0029 05D1;1;1;2 1 1 1 1 1 1;6 5 4 3 2 1 0",
+  "0028 0029 0061 05D0 0028 05D1 0029;1;1;1 1 2 1 1 1 1;6 5 4 3 2 1 0",
+  "0028 05D0 0061 0029 0062 0028 0029;1;1;1 1 2 1 2 1 1;6 5 4 3 2 1 0",
+  "05D0 0028 0061 05D1 0029 0028 0029;1;1;1 1 2 1 1 1 1;6 5 4 3 2 1 0",
+  "0028 05D0 0061 0029 05D1 0028 0029;1;1;1 1 2 1 1 1 1;6 5 4 3 2 1 0",
+  "0028 0029 05D0 0061 0028 0029 05D1;1;1;1 1 1 2 1 1 1;6 5 4 3 2 1 0",
+  "05D0 0028 0029 05D1 0028 0061 0029;1;1;1 1 1 1 1 2 1;6 5 4 3 2 1 0",
+  "0028 0029 05D0 0028 05D1 0029 0061;1;1;1 1 1 1 1 1 2;6 5 4 3 2 1 0",
+  "0028 0029 05D0 0028 05D1 0029 05D2;1;1;1 1 1 1 1 1 1;6 5 4 3 2 1 0",
+  "0061 0028 0062 0029 0028 0063 0029 05D0;1;1;2 2 2 2 2 2 2 1;7 0 1 2 3 4 5 6",
+  "0061 0028 0062 0029 05D0 0028 0063 0029;1;1;2 2 2 2 1 1 2 1;7 6 5 4 0 1 2 3",
+  "0061 0028 0029 0028 0062 05D0 0029 0063;1;1;2 1 1 1 2 1 1 2;7 6 5 4 3 2 1 0",
+  "0061 0028 0062 005B 0063 05D0 0064 005D 0065 0029 0066;1;1;2 1 2 1 2 1 2 1 2 1 2;10 9 8 7 6 5 4 3 2 1 0",
+  "05D0 0028 05D1 005B 05D2 0061 05D3 005D 05D4 0029 05D5;1;1;1 1 1 1 1 2 1 1 1 1 1;10 9 8 7 6 5 4 3 2 1 0",
+];
+
+describe("brackets in right-to-left text", () => {
+  it("pairs brackets, so both ends go the same way", () => {
+    // "(ABC)" after Hebrew stays one right-to-left pair round left-to-right text.
+    expect(toVisual("שלום (ABC) DEF")).toBe("DEF (ABC) םולש");
+    // Read back, the brackets still match (either reading draws the same glyphs).
+    const back = toLogical("DEF (ABC) םולש") as string;
+    expect(back).toContain("(ABC)");
+    expect(toVisual(back)).toBe("DEF (ABC) םולש");
+    expect(toVisual("abc (def) שלום")).toBe("םולש abc (def)");
+  });
+
+  it("matches Unicode's own test cases (BidiCharacterTest.txt)", () => {
+    for (const line of BIDI_CHARACTER_TESTS) {
+      const [cps, , , lv, order] = line.split(";") as [string, string, string, string, string];
+      const chars = cps.split(" ").map((h) => String.fromCodePoint(Number.parseInt(h, 16)));
+      const levels = lv.split(" ").map(Number);
+      expect(rightToLeftLevels(chars.join("")), line).toEqual(levels);
+      // Visual order, with brackets at odd (right-to-left) levels mirrored.
+      const mirror: Record<string, string> = { "(": ")", ")": "(", "[": "]", "]": "[" };
+      const visual = order
+        .split(" ")
+        .map(Number)
+        .map((i) => {
+          const c = chars[i] as string;
+          return (levels[i] as number) % 2 === 1 ? (mirror[c] ?? c) : c;
+        })
+        .join("");
+      expect(toVisual(chars.join("")), line).toBe(visual);
+    }
+  });
+});
+
 describe("Arabic letter forms", () => {
   it("joins letters with their neighbours and makes lam-alef one glyph", () => {
     // ب ي ت: initial, medial, final.
@@ -131,6 +203,8 @@ describe("breaking Chinese, Japanese and Korean text", () => {
     );
     expect(breakUnits("INV-2026。お")).toEqual(["INV-2026。", "お"]);
     expect(breakUnits("hello")).toEqual(["hello"]);
+    // Korean breaks at its spaces, not inside words.
+    expect(breakUnits("감사합니다.")).toEqual(["감사합니다."]);
   });
 });
 
@@ -319,15 +393,43 @@ describe("Arabic", () => {
   it("refuses a form the font doesn't have, and fonts that don't say which form is which", () => {
     const engine = open(fixture("generated/arabic-text.pdf"));
     const target = lineAt(engine, "مع السلام");
-    // A final teh marbuta isn't in the subset.
-    expect(() => engine.checkTextEdit(0, target.id, target.text, "مع السلامة")).toThrow(
+    // Initial hah and final beh aren't in the subset.
+    expect(() => engine.checkTextEdit(0, target.id, target.text, "مع حب")).toThrow(
       /joined form needed here/,
     );
     const plain = engine.listTextLines(1).lines;
-    expect(plain.length).toBe(4);
+    expect(plain.length).toBe(7);
     expect(plain.every((l) => !l.editable && /can't be reshaped here/.test(l.reason ?? ""))).toBe(
       true,
     );
+  });
+});
+
+describe("an Arabic paragraph", () => {
+  it("reflows on the right, keeping the letters joined", () => {
+    const engine = open(fixture("generated/arabic-text.pdf"));
+    const target = paragraphStarting(engine, "نحن نشكركم");
+    expect(target).toMatchObject({ direction: "rtl", align: "right", editable: true });
+    const streams = content(engine);
+    engine.editParagraph(0, target.id, target.text, "نحن نشكركم على ثقتكم بنا");
+    expect(engine.listTextLines(0).lines.some((l) => l.text === "نحن نشكركم على ثقتكم بنا")).toBe(
+      true,
+    );
+    engine.undo();
+    expect(content(engine)).toBe(streams);
+  });
+
+  it("refuses a word split across lines into forms the font doesn't have, before applying", () => {
+    const engine = open(fixture("generated/arabic-text.pdf"));
+    const target = paragraphStarting(engine, "نحن نشكركم");
+    // Whole, this word needs only initial and medial beh and final meem, which the subset has;
+    // too wide for a line, it's split, and a line ending in beh needs its final form, which
+    // the subset lacks.
+    const word = `${"ب".repeat(90)}م`;
+    expect(() => engine.checkParagraphEdit(0, target.id, target.text, `نحن ${word}`)).toThrow(
+      /“ب” can't be written in this paragraph: its font doesn't have it in the joined form needed here/,
+    );
+    expect(engine.history().canUndo).toBe(false);
   });
 });
 
@@ -392,6 +494,29 @@ describe("Chinese, Japanese and Korean", () => {
     expect(lines[1]?.text.startsWith("。")).toBe(false);
     expect(lines[0]?.text.endsWith("书")).toBe(false);
     expect(lines.map((l) => l.text).join("")).toBe(text);
+    engine.undo();
+    expect(content(engine)).toBe(streams);
+  });
+
+  it("keeps the spaces between Korean words when joining lines, and breaks Korean at spaces", () => {
+    const engine = open(fixture("generated/korean-text.pdf"));
+    const target = paragraphStarting(engine, "주문해 주셔서");
+    // Lines broken at a space ("오" / "일") are joined with that space.
+    expect(target.text).toContain("삼 일에서 오 일 이내에");
+    expect(target.text).toContain("있으시면 언제든지 고객센터로");
+    const streams = content(engine);
+    const text =
+      "주문해 주셔서 감사합니다. 궁금한 점이 있으시면 언제든지 고객센터로 연락해 주시기 바랍니다.";
+    engine.editParagraph(0, target.id, target.text, text);
+    const lines = engine
+      .listTextLines(0)
+      .lines.filter((l) => l.rect[1] >= target.rect[1] - 1 && l.rect[3] <= target.rect[3] + 1)
+      .sort((a, b) => a.rect[1] - b.rect[1]);
+    expect(lines.length).toBeGreaterThan(1);
+    // Every line ends and starts with whole words.
+    const words = new Set(text.split(" "));
+    for (const l of lines)
+      for (const w of l.text.trim().split(" ")) expect(words.has(w), w).toBe(true);
     engine.undo();
     expect(content(engine)).toBe(streams);
   });

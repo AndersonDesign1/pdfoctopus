@@ -8,11 +8,12 @@
 //   again; page 2's maps every form back to its plain letter (as many producers write it), so
 //   the forms can't be told apart. Chromium's "actual text" around each form is dropped on both.
 // - three-columns.pdf: a newsletter page in three justified columns.
+// - korean-text.pdf: a Korean paragraph whose lines break at spaces (WenQuanYi Zen Hei).
 //
 // The output is committed, so you only need to run this when changing one of these files.
 // Requirements: Node 22+, `bun install`, Chromium for Playwright (`bunx playwright install
 // chromium`, or pass `--chromium=<path>` to use another Chromium) and DejaVu Sans
-// (`apt install fonts-dejavu-core`).
+// (`apt install fonts-dejavu-core`) and WenQuanYi Zen Hei (`apt install fonts-wqy-zenhei`).
 //
 //   node fixtures/scripts/generate-text-scripts.mjs
 //
@@ -68,7 +69,7 @@ const browser = await chromium.launch(chromiumPath ? { executablePath: chromiumP
 const pdfs = {};
 try {
   const page = await browser.newPage();
-  for (const name of ["hebrew", "arabic", "columns"]) {
+  for (const name of ["hebrew", "arabic", "columns", "korean"]) {
     await page.goto(pathToFileURL(join(sources, `${name}.html`)).href);
     pdfs[name] = await page.pdf({ preferCSSPageSize: true, printBackground: true });
   }
@@ -79,6 +80,7 @@ try {
 console.log("Text in other scripts and layouts:");
 write("hebrew-text.pdf", pdfs.hebrew);
 write("three-columns.pdf", pdfs.columns);
+write("korean-text.pdf", pdfs.korean);
 
 // Arabic: the glyph each Presentation Forms character is drawn with, in DejaVu Sans. Chromium keeps the
 // font's own glyph numbers in its subsets (CID = glyph), so they can be looked up.

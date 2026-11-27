@@ -785,7 +785,8 @@ else may move, exact undo, clips, bounded work).
 - **Right to left** (`scripts.ts`, `readRightToLeft` in `textEdit.ts`): the glyphs of a line
   are put in visual order by position (not MuPDF's order, which garbles mixed lines) and turned
   into reading order with a small part of the Unicode bidirectional algorithm (right-to-left
-  runs with numbers and Latin words inside, brackets mirrored). Drawing the result again must
+  runs with numbers and Latin words inside, bracket pairs resolved together as in rule N0, and
+  brackets mirrored; checked against 31 bracket cases from Unicode's BidiCharacterTest.txt). Drawing the result again must
   give the same glyphs, or the line is refused, as are lines that are mostly left to right,
   lines with vowel marks, and lines drawn right to left. The box shows the reading order
   (`direction: "rtl"`); new text is written in visual order in the line's font, ending at the
@@ -796,20 +797,24 @@ else may move, exact undo, clips, bounded work).
   glyph (`shapeArabic`, Presentation Forms-A and -B). Only fonts whose ToUnicode map names the
   joined forms can be edited, and only where shaping the line's own text gives exactly the
   forms drawn; otherwise "This font's Arabic letters can't be reshaped here". A form the font
-  lacks is refused (no standard font has Arabic).
+  lacks is refused (no standard font has Arabic), including one a word split across lines
+  would need: every planned line is checked as it will be drawn before Apply is offered.
 - **Chinese, Japanese and Korean:** lines in Type0 Identity-H fonts can be edited when the
   font has each character: in its ToUnicode map, with a width, and (new) with an outline in the
   embedded TrueType program (`trueTypeGlyphs`: subsets keep glyph numbers but empty unused
   glyphs). Missing characters are refused with the reason (no standard CJK font). Paragraphs
-  break between any two CJK characters, with simple kinsoku (no line starts with 、。，．）」』
+  break between any two Chinese or Japanese characters (Korean breaks at its spaces, and its
+  lines are joined with a space), with simple kinsoku (no line starts with 、。，．）」』
   and the like, or ends with （「『), join lines without spaces, and justify by spacing
   characters. Identity-V is still refused, and so is vertical writing drawn a character at a
   time (stacked one-character lines, as Chromium writes it).
 - **App:** the edit boxes take `dir="rtl"` and grow to the left for right-to-left lines; the
-  **?** help says what's newly editable.
+  **?** help says what's newly editable. While an input method is choosing characters, Enter,
+  Ctrl+Enter and Escape are left to it (`textedit/keys.ts`).
 - **Fixtures** (`fixtures/scripts/generate-text-scripts.mjs`, DejaVu Sans subsets):
-  `hebrew-text.pdf`, `arabic-text.pdf` (page 1 names the joined forms, page 2 maps them to
-  plain letters) and `three-columns.pdf`.
+  `hebrew-text.pdf`, `arabic-text.pdf` (page 1 names the joined forms and has a paragraph,
+  page 2 maps them to plain letters), `three-columns.pdf`, and `korean-text.pdf` (WenQuanYi Zen
+  Hei subset).
 - **Tests:** `scripts.test.ts`: reading order, Arabic forms, kinsoku; columns (three-column
   page and TeX: detection, reflow width, room below, nothing else moves, exact undo); Hebrew
   (line and paragraph edited, read back in reading order, right edge kept, pixels unchanged

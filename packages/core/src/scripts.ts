@@ -17,6 +17,7 @@
 // Character classes
 
 export const CJK = /[ᄀ-ᇿ⺀-鿿ꥠ-꥿가-퟿豈-﫿＀-￯]|[\u{20000}-\u{3ffff}]/u;
+const HANGUL = /[\u1100-\u11ff\u3130-\u318f\ua960-\ua97f\uac00-\ud7ff]/;
 export const RTL = /[֐-ࣿיִ-﷿ﹰ-﻿]/;
 const HEBREW = /[֐-׿יִ-ﭏ]/;
 export const ARABIC = /[؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿]/;
@@ -96,9 +97,38 @@ function levels(chars: string[]): number[] {
     if (t === "L" || t === "R") strong = t;
     else if (t === "EN" && strong === "L") types[i] = "L";
   }
+  const dir = (t: Bidi | undefined) => (t === "L" ? "L" : t === "R" || t === "EN" ? "R" : null);
+  // N0: a pair of brackets goes one way, both ends alike. Right to left if there's right-to-left
+  // text inside; left to right if there's only left-to-right text inside and left-to-right text
+  // before the opening one; else (nothing strong inside) left to the rules below.
+  for (const [open, close] of bracketPairs(chars, types)) {
+    let inside: "L" | "R" | null = null;
+    for (let k = open + 1; k < close; k++) {
+      const d = dir(types[k]);
+      if (d === "R") {
+        inside = "R";
+        break;
+      }
+      if (d === "L") inside = "L";
+    }
+    if (inside === null) continue;
+    let resolved: Bidi = "R";
+    if (inside === "L") {
+      let before: "L" | "R" = "R";
+      for (let k = open - 1; k >= 0; k--) {
+        const d = dir(types[k]);
+        if (d) {
+          before = d;
+          break;
+        }
+      }
+      resolved = before === "L" ? "L" : "R";
+    }
+    types[open] = resolved;
+    types[close] = resolved;
+  }
   // N1, N2: neutrals between two left-to-right characters are left-to-right; others go with the
   // paragraph (right to left). Numbers count as right-to-left here.
-  const dir = (t: Bidi | undefined) => (t === "L" ? "L" : t === "R" || t === "EN" ? "R" : null);
   for (let i = 0; i < types.length; i++) {
     if (dir(types[i]) !== null) continue;
     let j = i;
@@ -113,6 +143,41 @@ function levels(chars: string[]): number[] {
   const out = types.map((t) => (t === "L" || t === "EN" ? 2 : 1));
   for (let i = out.length - 1; i >= 0 && /\s/.test(chars[i] as string); i--) out[i] = 1;
   return out;
+}
+
+const OPENING: Record<string, string> = { "(": ")", "[": "]", "{": "}" };
+const CLOSING = new Set(Object.values(OPENING));
+const MAX_BRACKET_DEPTH = 63;
+
+/**
+ * Matching brackets (BD16), as [opening, closing] positions sorted by the opening one. Only
+ * brackets still neutral take part; a closing bracket with no opening one is left alone.
+ */
+function bracketPairs(chars: string[], types: Bidi[]): [number, number][] {
+  const stack: { at: number; close: string }[] = [];
+  const pairs: [number, number][] = [];
+  for (let i = 0; i < chars.length; i++) {
+    const ch = chars[i] as string;
+    if (types[i] !== "ON") continue;
+    const close = OPENING[ch];
+    if (close) {
+      if (stack.length >= MAX_BRACKET_DEPTH) break;
+      stack.push({ at: i, close });
+    } else if (CLOSING.has(ch)) {
+      for (let s = stack.length - 1; s >= 0; s--) {
+        if ((stack[s] as { close: string }).close !== ch) continue;
+        pairs.push([(stack[s] as { at: number }).at, i]);
+        stack.length = s;
+        break;
+      }
+    }
+  }
+  return pairs.sort((a, b) => a[0] - b[0]);
+}
+
+/** Embedding levels of text read right to left (1 or 2 each), for tests. */
+export function rightToLeftLevels(text: string): number[] {
+  return levels([...text]);
 }
 
 /** Reorder by levels (L2) and mirror brackets read right to left (L4). Its own inverse. */
@@ -305,8 +370,9 @@ const NO_END = new Set([..."（(「『【〔〈《〘〖｛{［[〝‘“"]);
 
 /**
  * Where a line of text may break inside a word (a run without spaces): between two characters
- * when either is Chinese, Japanese or Korean, except before closing punctuation or after an
- * opening bracket (kinsoku). Returns the pieces to keep together.
+ * when either is Chinese or Japanese, except before closing punctuation or after an opening
+ * bracket (kinsoku). Korean breaks at its spaces, like English. Returns the pieces to keep
+ * together.
  */
 export function breakUnits(word: string): string[] {
   const chars = [...word];
@@ -319,6 +385,8 @@ export function breakUnits(word: string): string[] {
       current &&
       prev !== undefined &&
       (CJK.test(prev) || CJK.test(ch)) &&
+      !HANGUL.test(prev) &&
+      !HANGUL.test(ch) &&
       !NO_START.has(ch) &&
       !NO_END.has(prev)
     ) {
@@ -331,7 +399,11 @@ export function breakUnits(word: string): string[] {
   return units;
 }
 
-/** Whether a line ending with `a` and the next starting with `b` join without a space. */
+/**
+ * Whether a line ending with `a` and the next starting with `b` join without a space: Chinese
+ * and Japanese, which break between characters. Korean puts spaces between words, so a line
+ * of it broken at a space keeps that space.
+ */
 export function joinsWithoutSpace(a: string, b: string): boolean {
-  return CJK.test(a) && CJK.test(b);
+  return CJK.test(a) && CJK.test(b) && !HANGUL.test(a) && !HANGUL.test(b);
 }

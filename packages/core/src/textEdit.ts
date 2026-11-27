@@ -1628,7 +1628,7 @@ export function pickFonts(
 }
 
 /** Why characters can't be written, in plain words (by the kind of writing they are). */
-function missingError(missing: string[], where: string): Error {
+export function missingError(missing: string[], where: string): Error {
   const them = (list: string[]) => (list.length === 1 ? "it" : "them");
   const cjk = missing.filter((c) => CJK.test(c));
   if (cjk.length > 0) {

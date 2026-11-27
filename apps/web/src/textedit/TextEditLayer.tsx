@@ -10,6 +10,7 @@
 import type { PageText, ParagraphInfo, TextLineInfo } from "@pdfoctopus/core";
 import { MAX_LINE_TEXT, MAX_PARAGRAPH_TEXT } from "@pdfoctopus/core";
 import { type CSSProperties, type KeyboardEvent, useEffect, useRef, useState } from "react";
+import { lineKey, paragraphKey } from "./keys";
 
 /** A line (or the paragraph it's in) being edited, and the text typed so far. */
 export interface TextDraft {
@@ -59,6 +60,16 @@ export function TextEditLayer({
   listRef.current = list;
   const input = useRef<HTMLInputElement>(null);
   const area = useRef<HTMLTextAreaElement>(null);
+  // While an input method is choosing characters, Enter and Escape are its (see keys.ts).
+  const imeActive = useRef(false);
+  const ime = {
+    onCompositionStart: () => {
+      imeActive.current = true;
+    },
+    onCompositionEnd: () => {
+      imeActive.current = false;
+    },
+  };
 
   useEffect(() => {
     let live = true;
@@ -163,11 +174,16 @@ export function TextEditLayer({
           aria-label="New text for the line. Enter applies, Escape cancels."
           disabled={busy}
           onChange={(e) => setEditing({ line: editing.line, text: e.target.value })}
+          {...ime}
           onKeyDown={(e) => {
-            if (e.key === "Enter") {
+            const action = lineKey(
+              { key: e.key, isComposing: e.nativeEvent.isComposing, keyCode: e.keyCode },
+              imeActive.current,
+            );
+            if (action === "apply") {
               e.preventDefault();
               void commit();
-            } else if (e.key === "Escape") {
+            } else if (action === "cancel") {
               cancelKey(e);
             }
           }}
@@ -212,11 +228,22 @@ export function TextEditLayer({
             aria-label="New text for the paragraph. Ctrl+Enter applies, Escape cancels."
             disabled={busy}
             onChange={(e) => setEditing({ ...editing, text: e.target.value })}
+            {...ime}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+              const action = paragraphKey(
+                {
+                  key: e.key,
+                  ctrlKey: e.ctrlKey,
+                  metaKey: e.metaKey,
+                  isComposing: e.nativeEvent.isComposing,
+                  keyCode: e.keyCode,
+                },
+                imeActive.current,
+              );
+              if (action === "apply") {
                 e.preventDefault();
                 void commit();
-              } else if (e.key === "Escape") {
+              } else if (action === "cancel") {
                 cancelKey(e);
               }
             }}
